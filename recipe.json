@@ -1,0 +1,35 @@
+{
+	"name": "asyncdb",
+	"compiler": "g++ -g -Wall -std=c++11",
+	"packaging": "executable",
+	"modules": [],
+	"dependencies":
+		[
+			{
+				"package": "rocksdb"
+			},
+			{
+				"package": "gtest",
+				"scope": "test"
+			}
+		],
+	"plugins":
+		[
+			{
+				"name": "version",
+				"phase": "validate",
+				"config":
+					{
+					}
+			},
+			{
+				"name": "cppcheck",
+				"phase": "validate"
+			},
+			{
+				"name": "gcovr",
+				"phase": "verify"
+			}
+		],
+	"define": {}
+}
