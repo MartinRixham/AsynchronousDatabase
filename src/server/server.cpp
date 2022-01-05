@@ -5,22 +5,19 @@
 #include "server.h"
 
 server::server(
-    const std::string &addr,
-    boost::asio::ip::port_type prt,
+    const std::string &address,
+    boost::asio::ip::port_type port,
     int threads):
-        address(boost::asio::ip::make_address(addr)),
-        port(prt),
-        thread_count(threads)
+        thread_count(threads),
+        context(thread_count),
+        listen(std::shared_ptr<listener>(new listener(
+            context, boost::asio::ip::tcp::endpoint{boost::asio::ip::make_address(address), port})))
 {   
 }
 
 void server::serve()
 {
-    boost::asio::io_context io_context{thread_count};
-
-    std::make_shared<listener>(
-        io_context,
-        boost::asio::ip::tcp::endpoint{address, port})->run();
+    listen->run();
 
     std::vector<std::thread> threads;
 
@@ -29,11 +26,16 @@ void server::serve()
     for (int i = 0; i < thread_count - 1; i++)
     {
         threads.emplace_back(
-            [&io_context]()
+            [this]()
             {
-                io_context.run();
+                context.run();
             });
     }
 
-    io_context.run();
+    context.run();
+}
+
+boost::asio::ip::port_type server::port()
+{
+    return listen->port();
 }

@@ -38,11 +38,18 @@ listener::listener(boost::asio::io_context& ioc, boost::asio::ip::tcp::endpoint 
         fail(error, "listen");
         return;
     }
+
+    port_number = acceptor.local_endpoint().port();
 }
 
 void listener::run()
 {
     accept();
+}
+
+boost::asio::ip::port_type listener::port()
+{
+    return port_number;
 }
 
 void listener::accept()
