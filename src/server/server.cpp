@@ -4,7 +4,7 @@
 #include "listener.h"
 #include "server.h"
 
-server::server(
+server::server::server(
     const std::string &address,
     boost::asio::ip::port_type port,
     int threads):
@@ -15,7 +15,7 @@ server::server(
 {   
 }
 
-void server::serve()
+void server::server::serve()
 {
     listen->run();
 
@@ -35,7 +35,7 @@ void server::serve()
     context.run();
 }
 
-boost::asio::ip::port_type server::port()
+boost::asio::ip::port_type server::server::port()
 {
     return listen->port();
 }

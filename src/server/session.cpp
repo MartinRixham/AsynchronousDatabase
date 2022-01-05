@@ -10,17 +10,17 @@ void fail(boost::beast::error_code ec, char const* what)
     std::cerr << what << ": " << ec.message() << "\n";
 }
 
-session::session(boost::asio::ip::tcp::socket&& socket):
+server::session::session(boost::asio::ip::tcp::socket&& socket):
     stream(std::move(socket))
 {
 }
 
-void session::run()
+void server::session::run()
 {
     read();
 }
 
-void session::read()
+void server::session::read()
 {
     request = {};
 
@@ -33,7 +33,7 @@ void session::read()
         boost::beast::bind_front_handler(&session::on_read, shared_from_this()));
 }
 
-boost::beast::http::response<boost::beast::http::string_body> session::bad_request(boost::beast::string_view why)
+boost::beast::http::response<boost::beast::http::string_body> server::session::bad_request(boost::beast::string_view why)
 {
     boost::beast::http::response<boost::beast::http::string_body> response{
         boost::beast::http::status::bad_request, request.version()};
@@ -47,7 +47,7 @@ boost::beast::http::response<boost::beast::http::string_body> session::bad_reque
     return response;
 }
 
-boost::beast::http::response<boost::beast::http::string_body> session::handle_request()
+boost::beast::http::response<boost::beast::http::string_body> server::session::handle_request()
 {
     if (request.method() != boost::beast::http::verb::get &&
         request.method() != boost::beast::http::verb::head)
@@ -93,7 +93,7 @@ boost::beast::http::response<boost::beast::http::string_body> session::handle_re
     }
 }
 
-void session::on_read(boost::beast::error_code error, std::size_t bytes_transferred)
+void server::session::on_read(boost::beast::error_code error, std::size_t bytes_transferred)
 {
     boost::ignore_unused(bytes_transferred);
 
@@ -118,7 +118,7 @@ void session::on_read(boost::beast::error_code error, std::size_t bytes_transfer
             response->need_eof()));
 }
 
-void session::on_write(bool should_close, boost::beast::error_code error, std::size_t bytes_transferred)
+void server::session::on_write(bool should_close, boost::beast::error_code error, std::size_t bytes_transferred)
 {
     boost::ignore_unused(bytes_transferred);
 
@@ -138,7 +138,7 @@ void session::on_write(bool should_close, boost::beast::error_code error, std::s
     }
 }
 
-void session::close()
+void server::session::close()
 {
     boost::beast::error_code ec;
     stream.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);

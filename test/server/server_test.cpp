@@ -5,9 +5,9 @@
 
 #include "server/server.h"
 
-TEST(Server, get_request)
+TEST(Server, DISABLED_get_request)
 {
-    auto srv = std::make_shared<server>("127.0.0.1", 0);
+    auto srv = std::make_shared<server::server>("127.0.0.1", 0);
     auto port = srv->port();
 
     std::thread([srv]()

@@ -1,7 +1,7 @@
 #include "session.h"
 #include "listener.h"
 
-listener::listener(boost::asio::io_context& ioc, boost::asio::ip::tcp::endpoint endpoint):
+server::listener::listener(boost::asio::io_context& ioc, boost::asio::ip::tcp::endpoint endpoint):
     io_context(ioc),
     acceptor(boost::asio::make_strand(ioc))
 {
@@ -42,17 +42,17 @@ listener::listener(boost::asio::io_context& ioc, boost::asio::ip::tcp::endpoint 
     port_number = acceptor.local_endpoint().port();
 }
 
-void listener::run()
+void server::listener::run()
 {
     accept();
 }
 
-boost::asio::ip::port_type listener::port()
+boost::asio::ip::port_type server::listener::port()
 {
     return port_number;
 }
 
-void listener::accept()
+void server::listener::accept()
 {
     // The new connection gets its own strand
     acceptor.async_accept(
@@ -60,7 +60,7 @@ void listener::accept()
         boost::beast::bind_front_handler(&listener::on_accept, shared_from_this()));
 }
 
-void listener::on_accept(boost::beast::error_code error, boost::asio::ip::tcp::socket socket)
+void server::listener::on_accept(boost::beast::error_code error, boost::asio::ip::tcp::socket socket)
 {
     if (error)
     {
