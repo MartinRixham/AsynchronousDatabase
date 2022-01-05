@@ -1,6 +1,6 @@
 {
 	"name": "asyncdb",
-	"compiler": "g++ -g -Wall -Werror -std=c++11",
+	"compiler": "g++ -g -Wall -Wextra -Werror -std=c++11",
 	"packaging": "executable",
 	"modules": [],
 	"dependencies":
@@ -24,7 +24,11 @@
 			},
 			{
 				"name": "cppcheck",
-				"phase": "validate"
+				"phase": "validate",
+				"config":
+					{
+						"options": "--enable=style"
+					}
 			},
 			{
 				"name": "gcovr",
