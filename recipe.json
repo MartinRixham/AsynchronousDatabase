@@ -11,6 +11,10 @@
 			{
 				"package": "gtest",
 				"scope": "test"
+			},
+			{
+				"package": "libcurl",
+				"scope": "test"
 			}
 		],
 	"plugins":
