@@ -13,16 +13,32 @@ size_t writer(void *ptr, size_t size, size_t nmemb, std::string* data)
     return size * nmemb;
 }
 
-TEST(server_test, get_request)
+class server_test: public ::testing::Test
+{ 
+protected:
+    std::thread thread;
+
+    boost::asio::ip::port_type port;
+
+    void SetUp()
+    {
+        auto server = std::make_shared<server::server>("127.0.0.1", 0, 2);
+        port = server->port();
+
+        thread = std::thread([server]()
+            {
+                server->serve();
+            });
+    }
+
+    void TearDown()
+    {
+        thread.detach();
+    }
+};
+
+TEST_F(server_test, get_request)
 {
-    auto srv = std::make_shared<server::server>("127.0.0.1", 0, 2);
-    int port = srv->port();
-
-    std::thread thread([srv]()
-        {
-            srv->serve();
-        });
-
     auto curl = curl_easy_init();
     std::string response;
 
@@ -41,22 +57,13 @@ TEST(server_test, get_request)
 
     curl_easy_cleanup(curl);
     curl_slist_free_all(headers);
-    thread.detach();
 
     EXPECT_EQ(status, CURLE_OK);
     EXPECT_EQ(response, "{ \"message\": \"Hello, world!\" }");   
 }
 
-TEST(server_test, head_request)
+TEST_F(server_test, head_request)
 {
-    auto srv = std::make_shared<server::server>("127.0.0.1", 0, 2);
-    int port = srv->port();
-
-    std::thread thread([srv]()
-        {
-            srv->serve();
-        });
-
     auto curl = curl_easy_init();
     std::string response;
 
@@ -76,22 +83,13 @@ TEST(server_test, head_request)
 
     curl_easy_cleanup(curl);
     curl_slist_free_all(headers);
-    thread.detach();
 
     EXPECT_EQ(status, CURLE_OK);
     EXPECT_EQ(response, "");   
 }
 
-TEST(server_test, put_request)
+TEST_F(server_test, put_request)
 {
-    auto srv = std::make_shared<server::server>("127.0.0.1", 0, 2);
-    int port = srv->port();
-
-    std::thread thread([srv]()
-        {
-            srv->serve();
-        });
-
     auto curl = curl_easy_init();
     std::string response;
 
@@ -111,22 +109,13 @@ TEST(server_test, put_request)
 
     curl_easy_cleanup(curl);
     curl_slist_free_all(headers);
-    thread.detach();
 
     EXPECT_EQ(status, CURLE_OK);
     EXPECT_EQ(response, "Unknown HTTP-method");   
 }
 
-TEST(server_test, two_get_requests)
+TEST_F(server_test, two_get_requests)
 {
-    auto srv = std::make_shared<server::server>("127.0.0.1", 0, 2);
-    int port = srv->port();
-
-    std::thread thread([srv]()
-        {
-            srv->serve();
-        });
-
     auto curl = curl_easy_init();
     std::string response;
  
@@ -151,7 +140,6 @@ TEST(server_test, two_get_requests)
 
     curl_easy_cleanup(curl);
     curl_slist_free_all(headers);
-    thread.detach();
 
     EXPECT_EQ(status, CURLE_OK);
     EXPECT_EQ(response, "{ \"message\": \"Hello, world!\" }");   
