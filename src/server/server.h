@@ -18,8 +18,7 @@ namespace server
 		std::shared_ptr<listener> listen;
 
 	public:
-		server(
-			const std::string &address,
+		explicit server(
 			boost::asio::ip::port_type port,
 			int thread_count = std::thread::hardware_concurrency());
 

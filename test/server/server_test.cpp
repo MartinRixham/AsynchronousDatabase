@@ -22,7 +22,7 @@ protected:
 
 	void SetUp()
 	{
-		auto server = std::make_shared<server::server>("127.0.0.1", 0, 2);
+		auto server = std::make_shared<server::server>(0, 2);
 		port = server->port();
 
 		thread = std::thread([server]()

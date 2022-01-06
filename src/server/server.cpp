@@ -5,13 +5,12 @@
 #include "server.h"
 
 server::server::server(
-	const std::string &address,
 	boost::asio::ip::port_type port,
 	int threads):
 		thread_count(threads),
 		io_context(thread_count),
 		listen(std::make_shared<listener>(
-			io_context, boost::asio::ip::tcp::endpoint{boost::asio::ip::make_address(address), port}))
+			io_context, boost::asio::ip::tcp::endpoint{boost::asio::ip::address_v4::any(), port}))
 {   
 }
 
