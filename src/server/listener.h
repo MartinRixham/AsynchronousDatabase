@@ -15,7 +15,7 @@ namespace server
         boost::asio::ip::port_type port_number;
 
     public:
-        listener(boost::asio::io_context& io_context, boost::asio::ip::tcp::endpoint endpoint);
+        listener(boost::asio::io_context &io_context, boost::asio::ip::tcp::endpoint endpoint);
 
         void run();
 

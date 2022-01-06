@@ -13,7 +13,7 @@ namespace server
     {
         int const thread_count;
 
-        boost::asio::io_context context;
+        boost::asio::io_context io_context;
 
         std::shared_ptr<listener> listen;
 

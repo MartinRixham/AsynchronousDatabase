@@ -9,9 +9,9 @@ server::server::server(
     boost::asio::ip::port_type port,
     int threads):
         thread_count(threads),
-        context(thread_count),
-        listen(std::shared_ptr<listener>(new listener(
-            context, boost::asio::ip::tcp::endpoint{boost::asio::ip::make_address(address), port})))
+        io_context(thread_count),
+        listen(std::make_shared<listener>(
+            io_context, boost::asio::ip::tcp::endpoint{boost::asio::ip::make_address(address), port}))
 {   
 }
 
@@ -25,10 +25,10 @@ void server::server::serve()
 
     for (int i = 0; i < thread_count - 1; i++)
     {
-        threads.emplace_back([this]() { context.run(); });
+        threads.emplace_back([this]() { io_context.run(); });
     }
 
-    context.run();
+    io_context.run();
 }
 
 boost::asio::ip::port_type server::server::port()
