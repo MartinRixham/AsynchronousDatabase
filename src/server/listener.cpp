@@ -12,6 +12,7 @@ server::listener::listener(boost::asio::io_context& ioc, boost::asio::ip::tcp::e
     if (error)
     {
         fail(error, "open");
+
         return;
     }
 
@@ -20,6 +21,7 @@ server::listener::listener(boost::asio::io_context& ioc, boost::asio::ip::tcp::e
     if (error)
     {
         fail(error, "set_option");
+
         return;
     }
 
@@ -28,6 +30,7 @@ server::listener::listener(boost::asio::io_context& ioc, boost::asio::ip::tcp::e
     if (error)
     {
         fail(error, "bind");
+
         return;
     }
 
@@ -36,6 +39,7 @@ server::listener::listener(boost::asio::io_context& ioc, boost::asio::ip::tcp::e
     if (error)
     {
         fail(error, "listen");
+
         return;
     }
 
@@ -65,6 +69,8 @@ void server::listener::on_accept(boost::beast::error_code error, boost::asio::ip
     if (error)
     {
         fail(error, "accept");
+
+        return;
     }
     else
     {

@@ -25,11 +25,7 @@ void server::server::serve()
 
     for (int i = 0; i < thread_count - 1; i++)
     {
-        threads.emplace_back(
-            [this]()
-            {
-                context.run();
-            });
+        threads.emplace_back([this]() { context.run(); });
     }
 
     context.run();

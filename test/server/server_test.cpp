@@ -2,28 +2,47 @@
 #include <curl/curl.h>
 
 #include <memory>
+#include <thread>
 
 #include "server/server.h"
 
-TEST(Server, DISABLED_get_request)
+size_t writer(void *ptr, size_t size, size_t nmemb, std::string* data)
 {
-    auto srv = std::make_shared<server::server>("127.0.0.1", 0);
-    auto port = srv->port();
+    data->append((char*) ptr, size * nmemb);
 
-    std::thread([srv]()
+    return size * nmemb;
+}
+
+TEST(Server, get_request)
+{
+    auto srv = std::make_shared<server::server>("127.0.0.1", 0, 2);
+    int port = srv->port();
+
+    auto thread = std::thread([srv]()
         {
             srv->serve();
         });
 
-    EXPECT_EQ(1, 2);
-
     auto curl = curl_easy_init();
     std::string response;
 
-    curl_easy_setopt(curl, CURLOPT_URL, "localhost:" + std::to_string(port));
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
+    struct curl_slist *headers = NULL;
 
-    EXPECT_EQ(response, "Hello, world!");
+    headers = curl_slist_append(headers, "Connection: close");
+ 
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+    curl_easy_setopt(curl, CURLOPT_URL, "localhost");
+    curl_easy_setopt(curl, CURLOPT_PORT, port);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writer);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    auto status = curl_easy_perform(curl);
+
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+    thread.detach();
+
+    EXPECT_EQ(status, CURLE_OK);
+    EXPECT_EQ(response, "{ \"message\": \"Hello, world!\" }");   
 }
