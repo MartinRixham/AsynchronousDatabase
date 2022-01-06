@@ -43,7 +43,7 @@
 				"phase": "verify",
 				"config":
 					{
-						"options": "--fail-under-line 60"
+						"options": "--fail-under-line 90"
 					}
 			}
 		],
