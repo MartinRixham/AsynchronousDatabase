@@ -1,46 +1,30 @@
+#include <exception>
+
 #include "session.h"
 #include "listener.h"
 
-server::listener::listener(boost::asio::io_context& ioc, boost::asio::ip::tcp::endpoint endpoint):
-    io_context(ioc),
-    acceptor(boost::asio::make_strand(ioc))
+#define ERROR(error) "" + std::string(__FILE__) + " " + std::string(__func__) + "(line:" + std::to_string(__LINE__) + ") " + (error)
+
+server::listener::listener(boost::asio::io_context &io_context, boost::asio::ip::tcp::endpoint endpoint):
+    io_context(io_context),
+    acceptor(boost::asio::make_strand(io_context))
 {
     boost::beast::error_code error;
 
     acceptor.open(endpoint.protocol(), error);
-
-    if (error)
-    {
-        fail(error, "open");
-
-        return;
-    }
-
     acceptor.set_option(boost::asio::socket_base::reuse_address(true), error);
-
-    if (error)
-    {
-        fail(error, "set_option");
-
-        return;
-    }
-
     acceptor.bind(endpoint, error);
 
     if (error)
     {
-        fail(error, "bind");
-
-        return;
+        throw std::runtime_error(ERROR(error.message()));
     }
 
     acceptor.listen(boost::asio::socket_base::max_listen_connections, error);
 
     if (error)
     {
-        fail(error, "listen");
-
-        return;
+        throw std::runtime_error(ERROR(error.message()));
     }
 
     port_number = acceptor.local_endpoint().port();
@@ -68,9 +52,7 @@ void server::listener::on_accept(boost::beast::error_code error, boost::asio::ip
 {
     if (error)
     {
-        fail(error, "accept");
-
-        return;
+        throw std::runtime_error(ERROR(error.message()));
     }
     else
     {

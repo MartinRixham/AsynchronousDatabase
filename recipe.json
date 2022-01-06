@@ -13,6 +13,10 @@
 				"scope": "test"
 			},
 			{
+				"package": "gmock",
+				"scope": "test"
+			},
+			{
 				"package": "libcurl",
 				"scope": "test"
 			}
@@ -36,7 +40,11 @@
 			},
 			{
 				"name": "gcovr",
-				"phase": "verify"
+				"phase": "verify",
+				"config":
+					{
+						"options": "--fail-under-line 60"
+					}
 			}
 		],
 	"define": {}

@@ -13,7 +13,7 @@ size_t writer(void *ptr, size_t size, size_t nmemb, std::string* data)
     return size * nmemb;
 }
 
-TEST(Server, get_request)
+TEST(server_test, get_request)
 {
     auto srv = std::make_shared<server::server>("127.0.0.1", 0, 2);
     int port = srv->port();

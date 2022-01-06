@@ -8,14 +8,14 @@ namespace server
 {
     class listener : public std::enable_shared_from_this<listener>
     {
-        boost::asio::io_context& io_context;
+        boost::asio::io_context &io_context;
 
         boost::asio::ip::tcp::acceptor acceptor;
 
         boost::asio::ip::port_type port_number;
 
     public:
-        listener(boost::asio::io_context& ioc, boost::asio::ip::tcp::endpoint endpoint);
+        listener(boost::asio::io_context& io_context, boost::asio::ip::tcp::endpoint endpoint);
 
         void run();
 
