@@ -1,0 +1,16 @@
+version: '3'
+services:
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    volumes:
+      - ./server.conf:/etc/nginx/conf.d/asyncdb.conf:Z
+      - ./ui:/usr/share/nginx/html:Z
+    ports:
+      - 8080:80
+
+  asyncdb:
+    image: asyncdb:latest
+    container_name: asyncdb
+    expose:
+      - 8080
