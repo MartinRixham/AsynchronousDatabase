@@ -1,0 +1,24 @@
+{
+  "name": "asyncdb",
+  "version": "1.0.0",
+  "description": "A database for asynchronous data processing",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "grunt"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MartinRixham/AsynchronousDatabase.git"
+  },
+  "author": "Martin Rixham",
+  "license": "AGPL-3.0",
+  "bugs": {
+    "url": "https://github.com/MartinRixham/AsynchronousDatabase/issues"
+  },
+  "homepage": "https://github.com/MartinRixham/AsynchronousDatabase#readme",
+  "devDependencies": {
+  }
+}
