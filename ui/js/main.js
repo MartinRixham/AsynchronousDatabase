@@ -1,7 +1,10 @@
+import Datum from "Datum";
 
 function main() {
 
-    console.log("Running!!");
+	console.log("Running!!");
+
+	new Datum.BindingRoot({});
 }
 
 main();

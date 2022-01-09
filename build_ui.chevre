@@ -1,0 +1,5 @@
+#! /bin/bash
+
+cd ui
+npm install
+npx parcel build index.html

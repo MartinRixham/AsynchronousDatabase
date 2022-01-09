@@ -2,12 +2,12 @@
   "name": "asyncdb",
   "version": "1.0.0",
   "description": "A database for asynchronous data processing",
-  "main": "index.js",
   "directories": {
     "test": "test"
   },
   "scripts": {
-    "test": "grunt"
+    "test": "grunt",
+    "start": "parcel index.html"
   },
   "repository": {
     "type": "git",
@@ -20,5 +20,9 @@
   },
   "homepage": "https://github.com/MartinRixham/AsynchronousDatabase#readme",
   "devDependencies": {
+    "parcel": "^2.1.1"
+  },
+  "dependencies": {
+    "Datum": "^0.13.2"
   }
 }
