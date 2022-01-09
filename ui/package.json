@@ -6,7 +6,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "grunt",
+    "test": "parcel build 'test/*' --dist-dir dist/test; qunit dist/test",
     "start": "parcel index.html"
   },
   "repository": {
@@ -20,7 +20,8 @@
   },
   "homepage": "https://github.com/MartinRixham/AsynchronousDatabase#readme",
   "devDependencies": {
-    "parcel": "^2.1.1"
+    "parcel": "^2.1.1",
+    "qunit": "^2.17.2"
   },
   "dependencies": {
     "Datum": "^0.13.2"

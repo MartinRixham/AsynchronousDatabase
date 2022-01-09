@@ -2,4 +2,5 @@
 
 cd ui
 npm install
+npm test
 npx parcel build index.html
