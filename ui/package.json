@@ -25,6 +25,7 @@
     "qunit": "^2.17.2"
   },
   "dependencies": {
+    "@datumjs/pieces": "^0.4.3",
     "Datum": "^0.13.2"
   }
 }
