@@ -4,4 +4,4 @@ cd ui
 npm install
 npm test
 npx parcel build index.html
-cp html dist/html
+cp -R html dist/html
