@@ -1,13 +1,14 @@
 import Datum from "Datum";
-import Pieces from "@datumjs/pieces"
+import { NavPiece } from "@datumjs/pieces"
 
 import html from "~/html/app.html"
 import fetchPage from "~/js/fetchPage";
+import CreateTable from "~/js/table/CreateTable";
 
 export default class App {
 
 	currentPage =
-		new Pieces.NavPiece([{ route: "wat", page: {} }]);
+		new NavPiece([{ route: "createTable", page: new CreateTable() }]);
 
 	onBind(element) {
 
