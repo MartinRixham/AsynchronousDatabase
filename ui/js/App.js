@@ -6,12 +6,11 @@ import fetchPage from "~/js/fetchPage";
 
 export default class App {
 
-	container =
+	currentPage =
 		new Pieces.NavPiece([{ route: "wat", page: {} }]);
 
 	onBind(element) {
 
 		fetchPage(element, html);
 	}
-
 }
