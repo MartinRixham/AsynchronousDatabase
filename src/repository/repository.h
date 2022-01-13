@@ -7,15 +7,11 @@
 
 namespace repository
 {
-    class repository
-    {
-        rocksdb::DB *database;
-
-        public:
-            explicit repository(rocksdb::DB *db);
-
-            void create_table(const std::string &name);
-    };
+	class repository
+	{
+		public:
+			virtual void create_table(const std::string &name) = 0;
+	};
 }
 
 #endif
