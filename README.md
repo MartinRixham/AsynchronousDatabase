@@ -1,4 +1,4 @@
-# Asynchronous Database
+# Asynchronous Database [![Build Status](https://app.travis-ci.com/MartinRixham/AsynchronousDatabase.svg?branch=master)](https://app.travis-ci.com/MartinRixham/AsynchronousDatabase)
 A database for asynchronous data processing
 
 ### Build
