@@ -50,6 +50,7 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::b
 boost::beast::http::response<boost::beast::http::string_body> server::session::handle_request()
 {
 	if (request.method() != boost::beast::http::verb::get &&
+		request.method() != boost::beast::http::verb::post &&
 		request.method() != boost::beast::http::verb::head)
 	{
 		return bad_request("Unknown HTTP-method");

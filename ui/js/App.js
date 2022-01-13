@@ -1,4 +1,3 @@
-import Datum from "Datum";
 import { NavPiece } from "@datumjs/pieces"
 
 import html from "~/html/app.html"

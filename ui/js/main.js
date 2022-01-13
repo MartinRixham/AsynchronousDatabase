@@ -1,11 +1,7 @@
 import { BindingRoot } from "Datum";
 import App from "~/js/App";
 
-function main() {
-
-	console.log("Running!!");
+(function main() {
 
 	new BindingRoot(new App());
-}
-
-main();
+})();

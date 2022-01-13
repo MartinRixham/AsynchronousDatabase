@@ -1,4 +1,4 @@
-import Datum, { Click, Value } from "Datum";
+import { Click, Value } from "Datum";
 import html from "~/html/table/createTable.html";
 
 import fetchPage from "~/js/fetchPage";
