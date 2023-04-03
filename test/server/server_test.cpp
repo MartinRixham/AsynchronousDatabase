@@ -6,11 +6,11 @@
 
 #include "server/server.h"
 
-size_t writer(void *ptr, size_t size, size_t nmemb, std::string* data)
+size_t writer(void *ptr, size_t size, size_t nmemb, std::string* stream)
 {
-	data->append((char*) ptr, size * nmemb);
-
-	return size * nmemb;
+	std::string temp(static_cast<const char*>(ptr), size * nmemb);
+    stream->append(temp);
+    return size*nmemb;
 }
 
 class server_test: public ::testing::Test
@@ -136,7 +136,7 @@ TEST_F(server_test, put_request)
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 	curl_easy_setopt(curl, CURLOPT_URL, "localhost");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
-	curl_easy_setopt(curl, CURLOPT_PUT, 1);
+	curl_easy_setopt(curl, CURLOPT_UPLOAD, 1);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writer);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);

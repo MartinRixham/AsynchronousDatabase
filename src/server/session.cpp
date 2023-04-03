@@ -35,16 +35,16 @@ void server::session::read()
 
 boost::beast::http::response<boost::beast::http::string_body> server::session::bad_request(boost::beast::string_view why)
 {
-	boost::beast::http::response<boost::beast::http::string_body> response{
+	boost::beast::http::response<boost::beast::http::string_body> bad_request_response{
 		boost::beast::http::status::bad_request, request.version()};
 
-	response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
-	response.set(boost::beast::http::field::content_type, "text/html");
-	response.keep_alive(request.keep_alive());
-	response.body() = std::string(why);
-	response.prepare_payload();
+	bad_request_response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
+	bad_request_response.set(boost::beast::http::field::content_type, "text/html");
+	bad_request_response.keep_alive(request.keep_alive());
+	bad_request_response.body() = std::string(why);
+	bad_request_response.prepare_payload();
 
-	return response;
+	return bad_request_response;
 }
 
 boost::beast::http::response<boost::beast::http::string_body> server::session::handle_request()
@@ -68,29 +68,29 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 
 	if (request.method() == boost::beast::http::verb::head)
 	{
-		boost::beast::http::response<boost::beast::http::string_body> response{
+		boost::beast::http::response<boost::beast::http::string_body> ok_response{
 			boost::beast::http::status::ok, request.version()};
 
-		response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
-		response.set(boost::beast::http::field::content_type, "application/json");
-		response.content_length(body.size());
-		response.keep_alive(request.keep_alive());
+		ok_response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
+		ok_response.set(boost::beast::http::field::content_type, "application/json");
+		ok_response.content_length(body.size());
+		ok_response.keep_alive(request.keep_alive());
 
-		return response;
+		return ok_response;
 	}
 	else
 	{
-		boost::beast::http::response<boost::beast::http::string_body> response{
+		boost::beast::http::response<boost::beast::http::string_body> ok_response{
 			std::piecewise_construct,
 			std::make_tuple(body),
 			std::make_tuple(boost::beast::http::status::ok, request.version())};
 
-		response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
-		response.set(boost::beast::http::field::content_type, "application/json");
-		response.content_length(body.size());
-		response.keep_alive(request.keep_alive());
+		ok_response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
+		ok_response.set(boost::beast::http::field::content_type, "application/json");
+		ok_response.content_length(body.size());
+		ok_response.keep_alive(request.keep_alive());
 
-		return response;
+		return ok_response;
 	}
 }
 

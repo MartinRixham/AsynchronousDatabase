@@ -12,7 +12,7 @@ services:
       - 8443:443
 
   asyncdb:
-    image: asyncdb:latest
+    build: .
     container_name: asyncdb
     expose:
       - 8080
