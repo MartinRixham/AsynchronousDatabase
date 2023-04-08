@@ -1,12 +1,13 @@
 {
   "name": "asyncdb",
   "version": "1.0.0",
+  "type": "module",
   "description": "A database for asynchronous data processing",
   "directories": {
     "test": "test"
   },
   "scripts": {
-    "test": "parcel build 'test/*' --no-optimize --dist-dir dist/test && nyc qunit dist/test",
+    "test": "rm -rf dist/test && parcel build 'test/**/*.js' --no-optimize --dist-dir dist/test && qunit dist/test",
     "start": "parcel index.html"
   },
   "repository": {
