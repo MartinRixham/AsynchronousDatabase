@@ -4,7 +4,7 @@
 #include <rocksdb/db.h>
 
 #include <string>
-#include <unordered_set>
+#include <vector>
 
 #include "repository/repository.h"
 
@@ -12,12 +12,14 @@ namespace repository
 {
 	class fake_repository : public repository
 	{
-		std::unordered_set<std::string> tables;
+		std::vector<std::string> tables;
 
 		public:
 			fake_repository();
 
 			void create_table(const std::string &name) override;
+
+			virtual std::vector<std::string> list_tables() override;
 
 			bool has_table(const std::string &name);
 	};

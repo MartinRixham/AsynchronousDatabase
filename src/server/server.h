@@ -2,7 +2,6 @@
 #define SERVER_SERVER_H
 
 #include <boost/asio.hpp>
-
 #include <thread>
 
 #include "listener.h"

@@ -3,13 +3,13 @@ import html from "~/html/table/newTable.html";
 
 export default class {
 
+	#title = "";
+
 	constructor(fetchPage, client) {
 
 		this.fetchPage = fetchPage;
 		this.client = client;
 	}
-
-	#title = "";
 
 	onBind(element) {
 

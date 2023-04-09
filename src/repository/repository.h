@@ -4,6 +4,7 @@
 #include <rocksdb/db.h>
 
 #include <string>
+#include <vector>
 
 namespace repository
 {
@@ -11,6 +12,8 @@ namespace repository
 	{
 		public:
 			virtual void create_table(const std::string &name) = 0;
+
+			virtual std::vector<std::string> list_tables() = 0;
 	};
 }
 

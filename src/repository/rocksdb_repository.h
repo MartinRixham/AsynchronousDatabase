@@ -4,6 +4,7 @@
 #include <rocksdb/db.h>
 
 #include <string>
+#include <vector>
 
 #include "repository.h"
 
@@ -17,6 +18,8 @@ namespace repository
 			explicit rocksdb_repository(rocksdb::DB *db);
 
 			void create_table(const std::string &name) override;
+
+			virtual std::vector<std::string> list_tables() override;
 	};
 }
 
