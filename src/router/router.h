@@ -2,7 +2,7 @@
 #define ROUTER_ROUTER_H
 
 
-#include "repository/repository.h"
+#include "repository/rocksdb_repository.h"
 #include <boost/json.hpp>
 
 namespace router

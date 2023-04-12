@@ -2,7 +2,6 @@
 #define REPOSITORY_ROCSKDB_REPOSITORY_H
 
 #include <rocksdb/db.h>
-
 #include <string>
 #include <vector>
 
@@ -15,11 +14,13 @@ namespace repository
 		rocksdb::DB *database;
 
 		public:
-			explicit rocksdb_repository(rocksdb::DB *db);
+			explicit rocksdb_repository();
 
 			void create_table(const std::string &name) override;
 
 			virtual std::vector<std::string> list_tables() override;
+
+			~rocksdb_repository();
 	};
 }
 

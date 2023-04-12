@@ -8,19 +8,22 @@ repository::fake_repository::fake_repository()
 
 void repository::fake_repository::create_table(const std::string &name)
 {
-	tables.push_back(name);
+	tables.insert(std::pair(name, "{ \"name\": \"" + name +"\" }"));
 }
 
 std::vector<std::string> repository::fake_repository::list_tables()
 {
-	std::vector<std::string> copy;
+	std::vector<std::string> table_list;
 
-	copy.assign(tables.begin(), tables.end());
+	for (std::map<std::string, std::string>::iterator it = tables.begin(); it != tables.end(); ++it)
+	{
+		table_list.push_back(it->second);
+	}
 
-	return copy;
+	return table_list;
 }
 
 bool repository::fake_repository::has_table(const std::string &name)
 {
-	return std::count(tables.begin(), tables.end(), name) > 0;
+	return tables.count(name) > 0;
 }

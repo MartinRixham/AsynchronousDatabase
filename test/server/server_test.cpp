@@ -3,13 +3,15 @@
 
 #include <memory>
 #include <thread>
+#include <filesystem>
 
 #include "server/server.h"
 
-size_t writer(void *ptr, size_t size, size_t nmemb, std::string* stream)
+size_t writer(void *ptr, size_t size, size_t nmemb, std::string *stream)
 {
 	std::string temp(static_cast<const char*>(ptr), size * nmemb);
     stream->append(temp);
+
     return size*nmemb;
 }
 
@@ -33,6 +35,7 @@ protected:
 
 	void TearDown()
 	{
+		std::filesystem::remove_all("/tmp/testdb");
 		thread.detach();
 	}
 };
@@ -62,7 +65,7 @@ TEST_F(server_test, get_request)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{ \"message\": \"Hello, world!\" }");	
+	EXPECT_EQ(response, "{}");	
 }
 
 TEST_F(server_test, post_request)
@@ -91,7 +94,7 @@ TEST_F(server_test, post_request)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{ \"message\": \"Hello, world!\" }");   
+	EXPECT_EQ(response, "");   
 }
 
 TEST_F(server_test, head_request)
@@ -168,7 +171,7 @@ TEST_F(server_test, two_get_requests)
 	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{ \"message\": \"Hello, world!\" }");  
+	EXPECT_EQ(response, "{}");  
 	response = "";
 
 	struct curl_slist *headers = NULL;
@@ -185,5 +188,54 @@ TEST_F(server_test, two_get_requests)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{ \"message\": \"Hello, world!\" }");   
+	EXPECT_EQ(response, "{}");   
+}
+
+TEST_F(server_test, post_then_get_table)
+{
+	auto curl = curl_easy_init();
+	long http_code = 0;
+	std::string response;
+ 
+	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+	curl_easy_setopt(curl, CURLOPT_URL, "localhost/table");
+	curl_easy_setopt(curl, CURLOPT_PORT, port);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "{ \"name\": \"a table name\" }");
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writer);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+	auto status = curl_easy_perform(curl);
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+	EXPECT_EQ(status, CURLE_OK);
+	EXPECT_EQ(http_code, 200);
+	EXPECT_EQ(response, "");  
+
+	curl_easy_cleanup(curl);
+
+	curl = curl_easy_init();
+	http_code = 0;
+	response = "";
+
+	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+	curl_easy_setopt(curl, CURLOPT_URL, "localhost/tables");
+	curl_easy_setopt(curl, CURLOPT_PORT, port);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writer);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+	struct curl_slist *headers = NULL;
+
+	headers = curl_slist_append(headers, "Connection: close");
+
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+	status = curl_easy_perform(curl);
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+	curl_easy_cleanup(curl);
+	curl_slist_free_all(headers);
+
+	EXPECT_EQ(status, CURLE_OK);
+	EXPECT_EQ(http_code, 200);
+	EXPECT_EQ(response, "{\"tables\":[{\"name\":\"a table name\"}]}");   
 }

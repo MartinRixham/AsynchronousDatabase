@@ -3,21 +3,62 @@
 #include <memory>
 #include <iostream>
 
+#include "error.h"
 #include "session.h"
 
-void fail(boost::beast::error_code ec, char const* what)
-{
-	std::cerr << what << ": " << ec.message() << "\n";;
-}
-
-server::session::session(boost::asio::ip::tcp::socket&& socket):
-	stream(std::move(socket))
+server::session::session(boost::asio::ip::tcp::socket&& socket, router::router &router):
+	stream(std::move(socket)),
+	router(router)
 {
 }
 
 void server::session::run()
 {
 	read();
+}
+
+void server::session::on_read(boost::beast::error_code error, std::size_t bytes_transferred)
+{
+	boost::ignore_unused(bytes_transferred);
+
+	if (error == boost::beast::http::error::end_of_stream)
+	{
+		return close();
+	}
+	else if (error)
+	{
+		throw std::runtime_error(ERROR(error.message()));
+	}
+
+	response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(handle_request());
+
+	boost::beast::http::async_write(
+		stream,
+		*response,
+		boost::beast::bind_front_handler(
+			&session::on_write,
+			shared_from_this(),
+			response->need_eof()));
+}
+
+void server::session::on_write(bool should_close, boost::beast::error_code error, std::size_t bytes_transferred)
+{
+	boost::ignore_unused(bytes_transferred);
+
+	if (error)
+	{
+		throw std::runtime_error(ERROR(error.message()));
+	}
+	else if (should_close)
+	{
+		return close();
+	}
+	else
+	{
+		response = nullptr;
+
+		read();
+	}
 }
 
 void server::session::read()
@@ -64,7 +105,17 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 		return bad_request("Illegal request-target");
 	}
 
-	std::string body("{ \"message\": \"Hello, world!\" }");
+	std::string body;
+
+	if (request.method() == boost::beast::http::verb::post)
+	{
+		router.post(std::string(request.target()), request.body());
+		body = "";
+	}
+	else
+	{
+		body = boost::json::serialize(router.get(std::string(request.target())));
+	}
 
 	if (request.method() == boost::beast::http::verb::head)
 	{
@@ -91,51 +142,6 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 		ok_response.keep_alive(request.keep_alive());
 
 		return ok_response;
-	}
-}
-
-void server::session::on_read(boost::beast::error_code error, std::size_t bytes_transferred)
-{
-	boost::ignore_unused(bytes_transferred);
-
-	if (error == boost::beast::http::error::end_of_stream)
-	{
-		return close();
-	}
-
-	if (error)
-	{
-		return fail(error, "read");
-	}
-
-	response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(handle_request());
-
-	boost::beast::http::async_write(
-		stream,
-		*response,
-		boost::beast::bind_front_handler(
-			&session::on_write,
-			shared_from_this(),
-			response->need_eof()));
-}
-
-void server::session::on_write(bool should_close, boost::beast::error_code error, std::size_t bytes_transferred)
-{
-	boost::ignore_unused(bytes_transferred);
-
-	if (error)
-	{
-		return fail(error, "write");
-	}
-	else if (should_close)
-	{
-		return close();
-	}
-	else
-	{
-		response = nullptr;
-
-		read();
 	}
 }
 

@@ -1,10 +1,8 @@
 #ifndef REPOSITORY_ROCSKDB_REPOSITORY_H
 #define REPOSITORY_ROCSKDB_REPOSITORY_H
 
-#include <rocksdb/db.h>
-
 #include <string>
-#include <vector>
+#include <map>
 
 #include "repository/repository.h"
 
@@ -12,7 +10,7 @@ namespace repository
 {
 	class fake_repository : public repository
 	{
-		std::vector<std::string> tables;
+		std::map<std::string, std::string> tables;
 
 		public:
 			fake_repository();

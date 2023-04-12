@@ -1,8 +1,17 @@
+#include "error.h"
 #include "rocksdb_repository.h"
 
-repository::rocksdb_repository::rocksdb_repository(rocksdb::DB *db)
+repository::rocksdb_repository::rocksdb_repository()
 {
-	database = db;
+	rocksdb::Options options;
+	options.create_if_missing = true;
+
+	rocksdb::Status status = rocksdb::DB::Open(options, "/tmp/testdb_" + std::to_string(std::rand()), &database);
+
+	if (!status.ok())
+	{
+		throw std::runtime_error(ERROR(status.ToString()));
+	}
 }
 
 void repository::rocksdb_repository::create_table(const std::string &name)
@@ -22,4 +31,9 @@ std::vector<std::string> repository::rocksdb_repository::list_tables()
 	}
 
 	return tables;
+}
+
+repository::rocksdb_repository::~rocksdb_repository()
+{
+	delete database;
 }

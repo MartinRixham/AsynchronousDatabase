@@ -1,4 +1,4 @@
-clang++
+g++
 -Wall
 -Wextra
 -Werror
