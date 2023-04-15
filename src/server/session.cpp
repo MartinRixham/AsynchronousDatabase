@@ -108,8 +108,7 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 
 	if (request.method() == boost::beast::http::verb::post)
 	{
-		router.post(std::string(request.target()), request.body());
-		body = "";
+		body = boost::json::serialize(router.post(std::string(request.target()), boost::json::parse(request.body()).as_object()));
 	}
 	else
 	{

@@ -3,6 +3,12 @@
     margin: 1% 0;
 }
 
+.create-table input:focus {
+
+	color: #666;
+}
+
 .tables .new-table {
+
 	float: right;
 }

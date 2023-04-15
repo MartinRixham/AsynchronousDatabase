@@ -7,7 +7,7 @@ router::router::router(repository::repository &repo):
 
 boost::json::object router::router::get(const std::string &route)
 {
-	boost::json::object json;
+	boost::json::object response;
 
 	if (route == "/tables")
 	{
@@ -20,17 +20,29 @@ boost::json::object router::router::get(const std::string &route)
 			tables_json.push_back(boost::json::parse(tables[i]).as_object());
 		}
 
-		json.insert(std::make_pair("tables", tables_json));
+		response.insert(std::make_pair("tables", tables_json));
 	}
 
-	return json;
+	return response;
 }
 
-void router::router::post(const std::string &route, const std::string &body)
+boost::json::object router::router::post(const std::string &route, const boost::json::object &body)
 {
+	boost::json::object response;
+
     if (route == "/table")
     {
-		boost::json::object table = boost::json::parse(body).as_object();
-	    repository.create_table(std::string(table["name"].as_string()));
+		std::string name = std::string(body.at("name").as_string());
+
+		if (name.length() > 0)
+		{
+			repository.create_table(name);
+		}
+		else
+		{
+			response.insert(std::pair("error", "Table requires name of length greater than 0."));
+		}
     }
+
+	return response;
 }

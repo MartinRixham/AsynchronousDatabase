@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 #include <boost/json.hpp>
-#include <iostream>
 
 #include "repository/fake_repository.h"
 #include "router/router.h"
@@ -9,8 +8,11 @@ TEST(router_test, nonsense)
 {
 	repository::fake_repository repository;
 	router::router router(repository);
+	boost::json::object request;
 
-	router.post("/wibble", "really a real table");
+	request.insert(std::pair("name", "really a real table"));
+
+	router.post("/wibble", request);
 
 	ASSERT_FALSE(repository.has_table("really a real table"));
 }
@@ -19,23 +21,41 @@ TEST(router_test, create_table)
 {
 	repository::fake_repository repository;
 	router::router router(repository);
+	boost::json::object request;
 
-	router.post("/table", "{ \"name\": \"really a real table\" }");
+	request.insert(std::pair("name", "really a real table"));
 
-	std::vector<std::string> tables = repository.list_tables();
-
-	std::cerr << "table count: " << tables.size() << "\n";
+	router.post("/table", request);
 
 	ASSERT_TRUE(repository.has_table("really a real table"));
+}
+
+TEST(router_test, fail_to_create_table_with_empty_name)
+{
+	repository::fake_repository repository;
+	router::router router(repository);
+	boost::json::object request;
+
+	request.insert(std::pair("name", ""));
+
+	boost::json::object response = router.post("/table", request);
+
+	ASSERT_EQ("Table requires name of length greater than 0.", response["error"].as_string());
+	ASSERT_FALSE(repository.has_table(""));
 }
 
 TEST(router_test, read_table)
 {
 	repository::fake_repository repository;
 	router::router router(repository);
+	boost::json::object first_request;
+	boost::json::object second_request;
 
-	router.post("/table", "{ \"name\": \"first table\" }");
-	router.post("/table", "{ \"name\": \"second table\" }");
+	first_request.insert(std::pair("name", "first table"));
+	second_request.insert(std::pair("name", "second table"));
+
+	router.post("/table", first_request);
+	router.post("/table", second_request);
 
 	boost::json::array tables = router.get("/tables")["tables"].as_array();
 

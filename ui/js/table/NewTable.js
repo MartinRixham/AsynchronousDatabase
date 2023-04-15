@@ -1,15 +1,17 @@
-import { Click, Value } from "Datum";
+import { Binding } from "Datum";
 import html from "~/html/table/newTable.html";
 
 export default class {
 
-	#title = "";
+	name = "";
 
 	#fetchPage
 
 	#client
 
 	#onNewTable
+
+	#nameChanged
 
 	constructor(fetchPage, client, onNewTable) {
 
@@ -23,19 +25,39 @@ export default class {
 		this.#fetchPage(element, html);
 	}
 
-	title = new Value((value) => {
+	title = new Binding({
+		value: value => {
 
-		if (value) {
+			if (value != undefined) {
 
-			this.#title = value;
+				this.name = value;
+				this.#nameChanged = true;
+			}
+
+			return this.name;
+		},
+		classes: {
+			"uk-form-danger": () => !this.#isValid() && this.#nameChanged
 		}
-
-		return this.#title;
 	});
 
-	save = new Click(() => {
+	save = new Binding({
+		click: () => {
 
-		const newTable = { name: this.#title };
-		this.#client.postTable(newTable, () => this.#onNewTable(newTable));
+			if (this.#isValid()) {
+
+				const newTable = { name: this.name };
+				this.#client.postTable(newTable, () => this.#onNewTable(newTable));
+			}
+		},
+		update: (element) => {
+
+			element.disabled = !this.#isValid();
+		}
 	});
+
+	#isValid() {
+
+		return this.name.length > 0;
+	}
 }

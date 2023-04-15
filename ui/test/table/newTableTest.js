@@ -30,3 +30,19 @@ QUnit.test('save table', assert => {
 		assert.equal(tables.tables[0].name, "my new table");
 	}); 
 });
+
+QUnit.test('fail to save table with no name', assert => {
+
+	const client = new DatabaseClient();
+	const newTable = new NewTable(() => {}, client);
+	const title = newTable.title();
+	const save = newTable.save();
+
+	title.value("");
+	save.click();
+
+	client.getTables((tables) => {
+
+		assert.equal(tables.tables.length, 0);
+	});
+});

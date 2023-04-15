@@ -16,7 +16,7 @@ namespace router
 
 		boost::json::object get(const std::string &route);
 
-		void post(const std::string &route, const std::string &body);
+		boost::json::object post(const std::string &route, const boost::json::object &body);
 	};
 }
 

@@ -79,10 +79,10 @@ TEST_F(server_test, post_request)
 	headers = curl_slist_append(headers, "Connection: close");
 
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
-	curl_easy_setopt(curl, CURLOPT_URL, "localhost");
+	curl_easy_setopt(curl, CURLOPT_URL, "localhost/table");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "{ \"field\": \"value\" }");
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "{ \"name\": \"\" }");
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writer);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
@@ -94,7 +94,7 @@ TEST_F(server_test, post_request)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "");   
+	EXPECT_EQ(response, "{\"error\":\"Table requires name of length greater than 0.\"}");   
 }
 
 TEST_F(server_test, head_request)
@@ -209,7 +209,7 @@ TEST_F(server_test, post_then_get_table)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "");  
+	EXPECT_EQ(response, "{}"); 
 
 	curl_easy_cleanup(curl);
 
@@ -237,5 +237,5 @@ TEST_F(server_test, post_then_get_table)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{\"tables\":[{\"name\":\"a table name\"}]}");   
+	EXPECT_EQ(response, "{\"tables\":[{\"name\":\"a table name\"}]}"); 
 }
