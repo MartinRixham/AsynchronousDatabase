@@ -9,10 +9,13 @@ export default class {
 
 	#client
 
-	constructor(fetchPage, client) {
+	#onNewTable
+
+	constructor(fetchPage, client, onNewTable) {
 
 		this.#fetchPage = fetchPage;
 		this.#client = client;
+		this.#onNewTable = onNewTable;
 	}
 
 	onBind(element) {
@@ -32,6 +35,7 @@ export default class {
 
 	save = new Click(() => {
 
-		this.#client.postTable({ name: this.#title });
+		const newTable = { name: this.#title };
+		this.#client.postTable(newTable, () => this.#onNewTable(newTable));
 	});
 }

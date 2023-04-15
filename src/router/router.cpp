@@ -1,7 +1,5 @@
 #include "router.h"
 
-#include <utility>
-
 router::router::router(repository::repository &repo):
     repository(repo)
 {

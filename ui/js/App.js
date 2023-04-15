@@ -12,8 +12,8 @@ export default class App {
 
 	currentPage =
 		new NavPiece([
-			{ route: "newTable", page: new NewTable(fetchPage, this.#client) },
-			{ route: "tables", page: new Tables(fetchPage, this.#client) }
+			{ route: "tables", page: new Tables(fetchPage, this.#client) },
+			{ route: "newTable", page: new NewTable(fetchPage, this.#client, () => {}) }
 		]);
 
 	onBind(element) {

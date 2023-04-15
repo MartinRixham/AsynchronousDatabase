@@ -1,9 +1,9 @@
 #ifndef ROUTER_ROUTER_H
 #define ROUTER_ROUTER_H
 
+#include <boost/json.hpp>
 
 #include "repository/rocksdb_repository.h"
-#include <boost/json.hpp>
 
 namespace router
 {
