@@ -24,8 +24,9 @@ QUnit.test('save table', assert => {
 	title.value("my new table");
 	save.click();
 
-	const tables = client.getTables(); 
+	client.getTables((tables) => {
 
-	assert.equal(tables.length, 1);
-	assert.equal(tables[0].title, "my new table");
+		assert.equal(tables.tables.length, 1);
+		assert.equal(tables.tables[0].name, "my new table");
+	}); 
 });

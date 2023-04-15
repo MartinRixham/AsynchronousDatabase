@@ -5,15 +5,19 @@ export default class {
 
 	#title = "";
 
+	#fetchPage
+
+	#client
+
 	constructor(fetchPage, client) {
 
-		this.fetchPage = fetchPage;
-		this.client = client;
+		this.#fetchPage = fetchPage;
+		this.#client = client;
 	}
 
 	onBind(element) {
 
-		this.fetchPage(element, html);
+		this.#fetchPage(element, html);
 	}
 
 	title = new Value((value) => {
@@ -28,6 +32,6 @@ export default class {
 
 	save = new Click(() => {
 
-		this.client.postTable({ title: this.#title });
+		this.#client.postTable({ name: this.#title });
 	});
 }

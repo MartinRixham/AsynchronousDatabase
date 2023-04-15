@@ -8,4 +8,11 @@ export default class {
 				body: JSON.stringify(table)
 			});
 	}
+
+	getTables(callback) {
+
+		fetch("asyncdb/tables")
+			.then(response => response.json())
+			.then(json => callback(json));
+	}
 }

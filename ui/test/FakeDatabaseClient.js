@@ -6,7 +6,7 @@ export default class {
 		this.#tables.push(table);
 	}
 
-	getTables() {
-		return [...this.#tables]
+	getTables(callback) {
+		callback({ tables: [...this.#tables] });
 	}
 }

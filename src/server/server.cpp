@@ -14,7 +14,6 @@ server::server::server(
 		repository(repository::rocksdb_repository()),
 		router(router::router(repository))
 {   
-
 	boost::beast::error_code error;
 	boost::asio::ip::tcp::endpoint endpoint{boost::asio::ip::address_v4::any(), port};
 
