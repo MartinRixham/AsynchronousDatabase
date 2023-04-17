@@ -1,5 +1,16 @@
 <div class="create-table">
   <label for="tableName" class="uk-label">Table Name:</label>
   <input type="text" id="tableName" class="uk-input" data-bind="title" />
+  <h4>dependencies</h4>
+  <div data-bind="dependencies">
+    <div data-bind="title"></div>
+  </div>
+  <div data-bind="newDependency">
+    <label for"firstDependency" class="uk-label">First Dependency</label>
+    <select data-bind="select" type="select" id="firstDependency">
+      <option>wibble</option>
+    </select>
+	<button data-bind="add">Add</button>
+  </div>
   <button class="submit uk-button-primary" data-bind="save">Create</button>
 </div>

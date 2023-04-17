@@ -3,9 +3,9 @@
     margin: 1% 0;
 }
 
-.create-table input:focus {
+.create-table .input-error {
 
-	color: #666;
+	border-color: #f0506e;
 }
 
 .tables .new-table {

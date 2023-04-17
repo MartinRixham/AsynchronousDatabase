@@ -1,17 +1,23 @@
 import { Binding } from "Datum";
 import html from "~/html/table/newTable.html";
 
+import Dependency from "./Dependency";
+
 export default class {
 
 	name = "";
 
-	#fetchPage
+	newDependency = new Dependency(this.#addDependency.bind(this));
 
-	#client
+	dependencies = [];
 
-	#onNewTable
+	#fetchPage;
 
-	#nameChanged
+	#client;
+
+	#onNewTable;
+
+	#nameChanged;
 
 	constructor(fetchPage, client, onNewTable) {
 
@@ -37,7 +43,7 @@ export default class {
 			return this.name;
 		},
 		classes: {
-			"uk-form-danger": () => !this.#isValid() && this.#nameChanged
+			"input-error": () => !this.#isValid() && this.#nameChanged
 		}
 	});
 
@@ -46,7 +52,7 @@ export default class {
 
 			if (this.#isValid()) {
 
-				const newTable = { name: this.name };
+				const newTable = { name: this.name, dependencies: this.dependencies };
 				this.#client.postTable(newTable, () => this.#onNewTable(newTable));
 			}
 		},
@@ -59,5 +65,11 @@ export default class {
 	#isValid() {
 
 		return this.name.length > 0;
+	}
+
+	#addDependency(dependency) {
+
+		this.dependencies.push(dependency);
+		this.newDependency = new Dependency(this.#addDependency.bind(this));
 	}
 }

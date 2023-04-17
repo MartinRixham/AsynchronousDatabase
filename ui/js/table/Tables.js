@@ -6,9 +6,9 @@ import NewTable from "./NewTable";
 
 export default class {
 
-	#fetchPage
+	#fetchPage;
 
-	#client
+	#client;
 
 	tables = [];
 

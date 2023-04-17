@@ -7,6 +7,7 @@
     "test": "test"
   },
   "scripts": {
+    "build": "parcel build index.html",
     "test": "rm -rf dist/test && parcel build 'test/**/*.js' --no-optimize --dist-dir dist/test && qunit dist/test",
     "start": "parcel index.html"
   },
