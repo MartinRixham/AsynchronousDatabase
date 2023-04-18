@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "parcel build index.html",
-    "test": "rm -rf dist/test && parcel build 'test/**/*.js' --no-optimize --dist-dir dist/test && qunit dist/test",
+    "test": "http-server -s -p 8910 dist/test & rm -rf dist/test && parcel build test/index.html --no-optimize --dist-dir dist/test && grunt; export return=$?; kill %1; exit $return",
     "start": "parcel index.html"
   },
   "repository": {
@@ -22,6 +22,8 @@
   },
   "homepage": "https://github.com/MartinRixham/AsynchronousDatabase#readme",
   "devDependencies": {
+    "grunt": "1.6.1",
+    "grunt-contrib-qunit": "7.0.0",
     "nyc": "15.1.0",
     "parcel": "2.8.3",
     "process": "^0.11.10",

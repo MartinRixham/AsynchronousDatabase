@@ -45,10 +45,6 @@
 					{
 						"options": "--fail-under-line 90"
 					}
-			},
-			{
-				"name": "build_ui",
-				"phase": "verify"
 			}
 		],
 	"define": {}
