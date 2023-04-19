@@ -3,13 +3,20 @@ import Dependency from "~/js/table/Dependency";
 
 QUnit.module('dependency');
 
-QUnit.test('populate options', assert => {
+QUnit.test('add dependency', assert => {
+
+	let newDependency = null;
+
+	const addDependency = (dependency) => {
+
+		newDependency = dependency;
+	}
 
 	const getTables = () => ["first table", "second table"];
-	const dependency = new Dependency(() => {}, getTables);
-	const select = document.createElement("select");
+	const dependency = new Dependency(addDependency, getTables);
 
-	dependency.select().init(select);
+	dependency.select().value("second table");
+	dependency.add().click();
 
-	assert.equal(select.children.length, 2);
+	assert.equal(newDependency.title().text(), "second table");
 });
