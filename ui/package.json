@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "parcel build index.html",
-    "test": "http-server -s -p 8910 dist/test & rm -rf dist/test && parcel build test/index.html --no-optimize --dist-dir dist/test && grunt; export return=$?; kill %1; exit $return",
+    "test": "http-server -s -p 8910 dist/test & parcel build test/index.html --no-optimize --dist-dir dist/test && grunt; export return=$?; kill %1; exit $return",
     "start": "parcel index.html"
   },
   "repository": {
