@@ -7,7 +7,7 @@ export default class {
 
 	name = "";
 
-	newDependency = new Dependency(this.#addDependency.bind(this));
+	newDependency = null;
 
 	dependencies = [];
 
@@ -19,11 +19,15 @@ export default class {
 
 	#nameChanged;
 
-	constructor(fetchPage, client, onNewTable) {
+	#getTables;
 
+	constructor(fetchPage, getTables, client, onNewTable) {
+
+		this.newDependency = new Dependency(this.#addDependency.bind(this), getTables);
 		this.#fetchPage = fetchPage;
 		this.#client = client;
 		this.#onNewTable = onNewTable;
+		this.#getTables = getTables;
 	}
 
 	onBind(element) {
@@ -70,6 +74,6 @@ export default class {
 	#addDependency(dependency) {
 
 		this.dependencies.push(dependency);
-		this.newDependency = new Dependency(this.#addDependency.bind(this));
+		this.newDependency = new Dependency(this.#addDependency.bind(this), this.#getTables);
 	}
 }

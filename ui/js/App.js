@@ -1,3 +1,4 @@
+import { Text } from "Datum"
 import { NavPiece } from "@datumjs/pieces"
 
 import html from "~/html/app.html"
@@ -12,8 +13,17 @@ export default class App {
 
 	currentPage =
 		new NavPiece([
-			{ route: "tables", page: new Tables(fetchPage, this.#client) },
-			{ route: "newTable", page: new NewTable(fetchPage, this.#client, () => {}) }
+			{
+				route: "tables", page: new Tables(fetchPage, this.#client)
+			},
+			{
+				route: "newTable",
+				page: new NewTable(
+					fetchPage,
+					callback => this.#client.getTables(tables => callback(tables.tables.map((table) => new Text(() => table.name)))),
+					this.#client,
+					() => { this.currentPage.setPage("tables")})
+			}
 		]);
 
 	onBind(element) {

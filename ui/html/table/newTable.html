@@ -8,7 +8,9 @@
   <div data-bind="newDependency">
     <label for"firstDependency" class="uk-label">First Dependency</label>
     <select data-bind="select" type="select" id="firstDependency">
-      <option>wibble</option>
+      <optgroup label="table" data-bind="options">
+        <option></option>
+      </optgroup>
     </select>
 	<button data-bind="add">Add</button>
   </div>

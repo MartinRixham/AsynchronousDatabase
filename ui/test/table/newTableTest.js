@@ -6,7 +6,7 @@ QUnit.module('new table');
 
 QUnit.test('set table value', assert => {
 
-	const newTable = new NewTable(() => {});
+	const newTable = new NewTable(() => {}, () => []);
 
 	newTable.title().value("my new table");
 
@@ -16,7 +16,7 @@ QUnit.test('set table value', assert => {
 QUnit.test('save table', assert => {
 
 	const client = new DatabaseClient();
-	const newTable = new NewTable(() => {}, client);
+	const newTable = new NewTable(() => {}, () => [], client);
 
 	newTable.title().value("my new table");
 	newTable.save().click();
@@ -31,7 +31,7 @@ QUnit.test('save table', assert => {
 QUnit.test('fail to save table with no name', assert => {
 
 	const client = new DatabaseClient();
-	const newTable = new NewTable(() => {}, client);
+	const newTable = new NewTable(() => {}, () => [], client);
 
 	newTable.title().value("");
 	newTable.save().click();
@@ -48,7 +48,7 @@ QUnit.test('save table with one dependency', assert => {
 
 	client.postTable("\name\":\"my dependency\"")
 
-	const newTable = new NewTable(() => {}, client);
+	const newTable = new NewTable(() => {}, () => [], client);
 
 	newTable.title().value("my new table");
 	newTable.newDependency.select().value("my dependency")

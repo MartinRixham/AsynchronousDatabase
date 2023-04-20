@@ -31,7 +31,7 @@ export default class {
 
 	newTableButton = new Binding({
 		click: () => {
-			this.newTable = new NewTable(this.#fetchPage, this.#client, newTable => {
+			this.newTable = new NewTable(this.#fetchPage, callback => callback(this.tables), this.#client, newTable => {
 				this.newTable = null;
 				this.tables.push(new Text(() => newTable.name));
 			});

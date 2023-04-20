@@ -4,9 +4,16 @@ export default class {
 
 	name = "";
 
+	options = [];
+
 	#addDependency;
 
-	constructor(addDependency) {
+	constructor(addDependency, getTables) {
+
+		getTables(tables => {
+
+			this.options = tables;
+		});
 
 		this.#addDependency = addDependency;
 	}
