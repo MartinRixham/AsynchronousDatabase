@@ -22,7 +22,7 @@ export default class App {
 					fetchPage,
 					async () => (await this.#client.getTables()).tables.map((table) => new Text(() => table.name)),
 					this.#client,
-					() => { this.currentPage.setPage("tables")})
+					() => { this.currentPage.showPage(0); })
 			}
 		]);
 
