@@ -2,11 +2,15 @@ module.exports = function(grunt) {
 
 	const port = 8910;
 
+	grunt.loadNpmTasks('grunt-eslint');
 	grunt.loadNpmTasks('grunt-contrib-connect');
 	grunt.loadNpmTasks('grunt-contrib-qunit');
 
 	grunt.initConfig({
 		pkg: grunt.file.readJSON('package.json'),
+		eslint: {
+			target: ['js/**/*.js', 'test/**/*.js']
+		},
 		connect: {
 			server: {
 				options: {
@@ -24,5 +28,5 @@ module.exports = function(grunt) {
 		}
 	});
 
-	grunt.registerTask('default', ['connect', 'qunit']);
+	grunt.registerTask('default', ['eslint', 'connect', 'qunit']);
 };

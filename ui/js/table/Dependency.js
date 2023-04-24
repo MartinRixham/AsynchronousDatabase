@@ -8,14 +8,17 @@ export default class {
 
 	#addDependency;
 
+	#getTables;
+
 	constructor(addDependency, getTables) {
 
-		getTables(tables => {
-
-			this.options = tables;
-		});
-
 		this.#addDependency = addDependency;
+		this.#getTables = getTables;
+	}
+
+	async onBind() {
+
+		this.options = await this.#getTables();
 	}
 
 	select = new Value(value => {
@@ -30,7 +33,13 @@ export default class {
 
 	add = new Binding({
 
-		click: () => this.#addDependency(this)
+		click: () => {
+
+			if (this.name) {
+
+				this.#addDependency(this)
+			}
+		}
 	});
 
 	title = new Text(() => this.name);

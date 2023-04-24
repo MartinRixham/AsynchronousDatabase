@@ -20,7 +20,7 @@ export default class App {
 				route: "newTable",
 				page: new NewTable(
 					fetchPage,
-					callback => this.#client.getTables(tables => callback(tables.tables.map((table) => new Text(() => table.name)))),
+					async () => (await this.#client.getTables()).tables.map((table) => new Text(() => table.name)),
 					this.#client,
 					() => { this.currentPage.setPage("tables")})
 			}

@@ -1,19 +1,17 @@
 export default class {
 
-	postTable(table, callback) {
+	async postTable(table) {
 
-		fetch("asyncdb/table",
+		return fetch("asyncdb/table",
 			{
 				method: "POST",
 				body: JSON.stringify(table)
 			})
-			.then(() => callback());
 	}
 
-	getTables(callback) {
+	async getTables() {
 
-		fetch("asyncdb/tables")
+		return fetch("asyncdb/tables")
 			.then(response => response.json())
-			.then(json => callback(json));
 	}
 }

@@ -1,13 +1,15 @@
-import Qunit from "qunit";
+import QUnit from "qunit";
 import { Text } from "Datum";
 import Dependency from "~/js/table/Dependency";
 
 QUnit.module('dependency');
 
-QUnit.test('list dependency options', assert => {
+QUnit.test('list dependency options', async assert => {
 
-	const getTables = callback => callback([new Text(() => "first table"), new Text(() => "second table")]);
+	const getTables = () => new Promise(resolve => resolve([new Text(() => "first table"), new Text(() => "second table")]));
 	const dependency = new Dependency(() => {}, getTables);
+
+	await dependency.onBind();
 
 	assert.equal(dependency.options.length, 2);
 	assert.equal(dependency.options[0]().text(), "first table");
@@ -23,7 +25,7 @@ QUnit.test('add dependency', assert => {
 		newDependency = dependency;
 	}
 
-	const getTables = callback => callback([new Text(() => "first table"), new Text(() => "second table")]);
+	const getTables = () => [new Text(() => "first table"), new Text(() => "second table")];
 	const dependency = new Dependency(addDependency, getTables);
 
 	dependency.select().value("second table");

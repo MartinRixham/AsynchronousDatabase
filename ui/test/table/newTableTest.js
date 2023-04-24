@@ -1,4 +1,4 @@
-import Qunit from "qunit";
+import QUnit from "qunit";
 import NewTable from "~/js/table/NewTable";
 import DatabaseClient from "../FakeDatabaseClient";
 
@@ -13,42 +13,49 @@ QUnit.test('set table value', assert => {
 	assert.equal(newTable.title().value(), "my new table");
 });
 
-QUnit.test('save table', assert => {
+QUnit.test('save table', async assert => {
+
+	let savedTable = null;
+
+	const onNewTable = (table) => {
+
+		savedTable = table;
+	};
 
 	const client = new DatabaseClient();
-	const newTable = new NewTable(() => {}, () => [], client);
+	const newTable = new NewTable(() => {}, () => [], client, onNewTable);
 
 	newTable.title().value("my new table");
 	newTable.save().click();
 
-	client.getTables((tables) => {
+	assert.equal(savedTable.name, "my new table");
 
-		assert.equal(tables.tables.length, 1);
-		assert.equal(tables.tables[0].name, "my new table");
-	}); 
+	const tables = await client.getTables();
+
+	assert.equal(tables.tables.length, 1);
+	assert.equal(tables.tables[0].name, "my new table");
 });
 
-QUnit.test('fail to save table with no name', assert => {
+QUnit.test('fail to save table with no name', async assert => {
 
 	const client = new DatabaseClient();
-	const newTable = new NewTable(() => {}, () => [], client);
+	const newTable = new NewTable(() => {}, () => [], client, () => {});
 
 	newTable.title().value("");
 	newTable.save().click();
 
-	client.getTables((tables) => {
+	const tables = await client.getTables();
 
-		assert.equal(tables.tables.length, 0);
-	});
+	assert.equal(tables.tables.length, 0);
 });
 
-QUnit.test('save table with one dependency', assert => {
+QUnit.test('save table with one dependency', async assert => {
 
 	const client = new DatabaseClient();
 
 	client.postTable("\name\":\"my dependency\"")
 
-	const newTable = new NewTable(() => {}, () => [], client);
+	const newTable = new NewTable(() => {}, () => [], client, () => {});
 
 	newTable.title().value("my new table");
 	newTable.newDependency.select().value("my dependency")
@@ -59,14 +66,13 @@ QUnit.test('save table with one dependency', assert => {
 
 	newTable.save().click();
 
-	client.getTables((tables) => {
+	const tables = await client.getTables();
 
-		assert.equal(tables.tables.length, 2);
+	assert.equal(tables.tables.length, 2);
 
-		const firstTable = tables.tables[1];
+	const firstTable = tables.tables[1];
 
-		assert.equal(firstTable.name, "my new table");
-		assert.equal(firstTable.dependencies.length, 1);
-		assert.equal(firstTable.dependencies[0].name, "my dependency");
-	}); 
+	assert.equal(firstTable.name, "my new table");
+	assert.equal(firstTable.dependencies.length, 1);
+	assert.equal(firstTable.dependencies[0].name, "my dependency");
 });

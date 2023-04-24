@@ -57,7 +57,9 @@ export default class {
 			if (this.#isValid()) {
 
 				const newTable = { name: this.name, dependencies: this.dependencies };
-				this.#client.postTable(newTable, () => this.#onNewTable(newTable));
+
+				this.#client.postTable(newTable);
+				this.#onNewTable(newTable)
 			}
 		},
 		update: (element) => {
