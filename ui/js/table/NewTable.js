@@ -11,6 +11,8 @@ export default class {
 
 	dependencies = [];
 
+	serverError;
+
 	#fetchPage;
 
 	#client;
@@ -20,6 +22,7 @@ export default class {
 	#nameChanged;
 
 	#getTables;
+
 
 	constructor(fetchPage, getTables, client, onNewTable) {
 
@@ -52,20 +55,31 @@ export default class {
 	});
 
 	save = new Binding({
-		click: () => {
+		click: async () => {
 
 			if (this.#isValid()) {
 
 				const newTable = { name: this.name, dependencies: this.dependencies };
+				const result = await this.#client.postTable(newTable);
 
-				this.#client.postTable(newTable);
-				this.#onNewTable(newTable)
+				if (result && result.error) {
+
+					this.serverError = result.error;
+				}
+				else {
+
+					this.#onNewTable(newTable)
+				}
 			}
 		},
 		update: (element) => {
 
 			element.disabled = !this.#isValid();
 		}
+	});
+
+	error = new Binding({
+		text: () => this.serverError
 	});
 
 	#isValid() {

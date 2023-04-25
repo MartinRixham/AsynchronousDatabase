@@ -18,7 +18,9 @@ namespace repository
 
 			void create_table(const std::string &name) override;
 
-			virtual std::vector<std::string> list_tables() override;
+			std::vector<std::string> list_tables() override;
+
+			bool has_table(const std::string &name) override;
 
 			~rocksdb_repository();
 	};

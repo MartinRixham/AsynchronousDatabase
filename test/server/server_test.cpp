@@ -24,6 +24,7 @@ protected:
 
 	void SetUp()
 	{
+		std::filesystem::remove_all("/tmp/asyncdb/");
 		auto server = std::make_shared<server::server>(0, 2);
 		port = server->port();
 
@@ -35,7 +36,6 @@ protected:
 
 	void TearDown()
 	{
-		std::filesystem::remove_all("/tmp/testdb");
 		thread.detach();
 	}
 };

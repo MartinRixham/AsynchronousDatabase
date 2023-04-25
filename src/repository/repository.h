@@ -14,6 +14,8 @@ namespace repository
 			virtual void create_table(const std::string &name) = 0;
 
 			virtual std::vector<std::string> list_tables() = 0;
+
+			virtual bool has_table(const std::string &name) = 0;
 	};
 }
 

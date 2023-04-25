@@ -26,7 +26,7 @@ QUnit.test('save table', async assert => {
 	const newTable = new NewTable(() => {}, () => [], client, onNewTable);
 
 	newTable.title().value("my new table");
-	newTable.save().click();
+	await newTable.save().click();
 
 	assert.equal(savedTable.name, "my new table");
 
@@ -75,4 +75,24 @@ QUnit.test('save table with one dependency', async assert => {
 	assert.equal(firstTable.name, "my new table");
 	assert.equal(firstTable.dependencies.length, 1);
 	assert.equal(firstTable.dependencies[0].name, "my dependency");
+});
+
+QUnit.test('fail to save table with duplicate', async assert => {
+
+	let savedTables = [];
+
+	const onNewTable = (table) => {
+
+		savedTables.push(table);
+	};
+
+	const client = new DatabaseClient();
+	const newTable = new NewTable(() => {}, () => [], client, onNewTable);
+
+	newTable.title().value("a table");
+	newTable.save().click();
+	await newTable.save().click();
+
+	assert.equal(newTable.error().text(), "A table with the name \"a table\" already exists.");
+	assert.equal(savedTables.length, 1);
 });

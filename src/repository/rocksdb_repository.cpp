@@ -1,3 +1,5 @@
+#include <filesystem>
+
 #include "error.h"
 #include "rocksdb_repository.h"
 
@@ -6,7 +8,8 @@ repository::rocksdb_repository::rocksdb_repository()
 	rocksdb::Options options;
 	options.create_if_missing = true;
 
-	rocksdb::Status status = rocksdb::DB::Open(options, "/tmp/testdb_" + std::to_string(std::rand()), &database);
+	std::filesystem::create_directory("/tmp/asyncdb");
+	rocksdb::Status status = rocksdb::DB::Open(options, "/tmp/asyncdb/" + std::to_string(std::rand()), &database);
 
 	if (!status.ok())
 	{
@@ -31,6 +34,15 @@ std::vector<std::string> repository::rocksdb_repository::list_tables()
 	}
 
 	return tables;
+}
+
+bool repository::rocksdb_repository::has_table(const std::string &name)
+{
+	std::string value;
+
+	database->Get(rocksdb::ReadOptions(), "TABLE_" + name, &value);
+
+	return !value.empty();
 }
 
 repository::rocksdb_repository::~rocksdb_repository()

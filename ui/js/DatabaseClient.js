@@ -7,6 +7,7 @@ export default class {
 				method: "POST",
 				body: JSON.stringify(table)
 			})
+			.then(response => response.json())
 	}
 
 	async getTables() {

@@ -44,6 +44,23 @@ TEST(router_test, fail_to_create_table_with_empty_name)
 	ASSERT_FALSE(repository.has_table(""));
 }
 
+TEST(router_test, fail_to_create_duplicate_table)
+{
+	repository::fake_repository repository;
+	router::router router(repository);
+	boost::json::object request;
+
+	request.insert(std::pair("name", "table name"));
+
+	boost::json::object response = router.post("/table", request);
+
+	ASSERT_EQ(response.size(), 0);
+
+	response = router.post("/table", request);
+
+	ASSERT_EQ(response["error"].as_string(), "A table with the name \"table name\" already exists.");
+}
+
 TEST(router_test, read_table)
 {
 	repository::fake_repository repository;

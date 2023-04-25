@@ -34,13 +34,19 @@ boost::json::object router::router::post(const std::string &route, const boost::
     {
 		std::string name = std::string(body.at("name").as_string());
 
-		if (name.length() > 0)
+		if (name.length() == 0)
 		{
-			repository.create_table(name);
+			response.insert(std::make_pair<std::string, boost::json::string>("error", "Table requires name of length greater than 0."));
+		}
+		else if (repository.has_table(name))
+		{
+			std::string error = "A table with the name \"" + name + "\" already exists.";
+
+			response.insert(std::make_pair<std::string, boost::json::string>("error", boost::json::string(error)));
 		}
 		else
 		{
-			response.insert(std::pair("error", "Table requires name of length greater than 0."));
+			repository.create_table(name);
 		}
     }
 
