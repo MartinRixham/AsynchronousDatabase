@@ -33,3 +33,21 @@ QUnit.test('add dependency', assert => {
 
 	assert.equal(newDependency.title().text(), "second table");
 });
+
+QUnit.test('can\'t add empty dependency', assert => {
+
+	let newDependency = null;
+
+	const addDependency = (dependency) => {
+
+		newDependency = dependency;
+	}
+
+	const getTables = () => [new Text(() => "first table"), new Text(() => "second table")];
+	const dependency = new Dependency(addDependency, getTables);
+
+	dependency.select().value("");
+	dependency.add().click();
+
+	assert.ok(!newDependency);
+});
