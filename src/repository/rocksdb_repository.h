@@ -16,7 +16,7 @@ namespace repository
 		public:
 			explicit rocksdb_repository();
 
-			void create_table(const std::string &name) override;
+			void create_table(const table::table &table) override;
 
 			std::vector<std::string> list_tables() override;
 

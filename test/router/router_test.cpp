@@ -24,6 +24,7 @@ TEST(router_test, create_table)
 	boost::json::object request;
 
 	request.insert(std::pair("name", "really a real table"));
+	request.insert(std::pair("dependencies", boost::json::array()));
 
 	router.post("/table", request);
 
@@ -37,6 +38,7 @@ TEST(router_test, fail_to_create_table_with_empty_name)
 	boost::json::object request;
 
 	request.insert(std::pair("name", ""));
+	request.insert(std::pair("dependencies", boost::json::array()));
 
 	boost::json::object response = router.post("/table", request);
 
@@ -51,6 +53,7 @@ TEST(router_test, fail_to_create_duplicate_table)
 	boost::json::object request;
 
 	request.insert(std::pair("name", "table name"));
+	request.insert(std::pair("dependencies", boost::json::array()));
 
 	boost::json::object response = router.post("/table", request);
 
@@ -69,7 +72,10 @@ TEST(router_test, read_table)
 	boost::json::object second_request;
 
 	first_request.insert(std::pair("name", "first table"));
+	first_request.insert(std::pair("dependencies", boost::json::array()));
+
 	second_request.insert(std::pair("name", "second table"));
+	second_request.insert(std::pair("dependencies", boost::json::array()));
 
 	router.post("/table", first_request);
 	router.post("/table", second_request);

@@ -6,9 +6,9 @@ repository::fake_repository::fake_repository()
 {
 }
 
-void repository::fake_repository::create_table(const std::string &name)
+void repository::fake_repository::create_table(const table::table &table)
 {
-	tables.insert(std::pair(name, "{ \"name\": \"" + name +"\" }"));
+	tables.insert(std::pair(table.getName(), boost::json::serialize(table.toJson())));
 }
 
 std::vector<std::string> repository::fake_repository::list_tables()

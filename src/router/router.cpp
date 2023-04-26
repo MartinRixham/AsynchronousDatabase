@@ -46,7 +46,7 @@ boost::json::object router::router::post(const std::string &route, const boost::
 		}
 		else
 		{
-			repository.create_table(name);
+			repository.create_table(table::parseTable(body));
 		}
     }
 

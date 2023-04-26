@@ -17,9 +17,9 @@ repository::rocksdb_repository::rocksdb_repository()
 	}
 }
 
-void repository::rocksdb_repository::create_table(const std::string &name)
+void repository::rocksdb_repository::create_table(const table::table &table)
 {
-	database->Put(rocksdb::WriteOptions(), "TABLE_" + name, "{ \"name\": \"" + name +"\" }");
+	database->Put(rocksdb::WriteOptions(), "TABLE_" + table.getName(), boost::json::serialize(table.toJson()));
 }
 
 std::vector<std::string> repository::rocksdb_repository::list_tables()

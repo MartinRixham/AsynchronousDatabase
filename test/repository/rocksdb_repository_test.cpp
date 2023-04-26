@@ -8,6 +8,7 @@
 #include <filesystem>
 
 #include "repository/rocksdb_repository.h"
+#include "table/table.h"
 
 class repository_test: public ::testing::Test
 { 
@@ -25,8 +26,8 @@ protected:
 
 TEST_F(repository_test, read_tables)
 {
-	repository.create_table("first table");
-	repository.create_table("second table");
+	repository.create_table(table::table("first table", std::vector<std::string>()));
+	repository.create_table(table::table("second table", std::vector<std::string>()));
 
 	std::vector<std::string> tables = repository.list_tables();
 
