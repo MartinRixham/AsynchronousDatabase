@@ -20,7 +20,7 @@ namespace repository
 
 			std::vector<std::string> list_tables() override;
 
-			bool has_table(const std::string &name) override;
+			bool has_table(const table::table &table) override;
 
 			~rocksdb_repository();
 	};

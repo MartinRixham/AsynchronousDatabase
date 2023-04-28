@@ -19,7 +19,10 @@ repository::rocksdb_repository::rocksdb_repository()
 
 void repository::rocksdb_repository::create_table(const table::table &table)
 {
-	database->Put(rocksdb::WriteOptions(), "TABLE_" + table.getName(), boost::json::serialize(table.toJson()));
+	if (table.is_valid())
+	{
+		database->Put(rocksdb::WriteOptions(), "TABLE_" + table.get_name(), boost::json::serialize(table.to_json()));
+	}
 }
 
 std::vector<std::string> repository::rocksdb_repository::list_tables()
@@ -36,13 +39,20 @@ std::vector<std::string> repository::rocksdb_repository::list_tables()
 	return tables;
 }
 
-bool repository::rocksdb_repository::has_table(const std::string &name)
+bool repository::rocksdb_repository::has_table(const table::table &table)
 {
-	std::string value;
+	if (table.is_valid())
+	{
+		std::string value;
 
-	database->Get(rocksdb::ReadOptions(), "TABLE_" + name, &value);
+		database->Get(rocksdb::ReadOptions(), "TABLE_" + table.get_name(), &value);
 
-	return !value.empty();
+		return !value.empty();
+	}
+	else
+	{
+		return false;
+	}
 }
 
 repository::rocksdb_repository::~rocksdb_repository()

@@ -1,36 +1,13 @@
-#include "table.h"
+#include "valid_table.h"
+#include "invalid_table.h"
 
-table::table::table(const std::string &name, const std::vector<std::string> &dependencies):
-	name(name),
-	dependencies(dependencies)
+table::table *table::parse_table(boost::json::object json)
 {
-}
-
-std::string table::table::getName() const
-{
-	return name;
-}
-
-boost::json::object table::table::toJson() const
-{
-	boost::json::object json;
-
-	json.insert(std::pair("name", boost::json::string(name)));
-
-	boost::json::array dependency_array;
-
-	for (size_t i = 0; i < dependencies.size(); i++)
+	if (!json.contains("name") || json["name"].as_string().size() < 1)
 	{
-		dependency_array.push_back(boost::json::string(dependencies[i]));
+		return new invalid_table("Table requires name of length greater than 0.");
 	}
 
-	json.insert(std::pair("dependencies", dependency_array));
-
-	return json;
-}
-
-table::table table::parseTable(boost::json::object json)
-{
 	boost::json::array dependency_array = json["dependencies"].as_array();
 	std::vector<std::string> dependencies;
 
@@ -39,5 +16,5 @@ table::table table::parseTable(boost::json::object json)
 		dependencies.push_back(std::string(dependency_array[i].as_string()));
 	}
 
-	return table(std::string(json["name"].as_string()), dependencies);
+	return new valid_table(std::string(json["name"].as_string()), dependencies);
 }

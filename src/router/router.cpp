@@ -20,7 +20,7 @@ boost::json::object router::router::get(const std::string &route)
 			tables_json.push_back(boost::json::parse(tables[i]).as_object());
 		}
 
-		response.insert(std::make_pair("tables", tables_json));
+		response.insert(std::pair("tables", tables_json));
 	}
 
 	return response;
@@ -32,22 +32,22 @@ boost::json::object router::router::post(const std::string &route, const boost::
 
     if (route == "/table")
     {
-		std::string name = std::string(body.at("name").as_string());
+		table::table *table = table::parse_table(body);
 
-		if (name.length() == 0)
+		if (repository.has_table(*table))
 		{
-			response.insert(std::make_pair<std::string, boost::json::string>("error", "Table requires name of length greater than 0."));
-		}
-		else if (repository.has_table(name))
-		{
-			std::string error = "A table with the name \"" + name + "\" already exists.";
+			std::string error = "A table with the name \"" + table->get_name() + "\" already exists.";
 
-			response.insert(std::make_pair<std::string, boost::json::string>("error", boost::json::string(error)));
+			response.insert(std::pair<std::string, boost::json::string>("error", boost::json::string(error)));
 		}
 		else
 		{
-			repository.create_table(table::parseTable(body));
+			repository.create_table(*table);
+
+			response = table->to_json();
 		}
+
+		delete table;
     }
 
 	return response;

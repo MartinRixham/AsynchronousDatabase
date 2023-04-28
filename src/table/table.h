@@ -9,20 +9,17 @@ namespace table
 {
 	class table
 	{
-	private:
-		std::string name;
-
-		std::vector<std::string> dependencies;
-
 	public:
-		table(const std::string &name, const std::vector<std::string> &dependencies);
+		virtual bool is_valid() const = 0;
 
-		std::string getName() const;
+		virtual std::string get_name() const = 0;
 
-		boost::json::object toJson() const;
+		virtual boost::json::object to_json() const = 0;
+
+		virtual ~table() = default;
 	};
 
-	table parseTable(boost::json::object json);
+	table *parse_table(boost::json::object json);
 }
 
 

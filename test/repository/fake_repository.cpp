@@ -8,7 +8,10 @@ repository::fake_repository::fake_repository()
 
 void repository::fake_repository::create_table(const table::table &table)
 {
-	tables.insert(std::pair(table.getName(), boost::json::serialize(table.toJson())));
+	if (table.is_valid())
+	{
+		tables.insert(std::pair(table.get_name(), boost::json::serialize(table.to_json())));
+	}
 }
 
 std::vector<std::string> repository::fake_repository::list_tables()
@@ -23,7 +26,7 @@ std::vector<std::string> repository::fake_repository::list_tables()
 	return table_list;
 }
 
-bool repository::fake_repository::has_table(const std::string &name)
+bool repository::fake_repository::has_table(const table::table &table)
 {
-	return tables.count(name) > 0;
+	return table.is_valid() && tables.count(table.get_name()) > 0;
 }

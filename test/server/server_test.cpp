@@ -209,7 +209,7 @@ TEST_F(server_test, post_then_get_table)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{}"); 
+	EXPECT_EQ(response, "{\"name\":\"a table name\",\"dependencies\":[]}"); 
 
 	curl_easy_cleanup(curl);
 

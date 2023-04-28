@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "table/table.h"
+#include "table/valid_table.h"
 
 namespace repository
 {
@@ -16,7 +16,7 @@ namespace repository
 
 			virtual std::vector<std::string> list_tables() = 0;
 
-			virtual bool has_table(const std::string &name) = 0;
+			virtual bool has_table(const table::table &table) = 0;
 	};
 }
 

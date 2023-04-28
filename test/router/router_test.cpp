@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 #include <boost/json.hpp>
+#include <vector>
+#include <string>
 
 #include "repository/fake_repository.h"
 #include "router/router.h"
+#include "table/valid_table.h"
 
 TEST(router_test, nonsense)
 {
@@ -14,7 +17,7 @@ TEST(router_test, nonsense)
 
 	router.post("/wibble", request);
 
-	ASSERT_FALSE(repository.has_table("really a real table"));
+	ASSERT_FALSE(repository.has_table(table::valid_table("really a real table", std::vector<std::string>{})));
 }
 
 TEST(router_test, create_table)
@@ -28,7 +31,7 @@ TEST(router_test, create_table)
 
 	router.post("/table", request);
 
-	ASSERT_TRUE(repository.has_table("really a real table"));
+	ASSERT_TRUE(repository.has_table(table::valid_table("really a real table", std::vector<std::string>{})));
 }
 
 TEST(router_test, fail_to_create_table_with_empty_name)
@@ -43,7 +46,6 @@ TEST(router_test, fail_to_create_table_with_empty_name)
 	boost::json::object response = router.post("/table", request);
 
 	ASSERT_EQ("Table requires name of length greater than 0.", response["error"].as_string());
-	ASSERT_FALSE(repository.has_table(""));
 }
 
 TEST(router_test, fail_to_create_duplicate_table)
@@ -55,11 +57,9 @@ TEST(router_test, fail_to_create_duplicate_table)
 	request.insert(std::pair("name", "table name"));
 	request.insert(std::pair("dependencies", boost::json::array()));
 
+	router.post("/table", request);
+
 	boost::json::object response = router.post("/table", request);
-
-	ASSERT_EQ(response.size(), 0);
-
-	response = router.post("/table", request);
 
 	ASSERT_EQ(response["error"].as_string(), "A table with the name \"table name\" already exists.");
 }
