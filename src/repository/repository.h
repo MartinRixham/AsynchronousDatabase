@@ -4,7 +4,7 @@
 #include <rocksdb/db.h>
 #include <set>
 
-#include "table/valid_table.h"
+#include "table/table.h"
 
 namespace repository
 {
@@ -13,7 +13,7 @@ namespace repository
 		public:
 			virtual void create_table(const table::table &table) = 0;
 
-			virtual std::set<table::valid_table> list_tables() = 0;
+			virtual std::set<table::table> list_tables() = 0;
 
 			virtual bool has_table(const table::table &table) = 0;
 	};

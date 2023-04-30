@@ -14,12 +14,10 @@ TEST(table_test, deserialise_and_serialise)
 	json.insert(std::pair("name", "table name"));
 	json.insert(std::pair("dependencies", dependencies));
 
-	table::table *table = table::parse_table(json, std::set<std::string>{"dependency one", "dependency two"});
+	table::table table = table::parse_table(json, std::set<std::string>{"dependency one", "dependency two"});
 
-	ASSERT_TRUE(table->is_valid());
-	ASSERT_EQ(boost::json::serialize(table->to_json()), "{\"name\":\"table name\",\"dependencies\":[\"dependency one\",\"dependency two\"]}");
-
-	delete table;
+	ASSERT_TRUE(table.is_valid);
+	ASSERT_EQ(boost::json::serialize(table.json), "{\"name\":\"table name\",\"dependencies\":[\"dependency one\",\"dependency two\"]}");
 }
 
 TEST(table_test, fail_to_deserialise_table_with_empty_name)
@@ -32,12 +30,10 @@ TEST(table_test, fail_to_deserialise_table_with_empty_name)
 	json.insert(std::pair("name", ""));
 	json.insert(std::pair("dependencies", dependencies));
 
-	table::table *table = table::parse_table(json, std::set<std::string>{});
+	table::table table = table::parse_table(json, std::set<std::string>{});
 
-	ASSERT_FALSE(table->is_valid());
-	ASSERT_EQ(boost::json::serialize(table->to_json()), "{\"error\":\"Table requires name of length greater than 0.\"}");
-
-	delete table;
+	ASSERT_FALSE(table.is_valid);
+	ASSERT_EQ(boost::json::serialize(table.json), "{\"error\":\"Table requires name of length greater than 0.\"}");
 }
 
 TEST(table_test, fail_to_deserialise_table_with_no_name)
@@ -49,12 +45,10 @@ TEST(table_test, fail_to_deserialise_table_with_no_name)
 
 	json.insert(std::pair("dependencies", dependencies));
 
-	table::table *table = table::parse_table(json, std::set<std::string>{});
+	table::table table = table::parse_table(json, std::set<std::string>{});
 
-	ASSERT_FALSE(table->is_valid());
-	ASSERT_EQ(boost::json::serialize(table->to_json()), "{\"error\":\"Table requires name of length greater than 0.\"}");
-
-	delete table;
+	ASSERT_FALSE(table.is_valid);
+	ASSERT_EQ(boost::json::serialize(table.json), "{\"error\":\"Table requires name of length greater than 0.\"}");
 }
 
 TEST(table_test, fail_to_deserialise_table_with_duplicate_name)
@@ -64,12 +58,10 @@ TEST(table_test, fail_to_deserialise_table_with_duplicate_name)
 	json.insert(std::pair("name", "table name"));
 	json.insert(std::pair("dependencies", boost::json::array()));
 
-	table::table *table = table::parse_table(json, std::set<std::string>{"table name"});
+	table::table table = table::parse_table(json, std::set<std::string>{"table name"});
 
-	ASSERT_FALSE(table->is_valid());
-	ASSERT_EQ(boost::json::serialize(table->to_json()), "{\"error\":\"A table with the name \\\"table name\\\" already exists.\"}");
-
-	delete table;
+	ASSERT_FALSE(table.is_valid);
+	ASSERT_EQ(boost::json::serialize(table.json), "{\"error\":\"A table with the name \\\"table name\\\" already exists.\"}");
 }
 
 TEST(table_test, fail_to_deserialise_table_with_invalid_dependency)
@@ -83,10 +75,8 @@ TEST(table_test, fail_to_deserialise_table_with_invalid_dependency)
 	json.insert(std::pair("name", "table name"));
 	json.insert(std::pair("dependencies", dependencies));
 
-	table::table *table = table::parse_table(json, std::set<std::string>{"dependency one"});
+	table::table table = table::parse_table(json, std::set<std::string>{"dependency one"});
 
-	ASSERT_FALSE(table->is_valid());
-	ASSERT_EQ(boost::json::serialize(table->to_json()), "{\"error\":\"Dependency \\\"dependency two\\\" is not a table.\"}");
-
-	delete table;
+	ASSERT_FALSE(table.is_valid);
+	ASSERT_EQ(boost::json::serialize(table.json), "{\"error\":\"Dependency \\\"dependency two\\\" is not a table.\"}");
 }

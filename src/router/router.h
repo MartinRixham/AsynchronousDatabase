@@ -25,8 +25,6 @@ namespace router
 		response get(const std::string &route);
 
 		response post(const std::string &route, const boost::json::object &body);
-	private:
-		response post_table_response(const table::table &table);
 	};
 }
 

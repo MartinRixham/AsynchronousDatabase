@@ -7,19 +7,24 @@
 
 namespace table
 {
-	class table
+	struct table
 	{
-	public:
-		virtual bool is_valid() const = 0;
+		bool is_valid;
 
-		virtual std::string get_name() const = 0;
+		std::string name;
 
-		virtual boost::json::object to_json() const = 0;
-
-		virtual ~table() = default;
+		boost::json::object json;
 	};
 
-	table *parse_table(boost::json::object json, std::set<std::string> tables);
+	bool operator <(const table &lhs, const table &rhs);
+
+	table parse_table(const boost::json::object &json, const std::set<std::string> &tables);
+
+	table valid_table(const std::string &name, const std::vector<std::string> &dependencies);
+
+	table invalid_table(const std::string &error);
+
+	table to_table(const std::string &json);
 }
 
 

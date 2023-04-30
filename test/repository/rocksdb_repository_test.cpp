@@ -7,8 +7,7 @@
 #include <filesystem>
 
 #include "repository/rocksdb_repository.h"
-#include "table/valid_table.h"
-#include "table/invalid_table.h"
+#include "table/table.h"
 
 class repository_test: public ::testing::Test
 { 
@@ -29,20 +28,20 @@ TEST_F(repository_test, read_tables)
 	repository.create_table(table::valid_table("first table", std::vector<std::string>()));
 	repository.create_table(table::valid_table("second table", std::vector<std::string>()));
 
-	std::set<table::valid_table> table_set = repository.list_tables();
-	std::vector<table::valid_table> tables(table_set.begin(), table_set.end());
+	std::set<table::table> table_set = repository.list_tables();
+	std::vector<table::table> tables(table_set.begin(), table_set.end());
 
 	ASSERT_EQ(tables.size(), 2);
 
-	ASSERT_EQ(tables[0].get_name(), "first table");
-	ASSERT_EQ(tables[1].get_name(), "second table");
+	ASSERT_EQ(tables[0].name, "first table");
+	ASSERT_EQ(tables[1].name, "second table");
 }
 
 TEST_F(repository_test, does_not_have_invalid_table)
 {
 	repository.create_table(table::invalid_table("error"));
 
-	std::set<table::valid_table> tables = repository.list_tables();
+	std::set<table::table> tables = repository.list_tables();
 
 	ASSERT_EQ(tables.size(), 0);
 }

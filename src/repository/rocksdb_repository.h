@@ -16,7 +16,7 @@ namespace repository
 
 			void create_table(const table::table &table) override;
 
-			std::set<table::valid_table> list_tables() override;
+			std::set<table::table> list_tables() override;
 
 			bool has_table(const table::table &table) override;
 

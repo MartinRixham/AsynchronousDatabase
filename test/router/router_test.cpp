@@ -5,7 +5,7 @@
 
 #include "repository/fake_repository.h"
 #include "router/router.h"
-#include "table/valid_table.h"
+#include "table/table.h"
 
 TEST(router_test, nonsense)
 {
