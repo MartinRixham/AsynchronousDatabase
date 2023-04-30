@@ -34,8 +34,6 @@ namespace server
 	private:
 		void read();
 
-		boost::beast::http::response<boost::beast::http::string_body> bad_request(boost::beast::string_view why);
-
 		boost::beast::http::response<boost::beast::http::string_body> handle_request();
 
 		void close();

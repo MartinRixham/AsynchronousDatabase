@@ -13,7 +13,7 @@ repository::rocksdb_repository::rocksdb_repository()
 
 	if (!status.ok())
 	{
-		throw std::runtime_error(ERROR(status.ToString()));
+		throw std::runtime_error(ERROR("Failed to open rocksdb with status: " + status.ToString()));
 	}
 }
 
