@@ -51,7 +51,7 @@ TEST_F(server_test, get_request)
 	headers = curl_slist_append(headers, "Connection: close");
  
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
-	curl_easy_setopt(curl, CURLOPT_URL, "localhost");
+	curl_easy_setopt(curl, CURLOPT_URL, "localhost/tables");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writer);
@@ -65,7 +65,7 @@ TEST_F(server_test, get_request)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{}");	
+	EXPECT_EQ(response, "{\"tables\":[]}");	
 }
 
 TEST_F(server_test, post_request)
@@ -108,7 +108,7 @@ TEST_F(server_test, head_request)
 	headers = curl_slist_append(headers, "Connection: close");
  
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
-	curl_easy_setopt(curl, CURLOPT_URL, "localhost");
+	curl_easy_setopt(curl, CURLOPT_URL, "localhost/tables");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
 	curl_easy_setopt(curl, CURLOPT_NOBODY, 1);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -162,7 +162,7 @@ TEST_F(server_test, two_get_requests)
 	std::string response;
  
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
-	curl_easy_setopt(curl, CURLOPT_URL, "localhost");
+	curl_easy_setopt(curl, CURLOPT_URL, "localhost/tables");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writer);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
@@ -171,7 +171,7 @@ TEST_F(server_test, two_get_requests)
 	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{}");  
+	EXPECT_EQ(response, "{\"tables\":[]}");  
 	response = "";
 
 	struct curl_slist *headers = NULL;
@@ -188,7 +188,7 @@ TEST_F(server_test, two_get_requests)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{}");   
+	EXPECT_EQ(response, "{\"tables\":[]}");  
 }
 
 TEST_F(server_test, post_then_get_table)

@@ -41,10 +41,6 @@ table::table table::parse_table(const boost::json::object &json, const std::set<
 
 table::table table::valid_table(const std::string &name, const std::vector<std::string> &dependencies)
 {
-	boost::json::object json;
-
-	json.insert(std::pair("name", boost::json::string(name)));
-
 	boost::json::array dependency_array;
 
 	for (size_t i = 0; i < dependencies.size(); i++)
@@ -52,16 +48,14 @@ table::table table::valid_table(const std::string &name, const std::vector<std::
 		dependency_array.push_back(boost::json::string(dependencies[i]));
 	}
 
-	json.insert(std::pair("dependencies", dependency_array));
+	boost::json::object json { { "name", boost::json::string(name) }, { "dependencies", dependency_array } };
 
 	return { true, name, json };
 }
 
 table::table table::invalid_table(const std::string &error)
 {
-	boost::json::object json;
-
-	json.insert(std::pair<std::string, boost::json::string>("error", error));
+	boost::json::object json { { "error", error } };
 
 	return { false, "", json };
 }

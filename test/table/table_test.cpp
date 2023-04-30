@@ -5,14 +5,12 @@
 
 TEST(table_test, deserialise_and_serialise)
 {
-	boost::json::object json;
 	boost::json::array dependencies;
 
 	dependencies.push_back("dependency one");
 	dependencies.push_back("dependency two");
 
-	json.insert(std::pair("name", "table name"));
-	json.insert(std::pair("dependencies", dependencies));
+	boost::json::object json { { "name", "table name" }, { "dependencies", dependencies } };
 
 	table::table table = table::parse_table(json, std::set<std::string>{"dependency one", "dependency two"});
 
@@ -22,13 +20,11 @@ TEST(table_test, deserialise_and_serialise)
 
 TEST(table_test, fail_to_deserialise_table_with_empty_name)
 {
-	boost::json::object json;
 	boost::json::array dependencies;
 
 	dependencies.push_back("dependency one");
 
-	json.insert(std::pair("name", ""));
-	json.insert(std::pair("dependencies", dependencies));
+	boost::json::object json { { "name", "" }, { "dependencies", dependencies } };
 
 	table::table table = table::parse_table(json, std::set<std::string>{});
 
@@ -38,12 +34,11 @@ TEST(table_test, fail_to_deserialise_table_with_empty_name)
 
 TEST(table_test, fail_to_deserialise_table_with_no_name)
 {
-	boost::json::object json;
 	boost::json::array dependencies;
 
 	dependencies.push_back("dependency one");
 
-	json.insert(std::pair("dependencies", dependencies));
+	boost::json::object json { { "dependencies", dependencies } };
 
 	table::table table = table::parse_table(json, std::set<std::string>{});
 
@@ -53,10 +48,7 @@ TEST(table_test, fail_to_deserialise_table_with_no_name)
 
 TEST(table_test, fail_to_deserialise_table_with_duplicate_name)
 {
-	boost::json::object json;
-
-	json.insert(std::pair("name", "table name"));
-	json.insert(std::pair("dependencies", boost::json::array()));
+	boost::json::object json { { "name", "table name" }, { "dependencies", boost::json::array() } };
 
 	table::table table = table::parse_table(json, std::set<std::string>{"table name"});
 
@@ -66,14 +58,12 @@ TEST(table_test, fail_to_deserialise_table_with_duplicate_name)
 
 TEST(table_test, fail_to_deserialise_table_with_invalid_dependency)
 {
-	boost::json::object json;
 	boost::json::array dependencies;
 
 	dependencies.push_back("dependency one");
 	dependencies.push_back("dependency two");
 
-	json.insert(std::pair("name", "table name"));
-	json.insert(std::pair("dependencies", dependencies));
+	boost::json::object json { { "name", "table name" }, { "dependencies", dependencies } };
 
 	table::table table = table::parse_table(json, std::set<std::string>{"dependency one"});
 

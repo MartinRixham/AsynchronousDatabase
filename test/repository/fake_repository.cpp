@@ -10,7 +10,7 @@ void repository::fake_repository::create_table(const table::table &table)
 {
 	if (table.is_valid)
 	{
-		tables.insert(std::pair(table.name, boost::json::serialize(table.json)));
+		tables.insert({ table.name, boost::json::serialize(table.json) });
 	}
 }
 

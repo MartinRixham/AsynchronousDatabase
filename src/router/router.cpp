@@ -6,12 +6,19 @@ namespace
 	{
 		if (table.is_valid)
 		{
-			return router::response { boost::beast::http::status::ok, boost::json::object() };
+			return { boost::beast::http::status::ok, boost::json::object() };
 		}
 		else
 		{
-			return router::response { boost::beast::http::status::bad_request, table.json };
+			return { boost::beast::http::status::bad_request, table.json };
 		}
+	}
+
+	router::response bad_request_response(const std::string &error)
+	{
+		boost::json::object json { { "error", error } };
+
+		return { boost::beast::http::status::bad_request, json };
 	}
 }
 
@@ -22,8 +29,6 @@ router::router::router(repository::repository &repo):
 
 router::response router::router::get(const std::string &route)
 {
-	boost::json::object body;
-
 	if (route == "/tables")
 	{
 		std::set<table::table> tables = repository.list_tables();
@@ -34,10 +39,12 @@ router::response router::router::get(const std::string &route)
 			tables_json.push_back(it->json);
 		}
 
-		body.insert(std::pair("tables", tables_json));
+		boost::json::object body { { "tables", tables_json } };
+
+		return { boost::beast::http::status::ok, body };
 	}
 
-	return response { boost::beast::http::status::ok, body };
+	return bad_request_response("Request to invalid route " + route + ".");
 }
 
 router::response router::router::post(const std::string &route, const boost::json::object &body)
@@ -56,10 +63,8 @@ router::response router::router::post(const std::string &route, const boost::jso
 
 		repository.create_table(table);
 
-		response response = post_table_response(table);
-
-		return response;
+		return post_table_response(table);
     }
 
-	return response { boost::beast::http::status::bad_request, boost::json::object() };
+	return bad_request_response("Request to invalid route " + route + ".");
 }

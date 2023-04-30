@@ -27,5 +27,4 @@ namespace table
 	table to_table(const std::string &json);
 }
 
-
 #endif

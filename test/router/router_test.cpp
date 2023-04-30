@@ -11,11 +11,12 @@ TEST(router_test, nonsense)
 {
 	repository::fake_repository repository;
 	router::router router(repository);
-	boost::json::object request;
+	boost::json::object request { { "name", "really a real table" } };
 
-	request.insert(std::pair("name", "really a real table"));
+	router::response response = router.post("/wibble", request);
 
-	router.post("/wibble", request);
+	ASSERT_EQ(response.status, boost::beast::http::status::bad_request);
+	ASSERT_EQ(response.body["error"].as_string(), "Request to invalid route /wibble.");
 
 	ASSERT_FALSE(repository.has_table(table::valid_table("really a real table", std::vector<std::string>{})));
 }
@@ -24,10 +25,7 @@ TEST(router_test, create_table)
 {
 	repository::fake_repository repository;
 	router::router router(repository);
-	boost::json::object request;
-
-	request.insert(std::pair("name", "really a real table"));
-	request.insert(std::pair("dependencies", boost::json::array()));
+	boost::json::object request { { "name", "really a real table" }, { "dependencies", boost::json::array() } };
 
 	router.post("/table", request);
 
@@ -38,10 +36,7 @@ TEST(router_test, fail_to_create_table_with_empty_name)
 {
 	repository::fake_repository repository;
 	router::router router(repository);
-	boost::json::object request;
-
-	request.insert(std::pair("name", ""));
-	request.insert(std::pair("dependencies", boost::json::array()));
+	boost::json::object request { { "name", "" }, { "dependencies", boost::json::array() } };
 
 	router::response response = router.post("/table", request);
 
@@ -53,10 +48,7 @@ TEST(router_test, fail_to_create_duplicate_table)
 {
 	repository::fake_repository repository;
 	router::router router(repository);
-	boost::json::object request;
-
-	request.insert(std::pair("name", "table name"));
-	request.insert(std::pair("dependencies", boost::json::array()));
+	boost::json::object request { { "name", "table name" } , { "dependencies", boost::json::array() } };
 
 	router.post("/table", request);
 
@@ -70,21 +62,15 @@ TEST(router_test, read_table)
 {
 	repository::fake_repository repository;
 	router::router router(repository);
-	boost::json::object first_request;
-
-	first_request.insert(std::pair("name", "first table"));
-	first_request.insert(std::pair("dependencies", boost::json::array()));
+	boost::json::object first_request { { "name", "first table" }, { "dependencies", boost::json::array() } };
 
 	router.post("/table", first_request);
 
-	boost::json::object second_request;
-
-	second_request.insert(std::pair("name", "second table"));
-	
 	boost::json::array dependencies;
 
 	dependencies.push_back("first table");
-	second_request.insert(std::pair("dependencies", dependencies));
+
+	boost::json::object second_request { { "name", "second table" }, { "dependencies", dependencies } };
 
 	router.post("/table", second_request);
 
@@ -107,21 +93,15 @@ TEST(router_test, fail_to_create_table_with_invalid_dependency)
 {
 	repository::fake_repository repository;
 	router::router router(repository);
-	boost::json::object first_request;
-	boost::json::object second_request;
-
-	first_request.insert(std::pair("name", "first table"));
-	first_request.insert(std::pair("dependencies", boost::json::array()));
+	boost::json::object first_request { { "name", "first table" }, { "dependencies", boost::json::array() } };
 
 	router.post("/table", first_request);
 
-	second_request.insert(std::pair("name", "second table"));
-	
 	boost::json::array dependencies;
 
 	dependencies.push_back("not a table");
 
-	second_request.insert(std::pair("dependencies", dependencies));
+	boost::json::object second_request { { "name", "second table" }, { "dependencies", dependencies } };
 
 	router::response response = router.post("/table", second_request);
 
