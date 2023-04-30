@@ -25,15 +25,15 @@ void repository::rocksdb_repository::create_table(const table::table &table)
 	}
 }
 
-std::vector<std::string> repository::rocksdb_repository::list_tables()
+std::set<table::valid_table> repository::rocksdb_repository::list_tables()
 {
 	rocksdb::ReadOptions options;
 	rocksdb::Iterator *it = database->NewIterator(options);
-	std::vector<std::string> tables;
+	std::set<table::valid_table> tables;
 
 	for(it->Seek("TABLE"); it->Valid(); it->Next())
 	{
-		tables.push_back(it->value().ToString());
+		tables.insert(table::valid_table(it->value().ToString()));
 	}
 
 	return tables;

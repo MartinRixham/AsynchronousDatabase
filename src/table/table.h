@@ -2,7 +2,7 @@
 #define TABLE_TABLE_H
 
 #include <string>
-#include <vector>
+#include <set>
 #include <boost/json.hpp>
 
 namespace table
@@ -19,7 +19,7 @@ namespace table
 		virtual ~table() = default;
 	};
 
-	table *parse_table(boost::json::object json);
+	table *parse_table(boost::json::object json, std::set<std::string> tables);
 }
 
 

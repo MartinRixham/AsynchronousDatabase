@@ -69,20 +69,60 @@ TEST(router_test, read_table)
 	repository::fake_repository repository;
 	router::router router(repository);
 	boost::json::object first_request;
-	boost::json::object second_request;
 
 	first_request.insert(std::pair("name", "first table"));
 	first_request.insert(std::pair("dependencies", boost::json::array()));
 
-	second_request.insert(std::pair("name", "second table"));
-	second_request.insert(std::pair("dependencies", boost::json::array()));
-
 	router.post("/table", first_request);
+
+	boost::json::object second_request;
+
+	second_request.insert(std::pair("name", "second table"));
+	
+	boost::json::array dependencies;
+
+	dependencies.push_back("first table");
+	second_request.insert(std::pair("dependencies", dependencies));
+
 	router.post("/table", second_request);
 
 	boost::json::array tables = router.get("/tables")["tables"].as_array();
 
 	ASSERT_EQ(2, tables.size());
-	ASSERT_EQ("first table", tables[0].as_object()["name"]);
-	ASSERT_EQ("second table", tables[1].as_object()["name"]);
+	ASSERT_EQ(tables[0].as_object()["name"], "first table");
+
+	boost::json::object second_table = tables[1].as_object();
+
+	ASSERT_EQ(second_table["name"], "second table");
+	ASSERT_EQ(second_table["dependencies"].as_array()[0], "first table");
+}
+
+TEST(router_test, fail_to_create_table_with_invalid_dependency)
+{
+	repository::fake_repository repository;
+	router::router router(repository);
+	boost::json::object first_request;
+	boost::json::object second_request;
+
+	first_request.insert(std::pair("name", "first table"));
+	first_request.insert(std::pair("dependencies", boost::json::array()));
+
+	router.post("/table", first_request);
+
+	second_request.insert(std::pair("name", "second table"));
+	
+	boost::json::array dependencies;
+
+	dependencies.push_back("not a table");
+
+	second_request.insert(std::pair("dependencies", dependencies));
+
+	boost::json::object response = router.post("/table", second_request);
+
+	ASSERT_EQ(response["error"], "Dependency \"not a table\" is not a table.");
+
+	boost::json::array tables = router.get("/tables")["tables"].as_array();
+
+	ASSERT_EQ(1, tables.size());
+	ASSERT_EQ(tables[0].as_object()["name"], "first table");
 }

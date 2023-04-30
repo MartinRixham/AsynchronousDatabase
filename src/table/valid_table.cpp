@@ -6,6 +6,20 @@ table::valid_table::valid_table(const std::string &name, const std::vector<std::
 {
 }
 
+table::valid_table::valid_table(const std::string &json)
+{
+	boost::json::object table_object = boost::json::parse(json).as_object();
+
+	name = table_object["name"].as_string();
+
+	boost::json::array dependency_array = table_object["dependencies"].as_array();
+
+	for (boost::json::array::size_type i = 0; i < dependency_array.size(); i++)
+	{
+		dependencies.push_back(std::string(dependency_array[i].as_string()));
+	}
+}
+
 bool table::valid_table::is_valid() const
 {
 	return true;
@@ -32,4 +46,9 @@ boost::json::object table::valid_table::to_json() const
 	json.insert(std::pair("dependencies", dependency_array));
 
 	return json;
+}
+
+bool table::valid_table::operator < (const valid_table &other) const
+{
+	return name < other.name;
 }

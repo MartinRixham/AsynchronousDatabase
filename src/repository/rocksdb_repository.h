@@ -2,8 +2,6 @@
 #define REPOSITORY_ROCSKDB_REPOSITORY_H
 
 #include <rocksdb/db.h>
-#include <string>
-#include <vector>
 
 #include "repository.h"
 
@@ -18,7 +16,7 @@ namespace repository
 
 			void create_table(const table::table &table) override;
 
-			std::vector<std::string> list_tables() override;
+			std::set<table::valid_table> list_tables() override;
 
 			bool has_table(const table::table &table) override;
 

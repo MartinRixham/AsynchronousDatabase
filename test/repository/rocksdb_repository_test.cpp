@@ -2,8 +2,7 @@
 #include <rocksdb/db.h>
 #include <boost/json/src.hpp>
 
-#include <memory>
-#include <string>
+#include <set>
 #include <vector>
 #include <filesystem>
 
@@ -30,19 +29,20 @@ TEST_F(repository_test, read_tables)
 	repository.create_table(table::valid_table("first table", std::vector<std::string>()));
 	repository.create_table(table::valid_table("second table", std::vector<std::string>()));
 
-	std::vector<std::string> tables = repository.list_tables();
+	std::set<table::valid_table> table_set = repository.list_tables();
+	std::vector<table::valid_table> tables(table_set.begin(), table_set.end());
 
 	ASSERT_EQ(tables.size(), 2);
 
-	ASSERT_EQ(boost::json::parse(tables[0]).as_object()["name"], "first table");
-	ASSERT_EQ(boost::json::parse(tables[1]).as_object()["name"], "second table");
+	ASSERT_EQ(tables[0].get_name(), "first table");
+	ASSERT_EQ(tables[1].get_name(), "second table");
 }
 
-TEST_F(repository_test, does_not_have_invalid_table_table)
+TEST_F(repository_test, does_not_have_invalid_table)
 {
-	repository.create_table(table::invalid_table("errro"));
+	repository.create_table(table::invalid_table("error"));
 
-	std::vector<std::string> tables = repository.list_tables();
+	std::set<table::valid_table> tables = repository.list_tables();
 
 	ASSERT_EQ(tables.size(), 0);
 }
