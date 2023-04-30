@@ -43,9 +43,10 @@ TEST(router_test, fail_to_create_table_with_empty_name)
 	request.insert(std::pair("name", ""));
 	request.insert(std::pair("dependencies", boost::json::array()));
 
-	boost::json::object response = router.post("/table", request);
+	router::response response = router.post("/table", request);
 
-	ASSERT_EQ("Table requires name of length greater than 0.", response["error"].as_string());
+	ASSERT_EQ(response.status, boost::beast::http::status::bad_request);
+	ASSERT_EQ(response.body["error"].as_string(), "Table requires name of length greater than 0.");
 }
 
 TEST(router_test, fail_to_create_duplicate_table)
@@ -59,9 +60,10 @@ TEST(router_test, fail_to_create_duplicate_table)
 
 	router.post("/table", request);
 
-	boost::json::object response = router.post("/table", request);
+	router::response response = router.post("/table", request);
 
-	ASSERT_EQ(response["error"].as_string(), "A table with the name \"table name\" already exists.");
+	ASSERT_EQ(response.status, boost::beast::http::status::bad_request);
+	ASSERT_EQ(response.body["error"].as_string(), "A table with the name \"table name\" already exists.");
 }
 
 TEST(router_test, read_table)
@@ -86,9 +88,13 @@ TEST(router_test, read_table)
 
 	router.post("/table", second_request);
 
-	boost::json::array tables = router.get("/tables")["tables"].as_array();
+	router::response response = router.get("/tables");
 
-	ASSERT_EQ(2, tables.size());
+	ASSERT_EQ(response.status, boost::beast::http::status::ok);
+
+	boost::json::array tables = response.body["tables"].as_array();
+
+	ASSERT_EQ(tables.size(), 2);
 	ASSERT_EQ(tables[0].as_object()["name"], "first table");
 
 	boost::json::object second_table = tables[1].as_object();
@@ -117,12 +123,13 @@ TEST(router_test, fail_to_create_table_with_invalid_dependency)
 
 	second_request.insert(std::pair("dependencies", dependencies));
 
-	boost::json::object response = router.post("/table", second_request);
+	router::response response = router.post("/table", second_request);
 
-	ASSERT_EQ(response["error"], "Dependency \"not a table\" is not a table.");
+	ASSERT_EQ(response.status, boost::beast::http::status::bad_request);
+	ASSERT_EQ(response.body["error"], "Dependency \"not a table\" is not a table.");
 
-	boost::json::array tables = router.get("/tables")["tables"].as_array();
+	boost::json::array tables = router.get("/tables").body["tables"].as_array();
 
-	ASSERT_EQ(1, tables.size());
+	ASSERT_EQ(tables.size(), 1);
 	ASSERT_EQ(tables[0].as_object()["name"], "first table");
 }

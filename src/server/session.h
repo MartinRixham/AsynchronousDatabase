@@ -18,7 +18,7 @@ namespace server
 
 		boost::beast::http::request<boost::beast::http::string_body> request;
 
-		std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response;
+		std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> http_response;
 
 		router::router &router;
 

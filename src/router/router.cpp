@@ -5,9 +5,9 @@ router::router::router(repository::repository &repo):
 {
 }
 
-boost::json::object router::router::get(const std::string &route)
+router::response router::router::get(const std::string &route)
 {
-	boost::json::object response;
+	boost::json::object body;
 
 	if (route == "/tables")
 	{
@@ -19,16 +19,14 @@ boost::json::object router::router::get(const std::string &route)
 			tables_json.push_back(it->to_json());
 		}
 
-		response.insert(std::pair("tables", tables_json));
+		body.insert(std::pair("tables", tables_json));
 	}
 
-	return response;
+	return response { boost::beast::http::status::ok, body };
 }
 
-boost::json::object router::router::post(const std::string &route, const boost::json::object &body)
+router::response router::router::post(const std::string &route, const boost::json::object &body)
 {
-	boost::json::object response;
-
     if (route == "/table")
     {
 		std::set<table::valid_table> table_set = repository.list_tables();
@@ -43,10 +41,24 @@ boost::json::object router::router::post(const std::string &route, const boost::
 
 		repository.create_table(*table);
 
-		response = table->to_json();
+		response response = post_table_response(*table);
 
 		delete table;
+
+		return response;
     }
 
-	return response;
+	return response { boost::beast::http::status::bad_request, boost::json::object() };
+}
+
+router::response router::router::post_table_response(const table::table &table)
+{
+	if (table.is_valid())
+	{
+		return response { boost::beast::http::status::ok, boost::json::object() };
+	}
+	else
+	{
+		return response { boost::beast::http::status::bad_request, table.to_json() };
+	}
 }

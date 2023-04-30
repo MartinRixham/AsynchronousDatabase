@@ -29,15 +29,15 @@ void server::session::on_read(boost::beast::error_code error, std::size_t bytes_
 		throw std::runtime_error(ERROR(error.message()));
 	}
 
-	response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(handle_request());
+	http_response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(handle_request());
 
 	boost::beast::http::async_write(
 		stream,
-		*response,
+		*http_response,
 		boost::beast::bind_front_handler(
 			&session::on_write,
 			shared_from_this(),
-			response->need_eof()));
+			http_response->need_eof()));
 }
 
 void server::session::on_write(bool should_close, boost::beast::error_code error, std::size_t bytes_transferred)
@@ -54,7 +54,7 @@ void server::session::on_write(bool should_close, boost::beast::error_code error
 	}
 	else
 	{
-		response = nullptr;
+		http_response = nullptr;
 
 		read();
 	}
@@ -104,21 +104,25 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 		return bad_request("Illegal request-target");
 	}
 
-	std::string body;
+	router::response response;
 
 	if (request.method() == boost::beast::http::verb::post)
 	{
-		body = boost::json::serialize(router.post(std::string(request.target()), boost::json::parse(request.body()).as_object()));
+		response = router.post(std::string(request.target()), boost::json::parse(request.body()).as_object());
 	}
 	else
 	{
-		body = boost::json::serialize(router.get(std::string(request.target())));
+		response = router.get(std::string(request.target()));
 	}
+
+	std::string body = boost::json::serialize(response.body);
+	boost::beast::http::status status = response.status;
 
 	if (request.method() == boost::beast::http::verb::head)
 	{
 		boost::beast::http::response<boost::beast::http::string_body> ok_response{
-			boost::beast::http::status::ok, request.version()};
+			status,
+			request.version()};
 
 		ok_response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
 		ok_response.set(boost::beast::http::field::content_type, "application/json");
@@ -132,7 +136,7 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 		boost::beast::http::response<boost::beast::http::string_body> ok_response{
 			std::piecewise_construct,
 			std::make_tuple(body),
-			std::make_tuple(boost::beast::http::status::ok, request.version())};
+			std::make_tuple(status, request.version())};
 
 		ok_response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
 		ok_response.set(boost::beast::http::field::content_type, "application/json");

@@ -43,4 +43,9 @@ export default class {
 	});
 
 	title = new Text(() => this.name);
+
+	toJSON() {
+	
+		return this.name;
+	}
 }

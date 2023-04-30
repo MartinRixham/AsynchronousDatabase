@@ -93,7 +93,7 @@ TEST_F(server_test, post_request)
 	curl_slist_free_all(headers);
 
 	EXPECT_EQ(status, CURLE_OK);
-	EXPECT_EQ(http_code, 200);
+	EXPECT_EQ(http_code, 400);
 	EXPECT_EQ(response, "{\"error\":\"Table requires name of length greater than 0.\"}");   
 }
 
@@ -209,7 +209,7 @@ TEST_F(server_test, post_then_get_table)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{\"name\":\"a table name\",\"dependencies\":[]}"); 
+	EXPECT_EQ(response, "{}"); 
 
 	curl_easy_cleanup(curl);
 
