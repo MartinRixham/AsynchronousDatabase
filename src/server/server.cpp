@@ -66,7 +66,7 @@ void server::server::on_accept(boost::beast::error_code error, boost::asio::ip::
 	accept();
 }
 
-boost::asio::ip::port_type server::server::port()
+boost::asio::ip::port_type server::server::port() const
 {
 	return port_number;
 }

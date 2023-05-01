@@ -21,7 +21,7 @@ namespace
 		return { boost::beast::http::status::bad_request, json };
 	}
 
-	router::response valid_get_response(boost::json::object json)
+	router::response valid_get_response(const boost::json::object &json)
 	{
 		return { boost::beast::http::status::ok, json };
 	}
@@ -32,14 +32,14 @@ router::router::router(repository::repository &repo):
 {
 }
 
-router::response router::router::get(const std::string &route)
+router::response router::router::get(const std::string &route) const
 {
 	if (route == "/tables")
 	{
-		std::set<table::table> tables = repository.list_tables();
+		const std::set<table::table> tables = repository.list_tables();
 		boost::json::array tables_json;
 
-		for (std::set<table::table>::iterator it = tables.begin(); it != tables.end(); ++it)
+		for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
 		{
 			tables_json.push_back(it->json);
 		}
@@ -56,10 +56,10 @@ router::response router::router::post(const std::string &route, const boost::jso
 {
     if (route == "/table")
     {
-		std::set<table::table> table_set = repository.list_tables();
+		const std::set<table::table> table_set = repository.list_tables();
 		std::set<std::string> tables;
 
-		for (std::set<table::table>::iterator it = table_set.begin(); it != table_set.end(); ++it)
+		for (std::set<table::table>::const_iterator it = table_set.begin(); it != table_set.end(); ++it)
 		{
 			tables.insert(it->name);
 		}

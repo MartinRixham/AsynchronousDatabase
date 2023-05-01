@@ -16,9 +16,9 @@ namespace repository
 
 			void create_table(const table::table &table) override;
 
-			std::set<table::table> list_tables() override;
+			std::set<table::table> list_tables() const override;
 
-			bool has_table(const table::table &table) override;
+			bool has_table(const table::table &table) const override;
 
 			~rocksdb_repository();
 	};

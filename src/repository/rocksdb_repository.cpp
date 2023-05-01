@@ -26,7 +26,7 @@ void repository::rocksdb_repository::create_table(const table::table &table)
 	}
 }
 
-std::set<table::table> repository::rocksdb_repository::list_tables()
+std::set<table::table> repository::rocksdb_repository::list_tables() const
 {
 	rocksdb::ReadOptions options;
 	rocksdb::Iterator *it = database->NewIterator(options);
@@ -40,7 +40,7 @@ std::set<table::table> repository::rocksdb_repository::list_tables()
 	return tables;
 }
 
-bool repository::rocksdb_repository::has_table(const table::table &table)
+bool repository::rocksdb_repository::has_table(const table::table &table) const
 {
 	if (table.is_valid)
 	{

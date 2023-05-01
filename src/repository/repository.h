@@ -13,9 +13,9 @@ namespace repository
 		public:
 			virtual void create_table(const table::table &table) = 0;
 
-			virtual std::set<table::table> list_tables() = 0;
+			virtual std::set<table::table> list_tables() const = 0;
 
-			virtual bool has_table(const table::table &table) = 0;
+			virtual bool has_table(const table::table &table) const = 0;
 	};
 }
 

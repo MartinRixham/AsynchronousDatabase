@@ -46,7 +46,7 @@ TEST_F(repository_test, does_not_have_invalid_table)
 	ASSERT_EQ(tables.size(), 0);
 }
 
-TEST_F(repository_test, has_valid_table_table)
+TEST_F(repository_test, has_valid_table)
 {
 	repository.create_table(table::valid_table("a table", std::vector<std::string>()));
 

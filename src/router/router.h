@@ -16,7 +16,7 @@ namespace router
 	public:
 		explicit router(repository::repository &repo);
 
-		response get(const std::string &route);
+		response get(const std::string &route) const;
 
 		response post(const std::string &route, const boost::json::object &body);
 	};

@@ -14,11 +14,11 @@ void repository::fake_repository::create_table(const table::table &table)
 	}
 }
 
-std::set<table::table> repository::fake_repository::list_tables()
+std::set<table::table> repository::fake_repository::list_tables() const
 {
 	std::set<table::table> table_list;
 
-	for (std::map<std::string, std::string>::iterator it = tables.begin(); it != tables.end(); ++it)
+	for (std::map<std::string, std::string>::const_iterator it = tables.begin(); it != tables.end(); ++it)
 	{
 		table_list.insert(table::to_table(it->second));
 	}
@@ -26,7 +26,7 @@ std::set<table::table> repository::fake_repository::list_tables()
 	return table_list;
 }
 
-bool repository::fake_repository::has_table(const table::table &table)
+bool repository::fake_repository::has_table(const table::table &table) const
 {
 	return table.is_valid && tables.count(table.name) > 0;
 }

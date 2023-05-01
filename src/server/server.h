@@ -33,7 +33,7 @@ namespace server
 
 		void on_accept(boost::beast::error_code error, boost::asio::ip::tcp::socket socket);
 
-		boost::asio::ip::port_type port();
+		boost::asio::ip::port_type port() const;
 
 	private:
 		void accept();

@@ -34,7 +34,7 @@ namespace server
 	private:
 		void read();
 
-		boost::beast::http::response<boost::beast::http::string_body> handle_request();
+		boost::beast::http::response<boost::beast::http::string_body> handle_request() const;
 
 		void close();
 	};

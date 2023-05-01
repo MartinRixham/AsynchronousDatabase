@@ -19,7 +19,7 @@ table::table table::parse_table(const boost::json::object &json, const std::set<
 		return invalid_table("A table with the name \"" + name + "\" already exists.");
 	}
 
-	boost::json::array dependency_array = json.at("dependencies").as_array();
+	const boost::json::array dependency_array = json.at("dependencies").as_array();
 	std::vector<std::string> dependencies;
 
 	for (size_t i = 0; i < dependency_array.size(); i++)

@@ -12,7 +12,7 @@ TEST(table_test, deserialise_and_serialise)
 
 	boost::json::object json { { "name", "table name" }, { "dependencies", dependencies } };
 
-	table::table table = table::parse_table(json, std::set<std::string>{"dependency one", "dependency two"});
+	table::table table = table::parse_table(json, std::set<std::string>{ "dependency one", "dependency two" });
 
 	ASSERT_TRUE(table.is_valid);
 	ASSERT_EQ(boost::json::serialize(table.json), "{\"name\":\"table name\",\"dependencies\":[\"dependency one\",\"dependency two\"]}");

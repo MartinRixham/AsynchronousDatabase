@@ -115,7 +115,7 @@ void server::session::read()
 		boost::beast::bind_front_handler(&session::on_read, shared_from_this()));
 }
 
-boost::beast::http::response<boost::beast::http::string_body> server::session::handle_request()
+boost::beast::http::response<boost::beast::http::string_body> server::session::handle_request() const
 {
 	if (request.method() != boost::beast::http::verb::get &&
 		request.method() != boost::beast::http::verb::post &&
