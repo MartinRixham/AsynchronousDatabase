@@ -20,7 +20,7 @@ namespace
 		};
 
 		response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
-		response.set(boost::beast::http::field::content_type, "text/html");
+		response.set(boost::beast::http::field::content_type, "application/json");
 		response.keep_alive(keep_alive);
 		response.content_length(body.size());
 		response.prepare_payload();
@@ -121,7 +121,7 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 		request.method() != boost::beast::http::verb::post &&
 		request.method() != boost::beast::http::verb::head)
 	{
-		return bad_request(request, "Unknown HTTP-method");
+		return bad_request(request, "Unknown HTTP method.");
 	}
 
 	// Request path must be absolute and not contain "..".
@@ -129,7 +129,7 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 		request.target()[0] != '/' ||
 		request.target().find("..") != boost::beast::string_view::npos)
 	{
-		return bad_request(request, "Illegal request-target");
+		return bad_request(request, "Invalid request path.");
 	}
 
 	router::response response;

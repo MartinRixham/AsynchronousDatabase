@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <boost/json.hpp>
 
 #include "error.h"
 #include "rocksdb_repository.h"

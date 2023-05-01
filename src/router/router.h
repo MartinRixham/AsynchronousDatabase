@@ -4,17 +4,11 @@
 #include <boost/json.hpp>
 #include <boost/beast/http.hpp>
 
+#include "response.h"
 #include "repository/rocksdb_repository.h"
 
 namespace router
 {
-	struct response
-	{
-		boost::beast::http::status status;
-		
-		boost::json::object body;
-	};
-
 	class router
 	{
         repository::repository &repository;

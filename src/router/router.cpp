@@ -14,11 +14,16 @@ namespace
 		}
 	}
 
-	router::response bad_request_response(const std::string &error)
+	router::response invalid_route_response(const std::string &route)
 	{
-		boost::json::object json { { "error", error } };
+		boost::json::object json { { "error", "Request to invalid route " + route + "." } };
 
 		return { boost::beast::http::status::bad_request, json };
+	}
+
+	router::response valid_get_response(boost::json::object json)
+	{
+		return { boost::beast::http::status::ok, json };
 	}
 }
 
@@ -41,10 +46,10 @@ router::response router::router::get(const std::string &route)
 
 		boost::json::object body { { "tables", tables_json } };
 
-		return { boost::beast::http::status::ok, body };
+		return valid_get_response(body);
 	}
 
-	return bad_request_response("Request to invalid route " + route + ".");
+	return invalid_route_response(route);
 }
 
 router::response router::router::post(const std::string &route, const boost::json::object &body)
@@ -66,5 +71,5 @@ router::response router::router::post(const std::string &route, const boost::jso
 		return post_table_response(table);
     }
 
-	return bad_request_response("Request to invalid route " + route + ".");
+	return invalid_route_response(route);
 }

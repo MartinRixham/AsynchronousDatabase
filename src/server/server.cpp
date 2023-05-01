@@ -15,7 +15,7 @@ server::server::server(
 		router(router::router(repository))
 {   
 	boost::beast::error_code error;
-	boost::asio::ip::tcp::endpoint endpoint{boost::asio::ip::address_v4::any(), port};
+	boost::asio::ip::tcp::endpoint endpoint { boost::asio::ip::address_v4::any(), port };
 
 	acceptor.open(endpoint.protocol(), error);
 	acceptor.set_option(boost::asio::socket_base::reuse_address(true), error);
@@ -23,14 +23,14 @@ server::server::server(
 
 	if (error)
 	{
-		throw std::runtime_error(ERROR(error.message()));
+		throw std::runtime_error(ERROR("Error binding to socket: " + error.message()));
 	}
 
 	acceptor.listen(boost::asio::socket_base::max_listen_connections, error);
 
 	if (error)
 	{
-		throw std::runtime_error(ERROR(error.message()));
+		throw std::runtime_error(ERROR("Error listening on socket: " + error.message()));
 	}
 
 	port_number = acceptor.local_endpoint().port();
@@ -56,7 +56,7 @@ void server::server::on_accept(boost::beast::error_code error, boost::asio::ip::
 {
 	if (error)
 	{
-		throw std::runtime_error(ERROR(error.message()));
+		throw std::runtime_error(ERROR("Error reading from socket: " + error.message()));
 	}
 	else
 	{

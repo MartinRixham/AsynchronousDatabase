@@ -181,7 +181,7 @@ TEST_F(server_test, put_request)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 400);
-	EXPECT_EQ(response, "{\"error\":\"Unknown HTTP-method\"}");   
+	EXPECT_EQ(response, "{\"error\":\"Unknown HTTP method.\"}");
 }
 
 TEST_F(server_test, two_get_requests)
