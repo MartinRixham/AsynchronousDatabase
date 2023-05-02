@@ -63,6 +63,7 @@ QUnit.test('save table with one dependency', async assert => {
 
 	assert.ok(!newTable.newDependency.select().value());
 	assert.equal(newTable.dependencies[0].title().text(), "my dependency");
+	assert.deepEqual(newTable.toJSON(), { name: "my new table", dependencies: ["my dependency"] });
 
 	newTable.save().click();
 

@@ -1,7 +1,8 @@
-import { Text, Binding } from "Datum";
+import { Binding } from "Datum";
 import html from "~/html/table/tables.html";
 
 import NewTable from "./NewTable";
+import Table from "./Table";
 
 export default class {
 
@@ -23,16 +24,23 @@ export default class {
 
 		this.#fetchPage(element, html);
 
-		this.tables = (await this.#client.getTables()).tables.map((table) => new Text(() => table.name));
+		this.tables = (await this.#client.getTables()).tables.map(table => new Table(table));
 	}
 
 	newTableButton = new Binding({
 		click: () => {
-			this.newTable = new NewTable(this.#fetchPage, () => this.tables, this.#client, newTable => {
-				this.newTable = null;
-				this.tables.push(new Text(() => newTable.name));
-			});
+			this.newTable = new NewTable(
+				this.#fetchPage,
+				() => this.tables.map(table => table.title),
+				this.#client,
+				this.#onNewTable.bind(this));
 		},
 		visible: () => !this.newTable
 	});
+
+	#onNewTable(newTable) {
+
+		this.newTable = null;
+		this.tables.push(new Table(newTable.toJSON()));
+	}
 }

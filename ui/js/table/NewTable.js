@@ -2,6 +2,7 @@ import { Binding } from "Datum";
 import html from "~/html/table/newTable.html";
 
 import Dependency from "./Dependency";
+import Table from "./Table";
 
 export default class {
 
@@ -22,7 +23,6 @@ export default class {
 	#nameChanged;
 
 	#getTables;
-
 
 	constructor(fetchPage, getTables, client, onNewTable) {
 
@@ -59,8 +59,7 @@ export default class {
 
 			if (this.#isValid()) {
 
-				const newTable = { name: this.name, dependencies: this.dependencies };
-				const result = await this.#client.postTable(newTable);
+				const result = await this.#client.postTable(this);
 
 				if (result && result.error) {
 
@@ -68,7 +67,7 @@ export default class {
 				}
 				else {
 
-					this.#onNewTable(newTable)
+					this.#onNewTable(this)
 				}
 			}
 		},
@@ -91,5 +90,18 @@ export default class {
 
 		this.dependencies.push(dependency);
 		this.newDependency = new Dependency(this.#addDependency.bind(this), this.#getTables);
+	}
+
+	toJSON() {
+
+		return {
+			name: this.name,
+			dependencies: this.dependencies.map(dependency => dependency.toJSON())
+		};
+	}
+
+	toTable() {
+
+		return new Table(this.toJSON());
 	}
 }
