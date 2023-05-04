@@ -14,6 +14,8 @@ export default class {
 
 	newTable = null;
 
+	#index = 0;
+
 	constructor(fetchPage, client) {
 
 		this.#fetchPage = fetchPage;
@@ -24,7 +26,7 @@ export default class {
 
 		this.#fetchPage(element, html);
 
-		this.tables = (await this.#client.getTables()).tables.map(table => new Table(table));
+		this.tables = (await this.#client.getTables()).tables.map(table => new Table(table, this.#index++));
 	}
 
 	newTableButton = new Binding({
@@ -41,6 +43,6 @@ export default class {
 	#onNewTable(newTable) {
 
 		this.newTable = null;
-		this.tables.push(new Table(newTable.toJSON()));
+		this.tables.push(new Table(newTable.toJSON(), this.#index++));
 	}
 }

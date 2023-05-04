@@ -1,4 +1,4 @@
-import { Text } from "Datum";
+import { Binding } from "Datum";
 
 export default class {
 
@@ -6,11 +6,17 @@ export default class {
 
 	dependencies = [];
 
-	constructor(table) {
+	#index;
+
+	constructor(table, index) {
 
 		this.name = table.name;
 		this.dependencies = table.dependencies.map(dependency => new Text(() => dependency));
+		this.#index = index;
 	}
 
-	title = new Text(() => this.name);
+	title = new Binding({
+		text: () => this.name,
+		init: element => { element.setAttribute("y", this.#index * 100); }
+	});
 }

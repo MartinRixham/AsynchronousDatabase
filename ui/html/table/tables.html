@@ -2,13 +2,13 @@
 	<button class="new-table uk-button" data-bind="newTableButton">New Table</button>
 	<div data-bind="newTable"></div>
 	<h3>Tables</h3>
-	<div data-bind="tables">
-		<div>
-			<span data-bind="dependencies">
-				<span></span>
-			</span>
-			---->
-			<span data-bind="title"></span>
-		</div>
+	<svg width="500" height="500" data-bind="tables">
+		<g>
+			<g data-bind="dependencies">
+				<text x=20 y=20>dependency</text>
+			</g>
+			<text x=20 y=40>-------></text>
+			<text x=20 y=60 data-bind="title">table</text>
+		</g>
 	</div>
 </div>

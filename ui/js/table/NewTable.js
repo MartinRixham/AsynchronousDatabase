@@ -1,8 +1,7 @@
 import { Binding } from "Datum";
 import html from "~/html/table/newTable.html";
 
-import Dependency from "./Dependency";
-import Table from "./Table";
+import NewDependency from "./NewDependency";
 
 export default class {
 
@@ -26,7 +25,7 @@ export default class {
 
 	constructor(fetchPage, getTables, client, onNewTable) {
 
-		this.newDependency = new Dependency(this.#addDependency.bind(this), getTables);
+		this.newDependency = new NewDependency(this.#addDependency.bind(this), getTables);
 		this.#fetchPage = fetchPage;
 		this.#client = client;
 		this.#onNewTable = onNewTable;
@@ -89,7 +88,7 @@ export default class {
 	#addDependency(dependency) {
 
 		this.dependencies.push(dependency);
-		this.newDependency = new Dependency(this.#addDependency.bind(this), this.#getTables);
+		this.newDependency = new NewDependency(this.#addDependency.bind(this), this.#getTables);
 	}
 
 	toJSON() {
@@ -98,10 +97,5 @@ export default class {
 			name: this.name,
 			dependencies: this.dependencies.map(dependency => dependency.toJSON())
 		};
-	}
-
-	toTable() {
-
-		return new Table(this.toJSON());
 	}
 }

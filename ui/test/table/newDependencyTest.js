@@ -1,13 +1,13 @@
 import QUnit from "qunit";
 import { Text } from "Datum";
-import Dependency from "~/js/table/Dependency";
+import NewDependency from "~/js/table/NewDependency";
 
-QUnit.module('dependency');
+QUnit.module('new dependency');
 
 QUnit.test('list dependency options', async assert => {
 
 	const getTables = () => new Promise(resolve => resolve([new Text(() => "first table"), new Text(() => "second table")]));
-	const dependency = new Dependency(() => {}, getTables);
+	const dependency = new NewDependency(() => {}, getTables);
 
 	await dependency.onBind();
 
@@ -26,7 +26,7 @@ QUnit.test('add dependency', assert => {
 	}
 
 	const getTables = () => [new Text(() => "first table"), new Text(() => "second table")];
-	const dependency = new Dependency(addDependency, getTables);
+	const dependency = new NewDependency(addDependency, getTables);
 
 	dependency.select().value("second table");
 	dependency.add().click();
@@ -34,7 +34,7 @@ QUnit.test('add dependency', assert => {
 	assert.equal(newDependency.title().text(), "second table");
 });
 
-QUnit.test('can\'t add empty dependency', assert => {
+QUnit.test('cannot add empty dependency', assert => {
 
 	let newDependency = null;
 
@@ -44,7 +44,7 @@ QUnit.test('can\'t add empty dependency', assert => {
 	}
 
 	const getTables = () => [new Text(() => "first table"), new Text(() => "second table")];
-	const dependency = new Dependency(addDependency, getTables);
+	const dependency = new NewDependency(addDependency, getTables);
 
 	dependency.select().value("");
 	dependency.add().click();
