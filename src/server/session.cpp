@@ -1,6 +1,7 @@
 #include <boost/beast/version.hpp>
 
-#include <memory>
+#include <utility>
+#include <string>
 
 #include "error.h"
 #include "session.h"

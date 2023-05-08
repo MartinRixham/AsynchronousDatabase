@@ -3,6 +3,8 @@
 
 #include <string>
 #include <set>
+#include <vector>
+
 #include <boost/json.hpp>
 
 namespace table

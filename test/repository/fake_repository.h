@@ -1,6 +1,9 @@
 #ifndef REPOSITORY_ROCSKDB_REPOSITORY_H
 #define REPOSITORY_ROCSKDB_REPOSITORY_H
 
+#include <map>
+#include <string>
+
 #include "repository/repository.h"
 
 namespace repository

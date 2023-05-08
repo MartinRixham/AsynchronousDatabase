@@ -1,4 +1,4 @@
-import { Binding } from "Datum";
+import { Binding, Text } from "Datum";
 
 export default class {
 

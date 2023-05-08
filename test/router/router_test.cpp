@@ -1,7 +1,8 @@
-#include <gtest/gtest.h>
-#include <boost/json.hpp>
 #include <vector>
 #include <string>
+
+#include <gtest/gtest.h>
+#include <boost/json.hpp>
 
 #include "repository/fake_repository.h"
 #include "router/router.h"

@@ -1,8 +1,9 @@
 #ifndef REPOSITORY_REPOSITORY_H
 #define REPOSITORY_REPOSITORY_H
 
-#include <rocksdb/db.h>
 #include <set>
+
+#include <rocksdb/db.h>
 
 #include "table/table.h"
 

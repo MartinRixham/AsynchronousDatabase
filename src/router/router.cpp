@@ -1,3 +1,5 @@
+#include <set>
+
 #include "router.h"
 
 namespace

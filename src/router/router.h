@@ -1,6 +1,8 @@
 #ifndef ROUTER_ROUTER_H
 #define ROUTER_ROUTER_H
 
+#include <string>
+
 #include <boost/json.hpp>
 #include <boost/beast/http.hpp>
 

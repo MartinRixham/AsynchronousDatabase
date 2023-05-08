@@ -1,4 +1,6 @@
 #include <filesystem>
+#include <string>
+
 #include <boost/json.hpp>
 
 #include "error.h"

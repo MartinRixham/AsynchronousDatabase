@@ -1,6 +1,8 @@
 #ifndef SERVER_SESSION_H
 #define SERVER_SESSION_H
 
+#include <memory>
+
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 

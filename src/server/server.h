@@ -1,10 +1,11 @@
 #ifndef SERVER_SERVER_H
 #define SERVER_SERVER_H
 
+#include <thread>
+
 #include <rocksdb/db.h>
 #include <boost/asio.hpp>
 #include <boost/beast/core.hpp>
-#include <thread>
 
 #include "router/router.h"
 

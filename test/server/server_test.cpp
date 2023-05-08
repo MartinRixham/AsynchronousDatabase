@@ -1,9 +1,9 @@
-#include <gtest/gtest.h>
-#include <curl/curl.h>
-
+#include <filesystem>
 #include <memory>
 #include <thread>
-#include <filesystem>
+
+#include <gtest/gtest.h>
+#include <curl/curl.h>
 
 #include "server/server.h"
 
