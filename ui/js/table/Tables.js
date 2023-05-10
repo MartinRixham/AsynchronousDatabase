@@ -46,9 +46,11 @@ export default class {
 
 	#insertTable(table) {
 
-		this.tables.push(new Table(table, (dependencies) =>
-			this.tables
+		this.tables.push(new Table(table, (dependencies) => {
+			this.tables.subscribableLength;
+			return this.tables
 				.filter(table => dependencies.includes(table.name))
-				.reduce((max, table) => Math.max(max, table.dependencyDepth() + 1), 0)));
+				.reduce((max, table) => Math.max(max, table.dependencyDepth() + 1), 0);
+		}));
 	}
 }
