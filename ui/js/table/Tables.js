@@ -6,15 +6,13 @@ import Table from "./Table";
 
 export default class {
 
-	#fetchPage;
-
-	#client;
-
 	tables = [];
 
 	newTable = null;
 
-	#index = 0;
+	#fetchPage;
+
+	#client;
 
 	constructor(fetchPage, client) {
 
@@ -26,7 +24,7 @@ export default class {
 
 		this.#fetchPage(element, html);
 
-		this.tables = (await this.#client.getTables()).tables.map(table => new Table(table, this.#index++));
+		(await this.#client.getTables()).tables.map(this.#insertTable.bind(this));
 	}
 
 	newTableButton = new Binding({
@@ -43,6 +41,14 @@ export default class {
 	#onNewTable(newTable) {
 
 		this.newTable = null;
-		this.tables.push(new Table(newTable.toJSON(), this.#index++));
+		this.#insertTable(newTable.toJSON());
+	}
+
+	#insertTable(table) {
+
+		this.tables.push(new Table(table, (dependencies) =>
+			this.tables
+				.filter(table => dependencies.includes(table.name))
+				.reduce((max, table) => Math.max(max, table.dependencyDepth() + 1), 0)));
 	}
 }
