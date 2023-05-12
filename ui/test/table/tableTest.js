@@ -9,12 +9,12 @@ QUnit.test('table has name and dependencies', async assert => {
 		name: "table name",
 		dependencies: ["dependency one", "dependency two"]
 	},
-	() => 3);
+	() => ({ width: 3, depth: 0 }));
 
 	assert.equal(table.title().text(), "table name");
-	assert.equal(table.dependencyDepth(), 3);
+	assert.deepEqual(table.graphPosition(), { width: 3, depth: 0 });
 
-	assert.equal(table.dependencies[0]().text(), "dependency one");
-	assert.equal(table.dependencies[1]().text(), "dependency two");
+	assert.equal(table.dependencies[0].title().text(), "dependency one");
+	assert.equal(table.dependencies[1].title().text(), "dependency two");
 });
 

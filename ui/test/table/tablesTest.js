@@ -20,13 +20,13 @@ QUnit.test('get tables', async assert => {
 	const tableOne = tables.tables[0];
 
 	assert.equal(tableOne.title().text(), "first table");
-	assert.equal(tableOne.dependencyDepth(), 0);
+	assert.deepEqual(tableOne.graphPosition(), { depth: 0, width: 0 });
 
 	const tableTwo = tables.tables[1];
 
 	assert.equal(tableTwo.title().text(), "second table");
-	assert.equal(tableTwo.dependencyDepth(), 1);
-	assert.equal(tableTwo.dependencies[0]().text(), "first table");
+	assert.deepEqual(tableTwo.graphPosition(), { depth: 1, width: 0 });
+	assert.equal(tableTwo.dependencies[0].title().text(), "first table");
 });
 
 QUnit.test('new table', async assert => {
@@ -59,7 +59,26 @@ QUnit.test('add tables in wrong order', async assert => {
 
 	assert.equal(tables.tables.length, 3);
 
-	assert.equal(tables.tables[0].dependencyDepth(), 2);
-	assert.equal(tables.tables[1].dependencyDepth(), 1);
-	assert.equal(tables.tables[2].dependencyDepth(), 0);
+	assert.deepEqual(tables.tables[0].graphPosition(), { depth: 2, width: 0 });
+	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 1, width: 0 });
+	assert.deepEqual(tables.tables[2].graphPosition(), { depth: 0, width: 0 });
+});
+
+QUnit.test('add tables with same dependency', async assert => {
+	
+	const client = new DatabaseClient();
+
+	client.postTable({ name: "third table", dependencies: ["first table"] });
+	client.postTable({ name: "first table", dependencies: [] });
+	client.postTable({ name: "second table", dependencies: ["first table"] });
+
+	const tables = new Tables(() => {}, client);
+
+	await tables.onBind();
+
+	assert.equal(tables.tables.length, 3);
+
+	assert.deepEqual(tables.tables[0].graphPosition(), { depth: 1, width: 1 });
+	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 0, width: 0 });
+	assert.deepEqual(tables.tables[2].graphPosition(), { depth: 1, width: 0 });
 });
