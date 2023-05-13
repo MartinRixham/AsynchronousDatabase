@@ -16,6 +16,8 @@ export default class {
 
 	#client;
 
+	#totalWidth;
+
 	constructor(fetchPage, client) {
 
 		this.#fetchPage = fetchPage;
@@ -50,14 +52,17 @@ export default class {
 
 		this.tables.push(new Table(table, (name) => {
 
-			this.tableGraph.subscribableLength;
 			for (let i = 0; i < this.tableGraph.length; i++) {
 
 				for (let j = 0; j < this.tableGraph[i].length; j++) {
 
 					if (this.tableGraph[i][j] == name) {
 
-						return { depth: i, width: j };
+						const blockSize = this.#totalWidth / this.tableGraph[i].length;
+						const overWidth = this.#totalWidth == 1 ? 1 : 1 / (this.#totalWidth - 1);
+						const width = ((j + overWidth) * blockSize) - overWidth;
+
+						return { depth: i, width: width };
 					}
 				}
 			}
@@ -68,7 +73,7 @@ export default class {
 		let tables = [...this.tables];
 		let tableGraph = [[]]
 
-		for (let i = 0; i < tables.length; i++) {
+		for (let i = tables.length - 1; i >= 0; i--) {
 
 			if (!tables[i].dependencies.length) {
 
@@ -76,6 +81,8 @@ export default class {
 				tableGraph[0].push(table[0].name);
 			}
 		}
+
+		let totalWidth = tableGraph[0].length;
 
 		while (tables.length > 0) {
 
@@ -97,10 +104,12 @@ export default class {
 				row.push(table[0].name);
 			}
 
+			totalWidth = Math.max(totalWidth, row.length);
 			tableGraph.push(row);
 		}
 
-		this.tableGraph.splice(0, this.tableGraph.length, ...tableGraph);
+		this.#totalWidth = totalWidth;
+		this.tableGraph = tableGraph;
 	}
 
 

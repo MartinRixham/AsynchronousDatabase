@@ -79,6 +79,23 @@ QUnit.test('add tables with same dependency', async assert => {
 	assert.equal(tables.tables.length, 3);
 
 	assert.deepEqual(tables.tables[0].graphPosition(), { depth: 1, width: 1 });
-	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 0, width: 0 });
+	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 0, width: 1 });
 	assert.deepEqual(tables.tables[2].graphPosition(), { depth: 1, width: 0 });
+});
+
+QUnit.test('add tables with no dependencies', async assert => {
+	
+	const client = new DatabaseClient();
+
+	client.postTable({ name: "first table", dependencies: [] });
+	client.postTable({ name: "second table", dependencies: [] });
+
+	const tables = new Tables(() => {}, client);
+
+	await tables.onBind();
+
+	assert.equal(tables.tables.length, 2);
+
+	assert.deepEqual(tables.tables[0].graphPosition(), { depth: 0, width: 1 });
+	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 0, width: 0 });
 });

@@ -7,9 +7,10 @@
     "test": "test"
   },
   "scripts": {
-    "build": "parcel build index.html",
+    "build": "parcel build --no-optimize index.html",
     "test": "parcel build test/index.html --no-optimize --dist-dir dist/test && grunt",
-    "start": "parcel index.html"
+    "start": "parcel index.html",
+    "start:test": "http-server dist/test"
   },
   "repository": {
     "type": "git",
@@ -24,8 +25,8 @@
   "devDependencies": {
     "eslint": "^8.39.0",
     "grunt": "1.6.1",
-    "grunt-contrib-qunit": "7.0.0",
     "grunt-contrib-connect": "^3.0.0",
+    "grunt-contrib-qunit": "7.0.0",
     "grunt-eslint": "^24.0.1",
     "nyc": "15.1.0",
     "parcel": "2.8.3",
@@ -35,6 +36,7 @@
   "dependencies": {
     "@datumjs/pieces": "0.5.0",
     "Datum": "0.13.2",
+    "http-server": "^14.1.1",
     "uikit": "3.9.4"
   }
 }
