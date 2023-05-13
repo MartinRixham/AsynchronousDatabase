@@ -25,7 +25,7 @@ export default class {
 
 	constructor(fetchPage, getTables, client, onNewTable) {
 
-		this.newDependency = new NewDependency(this.#addDependency.bind(this), getTables);
+		this.newDependency = new NewDependency(this.#addDependency.bind(this), getTables, this.dependencies.length);
 		this.#fetchPage = fetchPage;
 		this.#client = client;
 		this.#onNewTable = onNewTable;
@@ -88,7 +88,15 @@ export default class {
 	#addDependency(dependency) {
 
 		this.dependencies.push(dependency);
-		this.newDependency = new NewDependency(this.#addDependency.bind(this), this.#getTables);
+
+		if (this.dependencies.length < 2) {
+
+			this.newDependency = new NewDependency(this.#addDependency.bind(this), this.#getTables);
+		}
+		else {
+
+			this.newDependency = null;
+		}
 	}
 
 	toJSON() {

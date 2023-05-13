@@ -78,6 +78,53 @@ QUnit.test('save table with one dependency', async assert => {
 	assert.equal(firstTable.dependencies[0].name, "my dependency");
 });
 
+QUnit.test('save table with two dependencies', async assert => {
+
+	const client = new DatabaseClient();
+
+	const newTable = new NewTable(() => {}, () => [], client, () => {});
+
+	newTable.title().value("my new table");
+
+	assert.equal(newTable.newDependency.label().text(), "first dependency")
+
+	newTable.newDependency.select().value("my dependency")
+	newTable.newDependency.add().click();
+
+	assert.equal(newTable.newDependency.label().text(), "second dependency")
+
+	newTable.newDependency.select().value("my other dependency")
+	newTable.newDependency.add().click();
+
+	assert.equal(newTable.dependencies[0].title().text(), "my dependency");
+	assert.equal(newTable.dependencies[1].title().text(), "my other dependency");
+	assert.deepEqual(newTable.toJSON(), { name: "my new table", dependencies: ["my dependency", "my other dependency"] });
+
+	newTable.save().click();
+
+	const tables = await client.getTables();
+	const firstTable = tables.tables[0];
+
+	assert.equal(firstTable.dependencies.length, 2);
+	assert.equal(firstTable.dependencies[0].name, "my dependency");
+	assert.equal(firstTable.dependencies[1].name, "my other dependency");
+});
+
+QUnit.test('cannot add third dependency', async assert => {
+
+	const client = new DatabaseClient();
+
+	const newTable = new NewTable(() => {}, () => [], client, () => {});
+
+	newTable.newDependency.select().value("my dependency")
+	newTable.newDependency.add().click();
+
+	newTable.newDependency.select().value("my other dependency")
+	newTable.newDependency.add().click();
+
+	assert.ok(!newTable.newDependency);
+});
+
 QUnit.test('fail to save table with duplicate', async assert => {
 
 	let savedTables = [];

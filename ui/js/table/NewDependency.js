@@ -10,10 +10,13 @@ export default class {
 
 	#getTables;
 
-	constructor(addDependency, getTables) {
+	#index;
+
+	constructor(addDependency, getTables, index) {
 
 		this.#addDependency = addDependency;
 		this.#getTables = getTables;
+		this.#index = index;
 	}
 
 	async onBind() {
@@ -43,6 +46,8 @@ export default class {
 	});
 
 	title = new Text(() => this.name);
+
+	label = new Text(() => this.#index < 1 ? "first dependency" : "second dependency");
 
 	toJSON() {
 	

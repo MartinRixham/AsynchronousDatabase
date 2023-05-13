@@ -96,12 +96,12 @@ export default class {
 			}
 		}
 
-		let totalWidth = tableGraph[0].length;
+		let firstRow = tableGraph[0];
 
-		return this.#buildRow(tableGraph, totalWidth, tables);
+		return this.#buildRow(tableGraph, firstRow.length, tables, [...firstRow]);
 	}
 
-	#buildRow(tableGraph, totalWidth, tables) {
+	#buildRow(tableGraph, totalWidth, tables, placedTables) {
 
 		if (!tables.length) {
 
@@ -113,9 +113,11 @@ export default class {
 
 		for (let i = tables.length - 1; i >= 0; i--) {
 
-			if (this.#intersect(tables[i].dependencies, lastRow)) {
+			if (tables[i].dependencies.every(dependency => placedTables.includes(dependency.name))) {
 
-				row.push(tables.splice(i, 1)[0].name);
+				const table = tables.splice(i, 1)[0].name;
+
+				row.push(table);
 			}
 		}
 
@@ -127,13 +129,9 @@ export default class {
 
 		row.sort((a, b) => this.#widthSum(a, lastRow) - this.#widthSum(b, lastRow));
 		tableGraph.push(row);
+		placedTables.push(...row);
 
-		return this.#buildRow(tableGraph, Math.max(totalWidth, row.length), tables);
-	}
-
-	#intersect(dependencies, row) {
-
-		return dependencies.some(dependency => row.includes(dependency.name));
+		return this.#buildRow(tableGraph, Math.max(totalWidth, row.length), tables, placedTables);
 	}
 
 	#widthSum(name, dependencies) {
