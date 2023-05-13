@@ -1,4 +1,4 @@
-import { Binding } from "Datum";
+import { Binding, Update } from "Datum";
 import html from "~/html/table/tables.html";
 
 import NewTable from "./NewTable";
@@ -42,6 +42,12 @@ export default class {
 		visible: () => !this.newTable
 	});
 
+	svg = new Update(element => {
+
+		element.setAttribute("height", 200 + this.tableGraph.length * 180);
+		element.setAttribute("width", 200 + this.#totalWidth * 180);
+	})
+
 	#onNewTable(newTable) {
 
 		this.newTable = null;
@@ -59,16 +65,20 @@ export default class {
 					if (this.tableGraph[i][j] == name) {
 
 						const blockSize = this.#totalWidth / this.tableGraph[i].length;
-						const overWidth = this.#totalWidth == 1 ? 1 : 1 / (this.#totalWidth - 1);
-						const width = ((j + overWidth) * blockSize) - overWidth;
+						const offset = 0.5;
 
-						return { depth: i, width: width };
+						return { depth: i, width: ((j + offset) * blockSize) - offset };
 					}
 				}
 			}
 
 			return { depth: 0, width: 0 }
 		}));
+
+		this.#buildGraph();
+	}
+
+	#buildGraph() {
 
 		let tables = [...this.tables];
 		let tableGraph = [[]]
@@ -111,7 +121,6 @@ export default class {
 		this.#totalWidth = totalWidth;
 		this.tableGraph = tableGraph;
 	}
-
 
 	#intersect(dependencies, row) {
 

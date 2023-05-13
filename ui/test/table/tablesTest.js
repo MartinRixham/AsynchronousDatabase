@@ -79,7 +79,7 @@ QUnit.test('add tables with same dependency', async assert => {
 	assert.equal(tables.tables.length, 3);
 
 	assert.deepEqual(tables.tables[0].graphPosition(), { depth: 1, width: 1 });
-	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 0, width: 1 });
+	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 0, width: 0.5 });
 	assert.deepEqual(tables.tables[2].graphPosition(), { depth: 1, width: 0 });
 });
 
