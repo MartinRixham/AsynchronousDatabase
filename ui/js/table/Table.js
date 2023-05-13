@@ -7,12 +7,12 @@ export default class {
 
 	dependencies = [];
 
-	graphPosision;
+	graphPosition;
 
-	constructor(table, graphPosision) {
+	constructor(table, graphPosition) {
 
 		this.name = table.name;
-		this.graphPosition = () => graphPosision(table.name);
+		this.graphPosition = () => graphPosition(table.name);
 		this.dependencies = table.dependencies.map(dependency => new Dependency(dependency, this.graphPosition));
 	}
 

@@ -56,26 +56,31 @@ export default class {
 
 	#insertTable(table) {
 
-		this.tables.push(new Table(table, (name) => {
+		this.tables.push(new Table(table, this.#graphPosition.bind(this)));
 
-			for (let i = 0; i < this.tableGraph.length; i++) {
+		const { tableGraph, totalWidth } = this.#buildGraph();
 
-				for (let j = 0; j < this.tableGraph[i].length; j++) {
+		this.#totalWidth = totalWidth;
+		this.tableGraph = tableGraph;
+	}
 
-					if (this.tableGraph[i][j] == name) {
+	#graphPosition(name) {
 
-						const blockSize = this.#totalWidth / this.tableGraph[i].length;
-						const offset = 0.5;
+		for (let i = 0; i < this.tableGraph.length; i++) {
 
-						return { depth: i, width: ((j + offset) * blockSize) - offset };
-					}
+			for (let j = 0; j < this.tableGraph[i].length; j++) {
+
+				if (this.tableGraph[i][j] == name) {
+
+					const blockSize = this.#totalWidth / this.tableGraph[i].length;
+					const offset = 0.5;
+
+					return { depth: i, width: ((j + offset) * blockSize) - offset };
 				}
 			}
+		}
 
-			return { depth: 0, width: 0 }
-		}));
-
-		this.#buildGraph();
+		return { depth: 0, width: 0 }
 	}
 
 	#buildGraph() {
@@ -87,57 +92,51 @@ export default class {
 
 			if (!tables[i].dependencies.length) {
 
-				let table = tables.splice(i, 1);
-				tableGraph[0].push(table[0].name);
+				tableGraph[0].push(tables.splice(i, 1)[0].name);
 			}
 		}
 
 		let totalWidth = tableGraph[0].length;
 
-		while (tables.length > 0) {
+		return this.#buildRow(tableGraph, totalWidth, tables);
+	}
 
-			const lastRow = tableGraph[tableGraph.length - 1];
-			let row = [];
+	#buildRow(tableGraph, totalWidth, tables) {
 
-			for (let i = tables.length - 1; i >= 0; i--) {
+		if (!tables.length) {
 
-				if (this.#intersect(tables[i].dependencies, lastRow)) {
-
-					const table = tables.splice(i, 1);
-					row.push(table[0].name);
-				}
-			}
-
-			if (!row.length) {
-
-				const table = tables.splice(0, 1);
-				row.push(table[0].name);
-			}
-
-			row.sort((a, b) => this.#averageWidth(a, lastRow) - this.#averageWidth(b, lastRow))
-
-			totalWidth = Math.max(totalWidth, row.length);
-			tableGraph.push(row);
+			return { tableGraph, totalWidth, tables }
 		}
 
-		this.#totalWidth = totalWidth;
-		this.tableGraph = tableGraph;
+		const lastRow = tableGraph[tableGraph.length - 1];
+		let row = [];
+
+		for (let i = tables.length - 1; i >= 0; i--) {
+
+			if (this.#intersect(tables[i].dependencies, lastRow)) {
+
+				row.push(tables.splice(i, 1)[0].name);
+			}
+		}
+
+		if (!row.length) {
+
+			const table = tables.splice(0, 1);
+			row.push(table[0].name);
+		}
+
+		row.sort((a, b) => this.#widthSum(a, lastRow) - this.#widthSum(b, lastRow));
+		tableGraph.push(row);
+
+		return this.#buildRow(tableGraph, Math.max(totalWidth, row.length), tables);
 	}
 
 	#intersect(dependencies, row) {
 
-		for (let i = 0; i < dependencies.length; i++) {
-
-			if (row.includes(dependencies[i].name)) {
-
-				return true;
-			}
-		}
-
-		return false;
+		return dependencies.some(dependency => row.includes(dependency.name));
 	}
 
-	#averageWidth(name, dependencies) {
+	#widthSum(name, dependencies) {
 
 		const table = this.tables.find(table => table.name == name)
 		let total = 0;
