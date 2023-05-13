@@ -13,13 +13,13 @@ export default class {
 
 	serverError;
 
+	updated;
+
 	#fetchPage;
 
 	#client;
 
 	#onNewTable;
-
-	#nameChanged;
 
 	#getTables;
 
@@ -46,13 +46,13 @@ export default class {
 			if (value != undefined) {
 
 				this.name = value;
-				this.#nameChanged = true;
+				this.updated = true;
 			}
 
 			return this.name;
 		},
 		classes: {
-			"input-error": () => !this.#isValid() && this.#nameChanged
+			"input-error": () => !this.#isValid() && this.updated
 		}
 	});
 
@@ -72,10 +72,11 @@ export default class {
 					this.#onNewTable(this)
 				}
 			}
-		},
-		update: (element) => {
 
-			element.disabled = !this.#isValid();
+			this.updated = true;
+		},
+		classes: {
+			disabled: () => !this.#isValid()
 		}
 	});
 

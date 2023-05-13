@@ -9,6 +9,13 @@
     margin-top: 2%;
 }
 
+.create-table .submit.disabled {
+
+	color: #999;
+	border-color: #e5e5e5;
+	background: #ddd;
+}
+
 .create-table .input-error {
 
 	border-color: #f0506e;
