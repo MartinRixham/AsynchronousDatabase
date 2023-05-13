@@ -1,15 +1,12 @@
 import QUnit from "qunit";
-import { Text } from "Datum";
 import NewDependency from "~/js/table/NewDependency";
 
 QUnit.module('new dependency');
 
 QUnit.test('list dependency options', async assert => {
 
-	const getTables = () => new Promise(resolve => resolve([new Text(() => "first table"), new Text(() => "second table")]));
-	const dependency = new NewDependency(0, getTables, () => {}, () => {});
-
-	await dependency.onBind();
+	const tables = ["first table", "second table"];
+	const dependency = new NewDependency(0, tables, () => {}, () => {});
 
 	assert.equal(dependency.options.length, 2);
 	assert.equal(dependency.options[0]().text(), "first table");
@@ -25,8 +22,8 @@ QUnit.test('add dependency', assert => {
 		newDependency = dependency;
 	}
 
-	const getTables = () => [new Text(() => "first table"), new Text(() => "second table")];
-	const dependency = new NewDependency(0, getTables, addDependency);
+	const tables = ["first table", "second table"];
+	const dependency = new NewDependency(0, tables, addDependency);
 
 	assert.equal(dependency.label().text(), "first dependency");
 
@@ -45,8 +42,8 @@ QUnit.test('cannot add empty dependency', assert => {
 		newDependency = dependency;
 	}
 
-	const getTables = () => [new Text(() => "first table"), new Text(() => "second table")];
-	const dependency = new NewDependency(0, getTables, addDependency);
+	const tables = ["first table", "second table"];
+	const dependency = new NewDependency(0, tables, addDependency);
 
 	dependency.select().value("");
 	dependency.add().click();
@@ -56,8 +53,8 @@ QUnit.test('cannot add empty dependency', assert => {
 
 QUnit.test('add second dependency', assert => {
 
-	const getTables = () => [new Text(() => "first table"), new Text(() => "second table")];
-	const dependency = new NewDependency(1, getTables, () => {});
+	const tables = ["first table", "second table"];
+	const dependency = new NewDependency(1, tables, () => {});
 
 	assert.equal(dependency.label().text(), "second dependency");
 });
@@ -71,7 +68,7 @@ QUnit.test('remove dependency', assert => {
 		removedDependency = name;
 	}
 
-	const dependency = new NewDependency(0, () => [], () => {}, removeDependency);
+	const dependency = new NewDependency(0, [], () => {}, removeDependency);
 
 	dependency.select().value("first table");
 	dependency.remove().click();

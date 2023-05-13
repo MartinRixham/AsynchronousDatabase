@@ -35,7 +35,7 @@ export default class {
 		click: () => {
 			this.newTable = new NewTable(
 				this.#fetchPage,
-				() => this.tables.map(table => table.title),
+				() => this.tables.map(table => table.name),
 				this.#client,
 				this.#onNewTable.bind(this));
 		},

@@ -1,4 +1,3 @@
-import { Text } from "Datum"
 import { NavPiece } from "@datumjs/pieces"
 
 import html from "~/html/app.html"
@@ -20,7 +19,7 @@ export default class App {
 				route: "newTable",
 				page: new NewTable(
 					fetchPage,
-					async () => (await this.#client.getTables()).tables.map((table) => new Text(() => table.name)),
+					async () => (await this.#client.getTables()).tables.map(table => table.name),
 					this.#client,
 					() => { this.currentPage.showPage(0); })
 			}

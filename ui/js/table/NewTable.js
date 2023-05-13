@@ -23,18 +23,21 @@ export default class {
 
 	#getTables;
 
+	#tables;
+
 	constructor(fetchPage, getTables, client, onNewTable) {
 
-		this.newDependency = new NewDependency(0, getTables, this.#addDependency.bind(this), this.#removeDependency.bind(this));
 		this.#fetchPage = fetchPage;
 		this.#client = client;
 		this.#onNewTable = onNewTable;
 		this.#getTables = getTables;
 	}
 
-	onBind(element) {
+	async onBind(element) {
 
 		this.#fetchPage(element, html);
+		this.#tables = this.#getTables();
+		this.newDependency = new NewDependency(0, this.#tables, this.#addDependency.bind(this), this.#removeDependency.bind(this));
 	}
 
 	title = new Binding({
@@ -111,7 +114,7 @@ export default class {
 			this.newDependency =
 				new NewDependency(
 					this.dependencies.length,
-					this.#getTables,
+					this.#tables.filter(table => !this.dependencies.map(dependency => dependency.name).includes(table)),
 					this.#addDependency.bind(this),
 					this.#removeDependency.bind(this));
 		}

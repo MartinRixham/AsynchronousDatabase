@@ -33,3 +33,9 @@
 
 	float: right;
 }
+
+.tables svg {
+	
+	display: block;
+	margin: auto;
+}

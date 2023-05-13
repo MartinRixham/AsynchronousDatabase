@@ -8,23 +8,16 @@ export default class {
 
 	#index;
 
-	#getTables;
-
 	#addDependency;
 
 	#removeDependency;
 
-	constructor(index, getTables, addDependency, removeDependency) {
+	constructor(index, tables, addDependency, removeDependency) {
 
 		this.#index = index;
-		this.#getTables = getTables;
+		this.options = tables.map(table => new Text(() => table));
 		this.#addDependency = addDependency;
 		this.#removeDependency = removeDependency;
-	}
-
-	async onBind() {
-
-		this.options = await this.#getTables();
 	}
 
 	select = new Value(value => {

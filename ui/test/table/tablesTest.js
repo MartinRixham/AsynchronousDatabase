@@ -40,7 +40,6 @@ QUnit.test('new table', async assert => {
 	tables.newTableButton().click();
 
 	await tables.newTable.onBind();
-	await tables.newTable.newDependency.onBind();
 
 	assert.ok(tables.newTable);
 });
