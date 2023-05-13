@@ -7,7 +7,7 @@ QUnit.module('new dependency');
 QUnit.test('list dependency options', async assert => {
 
 	const getTables = () => new Promise(resolve => resolve([new Text(() => "first table"), new Text(() => "second table")]));
-	const dependency = new NewDependency(() => {}, getTables, 0);
+	const dependency = new NewDependency(0, getTables, () => {}, () => {});
 
 	await dependency.onBind();
 
@@ -26,7 +26,7 @@ QUnit.test('add dependency', assert => {
 	}
 
 	const getTables = () => [new Text(() => "first table"), new Text(() => "second table")];
-	const dependency = new NewDependency(addDependency, getTables, 0);
+	const dependency = new NewDependency(0, getTables, addDependency);
 
 	assert.equal(dependency.label().text(), "first dependency");
 
@@ -46,7 +46,7 @@ QUnit.test('cannot add empty dependency', assert => {
 	}
 
 	const getTables = () => [new Text(() => "first table"), new Text(() => "second table")];
-	const dependency = new NewDependency(addDependency, getTables, 0);
+	const dependency = new NewDependency(0, getTables, addDependency);
 
 	dependency.select().value("");
 	dependency.add().click();
@@ -57,7 +57,24 @@ QUnit.test('cannot add empty dependency', assert => {
 QUnit.test('add second dependency', assert => {
 
 	const getTables = () => [new Text(() => "first table"), new Text(() => "second table")];
-	const dependency = new NewDependency(() => {}, getTables, 1);
+	const dependency = new NewDependency(1, getTables, () => {});
 
 	assert.equal(dependency.label().text(), "second dependency");
+});
+
+QUnit.test('remove dependency', assert => {
+
+	let removedDependency = null;
+
+	const removeDependency = (name) => {
+
+		removedDependency = name;
+	}
+
+	const dependency = new NewDependency(0, () => [], () => {}, removeDependency);
+
+	dependency.select().value("first table");
+	dependency.remove().click();
+
+	assert.equal(removedDependency, "first table");
 });

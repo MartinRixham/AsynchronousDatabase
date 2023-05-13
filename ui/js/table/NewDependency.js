@@ -1,4 +1,4 @@
-import { Value, Binding, Text } from "Datum";
+import { Value, Click, Text } from "Datum";
 
 export default class {
 
@@ -6,17 +6,20 @@ export default class {
 
 	options = [];
 
-	#addDependency;
+	#index;
 
 	#getTables;
 
-	#index;
+	#addDependency;
 
-	constructor(addDependency, getTables, index) {
+	#removeDependency;
 
-		this.#addDependency = addDependency;
-		this.#getTables = getTables;
+	constructor(index, getTables, addDependency, removeDependency) {
+
 		this.#index = index;
+		this.#getTables = getTables;
+		this.#addDependency = addDependency;
+		this.#removeDependency = removeDependency;
 	}
 
 	async onBind() {
@@ -34,15 +37,17 @@ export default class {
 		return value;
 	});
 
-	add = new Binding({
+	add = new Click(() => {
 
-		click: () => {
+		if (this.name) {
 
-			if (this.name) {
-
-				this.#addDependency(this)
-			}
+			this.#addDependency(this)
 		}
+	});
+
+	remove = new Click(() => {
+
+		this.#removeDependency(this.name);
 	});
 
 	title = new Text(() => this.name);

@@ -25,7 +25,7 @@ export default class {
 
 	constructor(fetchPage, getTables, client, onNewTable) {
 
-		this.newDependency = new NewDependency(this.#addDependency.bind(this), getTables, this.dependencies.length);
+		this.newDependency = new NewDependency(0, getTables, this.#addDependency.bind(this), this.#removeDependency.bind(this));
 		this.#fetchPage = fetchPage;
 		this.#client = client;
 		this.#onNewTable = onNewTable;
@@ -88,10 +88,32 @@ export default class {
 	#addDependency(dependency) {
 
 		this.dependencies.push(dependency);
+		this.#resetNewDependency();
+	}
+
+	#removeDependency(name) {
+
+		for (let i = this.dependencies.length - 1; i >= 0; i--) {
+
+			if (this.dependencies[i].name == name) {
+
+				this.dependencies.splice(i, 1);
+			}
+		}
+
+		this.#resetNewDependency();
+	}
+
+	#resetNewDependency() {
 
 		if (this.dependencies.length < 2) {
 
-			this.newDependency = new NewDependency(this.#addDependency.bind(this), this.#getTables);
+			this.newDependency =
+				new NewDependency(
+					this.dependencies.length,
+					this.#getTables,
+					this.#addDependency.bind(this),
+					this.#removeDependency.bind(this));
 		}
 		else {
 

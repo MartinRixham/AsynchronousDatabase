@@ -19,6 +19,16 @@
 	color: red;
 }
 
+.create-table .dependency {
+
+	margin-bottom: 2%;
+}
+
+.create-table .dependency button {
+
+	margin-left: 2%;
+}
+
 .tables .new-table {
 
 	float: right;

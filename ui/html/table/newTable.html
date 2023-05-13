@@ -3,7 +3,10 @@
 	<input type="text" id="tableName" class="uk-input" data-bind="title" />
 	<h4>dependencies</h4>
 	<div data-bind="dependencies">
-		<div data-bind="title"></div>
+		<div class="dependency">
+			<span data-bind="title"></span>
+			<button class="uk-button-danger" data-bind="remove">x</button>
+		</div>
 	</div>
 	<div data-bind="newDependency">
 		<label for"firstDependency" class="uk-label" data-bind="label">First Dependency</label>

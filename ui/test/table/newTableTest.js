@@ -144,3 +144,39 @@ QUnit.test('fail to save table with duplicate', async assert => {
 	assert.equal(newTable.error().text(), "A table with the name \"a table\" already exists.");
 	assert.equal(savedTables.length, 1);
 });
+
+QUnit.test('remove dependency', async assert => {
+
+	const newTable = new NewTable(() => {}, () => [], new DatabaseClient(), () => {});
+
+	newTable.title().value("my new table");
+	newTable.newDependency.select().value("my dependency")
+	newTable.newDependency.add().click();
+
+	assert.equal(newTable.dependencies.length, 1);
+
+	newTable.dependencies[0].remove().click();
+
+	assert.equal(newTable.dependencies.length, 0);
+	assert.ok(!newTable.newDependency.select().value());
+	assert.equal(newTable.newDependency.label().text(), "first dependency")
+});
+
+QUnit.test('remove second dependency', async assert => {
+
+	const newTable = new NewTable(() => {}, () => [], new DatabaseClient(), () => {});
+
+	newTable.title().value("my new table");
+	newTable.newDependency.select().value("my dependency")
+	newTable.newDependency.add().click();
+	newTable.newDependency.select().value("my other dependency")
+	newTable.newDependency.add().click();
+
+	assert.equal(newTable.dependencies.length, 2);
+
+	newTable.dependencies[1].remove().click();
+
+	assert.equal(newTable.dependencies.length, 1);
+	assert.ok(!newTable.newDependency.select().value());
+	assert.equal(newTable.newDependency.label().text(), "second dependency")
+});
