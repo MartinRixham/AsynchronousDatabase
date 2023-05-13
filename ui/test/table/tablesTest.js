@@ -99,3 +99,45 @@ QUnit.test('add tables with no dependencies', async assert => {
 	assert.deepEqual(tables.tables[0].graphPosition(), { depth: 0, width: 1 });
 	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 0, width: 0 });
 });
+
+QUnit.test('add tables nearest dependency', async assert => {
+	
+	const client = new DatabaseClient();
+
+	client.postTable({ name: "first table", dependencies: [] });
+	client.postTable({ name: "second table", dependencies: [] });
+	client.postTable({ name: "third table", dependencies: ["first table"] });
+	client.postTable({ name: "fourth table", dependencies: ["second table"] });
+
+	const tables = new Tables(() => {}, client);
+
+	await tables.onBind();
+
+	assert.equal(tables.tables.length, 4);
+
+	assert.deepEqual(tables.tables[0].graphPosition(), { depth: 0, width: 1 });
+	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 0, width: 0 });
+	assert.deepEqual(tables.tables[2].graphPosition(), { depth: 1, width: 1 });
+	assert.deepEqual(tables.tables[3].graphPosition(), { depth: 1, width: 0 });
+});
+
+QUnit.test('add tables nearest dependency the other way round', async assert => {
+	
+	const client = new DatabaseClient();
+
+	client.postTable({ name: "first table", dependencies: [] });
+	client.postTable({ name: "second table", dependencies: [] });
+	client.postTable({ name: "third table", dependencies: ["second table"] });
+	client.postTable({ name: "fourth table", dependencies: ["first table"] });
+
+	const tables = new Tables(() => {}, client);
+
+	await tables.onBind();
+
+	assert.equal(tables.tables.length, 4);
+
+	assert.deepEqual(tables.tables[0].graphPosition(), { depth: 0, width: 1 });
+	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 0, width: 0 });
+	assert.deepEqual(tables.tables[2].graphPosition(), { depth: 1, width: 0 });
+	assert.deepEqual(tables.tables[3].graphPosition(), { depth: 1, width: 1 });
+});

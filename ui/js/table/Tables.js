@@ -44,8 +44,8 @@ export default class {
 
 	svg = new Update(element => {
 
-		element.setAttribute("height", 200 + this.tableGraph.length * 180);
-		element.setAttribute("width", 200 + this.#totalWidth * 180);
+		element.setAttribute("height", 100 + this.tableGraph.length * 180);
+		element.setAttribute("width", 100 + this.#totalWidth * 180);
 	})
 
 	#onNewTable(newTable) {
@@ -114,6 +114,8 @@ export default class {
 				row.push(table[0].name);
 			}
 
+			row.sort((a, b) => this.#averageWidth(a, lastRow) - this.#averageWidth(b, lastRow))
+
 			totalWidth = Math.max(totalWidth, row.length);
 			tableGraph.push(row);
 		}
@@ -133,5 +135,21 @@ export default class {
 		}
 
 		return false;
+	}
+
+	#averageWidth(name, dependencies) {
+
+		const table = this.tables.find(table => table.name == name)
+		let total = 0;
+
+		for (let i = 0; i < dependencies.length; i++) {
+
+			if (table.dependencies.some(dependency => dependency.name == dependencies[i])) {
+
+				total += i;
+			}
+		}
+
+		return total;
 	}
 }
