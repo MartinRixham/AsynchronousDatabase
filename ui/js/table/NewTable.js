@@ -37,7 +37,13 @@ export default class {
 
 		this.#fetchPage(element, html);
 		this.#tables = this.#getTables();
-		this.newDependency = new NewDependency(0, this.#tables, this.#addDependency.bind(this), this.#removeDependency.bind(this));
+
+		this.newDependency =
+			new NewDependency(
+				0,
+				this.#tables,
+				this.#addDependency.bind(this),
+				this.#removeDependency.bind(this));
 	}
 
 	title = new Binding({
