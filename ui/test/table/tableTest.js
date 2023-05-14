@@ -14,7 +14,7 @@ QUnit.test('table has name and dependencies', async assert => {
 	assert.equal(table.title().text(), "table name");
 	assert.deepEqual(table.graphPosition(), { width: 3, depth: 0 });
 
-	assert.equal(table.dependencies[0].title().text(), "dependency one");
-	assert.equal(table.dependencies[1].title().text(), "dependency two");
+	assert.equal(table.dependencies[0].name, "dependency one");
+	assert.equal(table.dependencies[1].name, "dependency two");
 });
 

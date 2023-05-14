@@ -1,4 +1,4 @@
-import { Binding, Update } from "Datum";
+import { Update } from "Datum";
 
 export default class {
 
@@ -15,27 +15,20 @@ export default class {
 		this.#dependantPosition = dependantPosition;
 	}
 
-	title = 
-		new Binding({
-			text: () => this.name,
-			update: element => {
-
-				const { depth, width } = this.#dependantPosition();
-
-				element.setAttribute("y", 50 + depth * 180);
-				element.setAttribute("x", 50 + width * 180);
-			}
-		});
-
 	pointer = new Update(element => {
 
 		const from = this.#dependencyPosition();
 		const to = this.#dependantPosition();
 
-		element.setAttribute("y1", 165 + from.depth * 180);
-		element.setAttribute("x1", 90 + from.width * 180);
-		element.setAttribute("y2", 125 + to.depth * 180);
-		element.setAttribute("x2", 90 + to.width * 180);
+		element.setAttribute(
+			"d",
+			"M " + (90 + from.width * 180) +
+			" " + (165 + from.depth * 180) +
+			" C " + (90 + from.width * 180) +
+			" " + (210 + from.depth * 180) +
+			" " + (90 + to.width * 180) +
+			" " + (80 + to.depth * 180) +
+			" " + (90 + to.width * 180) +
+			" " + (125 + to.depth * 180));
 	});
-
 }

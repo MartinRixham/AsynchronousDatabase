@@ -28,7 +28,9 @@ export default class {
 
 		this.#fetchPage(element, html);
 
-		(await this.#client.getTables()).tables.map(this.#insertTable.bind(this));
+		const tables = await this.#client.getTables();
+
+		this.#insertTables(tables.tables);
 	}
 
 	newTableButton = new Binding({
@@ -44,19 +46,19 @@ export default class {
 
 	svg = new Update(element => {
 
-		element.setAttribute("height", 100 + this.tableGraph.length * 180);
-		element.setAttribute("width", 100 + this.#totalWidth * 180);
+		element.setAttribute("height", 10 + this.tableGraph.length * 180);
+		element.setAttribute("width", 25 + this.#totalWidth * 180);
 	})
 
 	#onNewTable(newTable) {
 
 		this.newTable = null;
-		this.#insertTable(newTable.toJSON());
+		this.#insertTables([newTable.toJSON()]);
 	}
 
-	#insertTable(table) {
+	#insertTables(tables) {
 
-		this.tables.push(new Table(table, this.#graphPosition.bind(this)));
+		this.tables.push(...tables.map(table => new Table(table, this.#graphPosition.bind(this))));
 
 		const { tableGraph, totalWidth } = this.#buildGraph();
 

@@ -26,7 +26,7 @@ QUnit.test('get tables', async assert => {
 
 	assert.equal(tableTwo.title().text(), "second table");
 	assert.deepEqual(tableTwo.graphPosition(), { depth: 1, width: 0 });
-	assert.equal(tableTwo.dependencies[0].title().text(), "first table");
+	assert.equal(tableTwo.dependencies[0].name, "first table");
 });
 
 QUnit.test('new table', async assert => {
