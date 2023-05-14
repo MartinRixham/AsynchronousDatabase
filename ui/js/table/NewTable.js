@@ -1,4 +1,4 @@
-import { Binding } from "Datum";
+import { Binding, Click } from "Datum";
 import html from "~/html/table/newTable.html";
 
 import NewDependency from "./NewDependency";
@@ -17,26 +17,29 @@ export default class {
 
 	#fetchPage;
 
+	#getTables;
+
 	#client;
 
 	#onNewTable;
 
-	#getTables;
+	#onCancel;
 
 	#tables;
 
-	constructor(fetchPage, getTables, client, onNewTable) {
+	constructor(fetchPage, getTables, client, onNewTable, onCancel) {
 
 		this.#fetchPage = fetchPage;
+		this.#getTables = getTables;
 		this.#client = client;
 		this.#onNewTable = onNewTable;
-		this.#getTables = getTables;
+		this.#onCancel = onCancel;
 	}
 
 	async onBind(element) {
 
 		this.#fetchPage(element, html);
-		this.#tables = this.#getTables();
+		this.#tables = await this.#getTables();
 
 		this.newDependency =
 			new NewDependency(
@@ -85,6 +88,8 @@ export default class {
 			disabled: () => !this.#isValid()
 		}
 	});
+
+	cancel = new Click(() => this.#onCancel());
 
 	error = new Binding({
 		text: () => this.serverError

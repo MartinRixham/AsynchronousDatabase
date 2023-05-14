@@ -26,6 +26,7 @@ export default class {
 
 	async onBind(element) {
 
+		this.tables = [];
 		this.#fetchPage(element, html);
 
 		const tables = await this.#client.getTables();
@@ -39,7 +40,8 @@ export default class {
 				this.#fetchPage,
 				() => this.tables.map(table => table.name),
 				this.#client,
-				this.#onNewTable.bind(this));
+				this.#onNewTable.bind(this),
+				this.#onCancelNewTable.bind(this));
 		},
 		visible: () => !this.newTable
 	});
@@ -54,6 +56,11 @@ export default class {
 
 		this.newTable = null;
 		this.#insertTables([newTable.toJSON()]);
+	}
+
+	#onCancelNewTable() {
+
+		this.newTable = null;
 	}
 
 	#insertTables(tables) {

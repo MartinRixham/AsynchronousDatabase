@@ -9,9 +9,14 @@ button {
 	padding: 2%;
 }
 
-.create-table .submit {
+.create-table .submit, .create-table .cancel {
 
     margin-top: 2%;
+}
+
+.create-table .cancel {
+
+    float: right;
 }
 
 .create-table .submit.disabled {
