@@ -113,7 +113,8 @@ export default class {
 
 		for (let i = tables.length - 1; i >= 0; i--) {
 
-			if (tables[i].dependencies.every(dependency => placedTables.includes(dependency.name))) {
+			if (tables[i].dependencies.every(dependency => placedTables.includes(dependency.name)) &&
+				row.length < 6) {
 
 				const table = tables.splice(i, 1)[0].name;
 
@@ -127,26 +128,37 @@ export default class {
 			row.push(table[0].name);
 		}
 
-		row.sort((a, b) => this.#widthSum(a, lastRow) - this.#widthSum(b, lastRow));
+		const rowBeforeLast = tableGraph.length > 1 ? tableGraph[tableGraph.length - 2] : [];
+
+		row.sort(this.#compareWidth(lastRow, rowBeforeLast).bind(this));
 		tableGraph.push(row);
 		placedTables.push(...row);
 
 		return this.#buildRow(tableGraph, Math.max(totalWidth, row.length), tables, placedTables);
 	}
 
-	#widthSum(name, dependencies) {
+	#compareWidth(lastRow, rowBeforeLast) {
+
+		return (a, b) =>
+			(this.#averageWidth(a, lastRow) || this.#averageWidth(a, rowBeforeLast)) -
+			(this.#averageWidth(b, lastRow) || this.#averageWidth(b, rowBeforeLast));
+	}
+
+	#averageWidth(name, dependencies) {
 
 		const table = this.tables.find(table => table.name == name)
 		let total = 0;
+		let count = 0;
 
 		for (let i = 0; i < dependencies.length; i++) {
 
 			if (table.dependencies.some(dependency => dependency.name == dependencies[i])) {
 
 				total += i;
+				count += 1;
 			}
 		}
 
-		return total;
+		return count > 0 ? (total / count) / dependencies.length : 0;
 	}
 }

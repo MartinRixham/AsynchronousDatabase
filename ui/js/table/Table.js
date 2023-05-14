@@ -1,4 +1,4 @@
-import { Binding } from "Datum";
+import { Binding, Update } from "Datum";
 import Dependency from "./Dependency";
 
 export default class {
@@ -25,9 +25,19 @@ export default class {
 	title = new Binding({
 		text: () => this.name,
 		update: element => {
-			let { depth, width } = this.graphPosition();
+
+			const { depth, width } = this.graphPosition();
+
 			element.setAttribute("y", 150 + depth * 180);
 			element.setAttribute("x", 50 + width * 180);
 		}
+	});
+
+	box = new Update(element => {
+
+		const { depth, width } = this.graphPosition();
+
+		element.setAttribute("y", 125 + depth * 180);
+		element.setAttribute("x", 20 + width * 180);
 	});
 }

@@ -32,10 +32,10 @@ export default class {
 		const from = this.#dependencyPosition();
 		const to = this.#dependantPosition();
 
-		element.setAttribute("y1", 150 + from.depth * 180);
-		element.setAttribute("x1", 50 + from.width * 180);
-		element.setAttribute("y2", 50 + to.depth * 180);
-		element.setAttribute("x2", 50 + to.width * 180);
+		element.setAttribute("y1", 165 + from.depth * 180);
+		element.setAttribute("x1", 90 + from.width * 180);
+		element.setAttribute("y2", 125 + to.depth * 180);
+		element.setAttribute("x2", 90 + to.width * 180);
 	});
 
 }
