@@ -29,6 +29,6 @@ export default class {
 			" " + (90 + to.width * 180) +
 			" " + (80 + to.depth * 180) +
 			" " + (90 + to.width * 180) +
-			" " + (125 + to.depth * 180));
+			" " + (120 + to.depth * 180));
 	});
 }

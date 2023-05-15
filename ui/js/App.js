@@ -7,16 +7,25 @@ import Tables from "./table/Tables";
 
 export default class App {
 
+	currentPage = null;
+
+	sideBar = null;
+
 	#client;
 
 	constructor(client) {
 
 		this.#client = client;
+	}
 
+	onBind(element) {
+
+		fetchPage(element, html);
+	
 		this.currentPage =
 			new NavPiece([
 				{
-					route: "tables", page: new Tables(fetchPage, this.#client)
+					route: "tables", page: new Tables(fetchPage, this.#client, this.#setSideBar.bind(this))
 				},
 				{
 					route: "newTable",
@@ -30,8 +39,8 @@ export default class App {
 			]);
 	}
 
-	onBind(element) {
+	#setSideBar(component) {
 
-		fetchPage(element, html);
+		this.sideBar = component;
 	}
 }

@@ -1,4 +1,4 @@
-import { Binding, Update } from "Datum";
+import { Binding } from "Datum";
 import Dependency from "./Dependency";
 
 export default class {
@@ -9,10 +9,13 @@ export default class {
 
 	graphPosition;
 
-	constructor(table, graphPosition) {
+	#edit;
+
+	constructor(table, graphPosition, edit) {
 
 		this.name = table.name;
 		this.graphPosition = () => graphPosition(table.name);
+		this.#edit = edit;
 
 		this.dependencies =
 			table.dependencies.map(dependency =>
@@ -33,11 +36,14 @@ export default class {
 		}
 	});
 
-	box = new Update(element => {
+	box = new Binding({
+		click: () => this.#edit(this),
+		update: element => {
 
-		const { depth, width } = this.graphPosition();
+			const { depth, width } = this.graphPosition();
 
-		element.setAttribute("y", 125 + depth * 180);
-		element.setAttribute("x", 20 + width * 180);
+			element.setAttribute("y", 125 + depth * 180);
+			element.setAttribute("x", 20 + width * 180);
+		}
 	});
 }

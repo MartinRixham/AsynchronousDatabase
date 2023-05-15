@@ -16,12 +16,15 @@ export default class {
 
 	#client;
 
+	#editTable;
+
 	#totalWidth;
 
-	constructor(fetchPage, client) {
+	constructor(fetchPage, client, editTable) {
 
 		this.#fetchPage = fetchPage;
 		this.#client = client;
+		this.#editTable = editTable;
 	}
 
 	async onBind(element) {
@@ -65,7 +68,8 @@ export default class {
 
 	#insertTables(tables) {
 
-		this.tables.push(...tables.map(table => new Table(table, this.#graphPosition.bind(this))));
+		this.tables.push(...tables.map(table =>
+			new Table(table, this.#graphPosition.bind(this), this.#editTable)));
 
 		const { tableGraph, totalWidth } = this.#buildGraph();
 

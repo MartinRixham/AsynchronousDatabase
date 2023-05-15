@@ -12,6 +12,8 @@ QUnit.test('cancel new table', async assert => {
 	client.postTable({ name: "first table", dependencies: [] });
 	client.postTable({ name: "second table", dependencies: ["first table"] });
 
+	app.onBind();
+
 	app.currentPage.onBind(document.createElement("DIV"));
 	await app.currentPage.datumPiecesCurrentPage.onBind();
 
