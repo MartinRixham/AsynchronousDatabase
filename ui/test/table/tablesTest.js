@@ -2,9 +2,9 @@ import QUnit from "qunit";
 import Tables from "~/js/table/Tables";
 import DatabaseClient from "../FakeDatabaseClient";
 
-QUnit.module('tables');
+QUnit.module("tables");
 
-QUnit.test('get tables', async assert => {
+QUnit.test("get tables", async assert => {
 	
 	const client = new DatabaseClient();
 
@@ -29,7 +29,7 @@ QUnit.test('get tables', async assert => {
 	assert.equal(tableTwo.dependencies[0].name, "first table");
 });
 
-QUnit.test('new table', async assert => {
+QUnit.test("new table", async assert => {
 
 	const client = new DatabaseClient();
 
@@ -44,7 +44,7 @@ QUnit.test('new table', async assert => {
 	assert.ok(tables.newTable);
 });
 
-QUnit.test('add tables in wrong order', async assert => {
+QUnit.test("add tables in wrong order", async assert => {
 	
 	const client = new DatabaseClient();
 
@@ -63,7 +63,7 @@ QUnit.test('add tables in wrong order', async assert => {
 	assert.deepEqual(tables.tables[2].graphPosition(), { depth: 0, width: 0 });
 });
 
-QUnit.test('add tables with same dependency', async assert => {
+QUnit.test("add tables with same dependency", async assert => {
 	
 	const client = new DatabaseClient();
 
@@ -82,7 +82,7 @@ QUnit.test('add tables with same dependency', async assert => {
 	assert.deepEqual(tables.tables[2].graphPosition(), { depth: 1, width: 0 });
 });
 
-QUnit.test('add tables with no dependencies', async assert => {
+QUnit.test("add tables with no dependencies", async assert => {
 	
 	const client = new DatabaseClient();
 
@@ -99,7 +99,7 @@ QUnit.test('add tables with no dependencies', async assert => {
 	assert.deepEqual(tables.tables[1].graphPosition(), { depth: 0, width: 0 });
 });
 
-QUnit.test('add tables nearest dependency', async assert => {
+QUnit.test("add tables nearest dependency", async assert => {
 	
 	const client = new DatabaseClient();
 
@@ -120,7 +120,7 @@ QUnit.test('add tables nearest dependency', async assert => {
 	assert.deepEqual(tables.tables[3].graphPosition(), { depth: 1, width: 0 });
 });
 
-QUnit.test('add tables nearest dependency the other way round', async assert => {
+QUnit.test("add tables nearest dependency the other way round", async assert => {
 	
 	const client = new DatabaseClient();
 
@@ -141,7 +141,7 @@ QUnit.test('add tables nearest dependency the other way round', async assert => 
 	assert.deepEqual(tables.tables[3].graphPosition(), { depth: 1, width: 1 });
 });
 
-QUnit.test('add table with two dependencies', async assert => {
+QUnit.test("add table with two dependencies", async assert => {
 	
 	const client = new DatabaseClient();
 

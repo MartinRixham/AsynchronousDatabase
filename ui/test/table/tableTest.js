@@ -1,9 +1,9 @@
 import QUnit from "qunit";
 import Table from "~/js/table/Table";
 
-QUnit.module('table');
+QUnit.module("table");
 
-QUnit.test('table has name and dependencies', async assert => {
+QUnit.test("table has name and dependencies", async assert => {
 
 	const table = new Table({
 		name: "table name",

@@ -1,9 +1,9 @@
 import QUnit from "qunit";
 import NewDependency from "~/js/table/NewDependency";
 
-QUnit.module('new dependency');
+QUnit.module("new dependency");
 
-QUnit.test('list dependency options', async assert => {
+QUnit.test("list dependency options", async assert => {
 
 	const tables = ["first table", "second table"];
 	const dependency = new NewDependency(0, tables, () => {}, () => {});
@@ -13,7 +13,7 @@ QUnit.test('list dependency options', async assert => {
 	assert.equal(dependency.options[1]().text(), "second table");
 });
 
-QUnit.test('add dependency', assert => {
+QUnit.test("add dependency", assert => {
 
 	let newDependency = null;
 
@@ -33,7 +33,7 @@ QUnit.test('add dependency', assert => {
 	assert.equal(newDependency.title().text(), "second table");
 });
 
-QUnit.test('cannot add empty dependency', assert => {
+QUnit.test("cannot add empty dependency", assert => {
 
 	let newDependency = null;
 
@@ -51,7 +51,7 @@ QUnit.test('cannot add empty dependency', assert => {
 	assert.ok(!newDependency);
 });
 
-QUnit.test('add second dependency', assert => {
+QUnit.test("add second dependency", assert => {
 
 	const tables = ["first table", "second table"];
 	const dependency = new NewDependency(1, tables, () => {});
@@ -59,7 +59,7 @@ QUnit.test('add second dependency', assert => {
 	assert.equal(dependency.label().text(), "second dependency");
 });
 
-QUnit.test('remove dependency', assert => {
+QUnit.test("remove dependency", assert => {
 
 	let removedDependency = null;
 

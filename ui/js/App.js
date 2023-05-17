@@ -1,7 +1,6 @@
 import { NavPiece } from "@datumjs/pieces"
 
 import html from "~/html/app.html"
-import fetchPage from "./fetchPage";
 import NewTable from "./table/NewTable";
 import Tables from "./table/Tables";
 
@@ -13,24 +12,34 @@ export default class App {
 
 	#client;
 
-	constructor(client) {
+	#fetchPage;
+
+	constructor(client, fetchPage) {
 
 		this.#client = client;
+		this.#fetchPage = fetchPage;
 	}
 
 	onBind(element) {
 
-		fetchPage(element, html);
+		this.#fetchPage(element, html);
 	
 		this.currentPage =
 			new NavPiece([
 				{
-					route: "tables", page: new Tables(fetchPage, this.#client, this.#setSideBar.bind(this))
+					route: "tables",
+					page: new Tables(
+						this.#fetchPage,
+						this.#client,
+						{
+							open: this.#setSideBar.bind(this),
+							cancel: this.#closeSideBar.bind(this)
+						})
 				},
 				{
 					route: "newTable",
 					page: new NewTable(
-						fetchPage,
+						this.#fetchPage,
 						async () => (await this.#client.getTables()).tables.map(table => table.name),
 						this.#client,
 						() => { this.currentPage.showPage(0); },
@@ -42,5 +51,10 @@ export default class App {
 	#setSideBar(component) {
 
 		this.sideBar = component;
+	}
+
+	#closeSideBar() {
+
+		this.sideBar = null;
 	}
 }

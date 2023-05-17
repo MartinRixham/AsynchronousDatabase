@@ -1,5 +1,7 @@
 import { Binding } from "Datum";
 import Dependency from "./Dependency";
+import TableDetail from "./TableDetail";
+import fetchPage from "~/js/fetchPage";
 
 export default class {
 
@@ -37,7 +39,7 @@ export default class {
 	});
 
 	box = new Binding({
-		click: () => this.#edit(this),
+		click: () =>this.#edit.open(new TableDetail(this.#toJSON(), fetchPage, this.#edit.cancel)),
 		update: element => {
 
 			const { depth, width } = this.graphPosition();
@@ -46,4 +48,12 @@ export default class {
 			element.setAttribute("x", 20 + width * 180);
 		}
 	});
+
+	#toJSON() {
+
+		return {
+			name: this.name,
+			dependencies: [...this.dependencies]
+		};
+	}
 }
