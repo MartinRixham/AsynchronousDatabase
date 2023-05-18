@@ -26,7 +26,19 @@ std::set<table::table> repository::fake_repository::list_tables() const
 	return table_list;
 }
 
-bool repository::fake_repository::has_table(const table::table &table) const
+bool repository::fake_repository::has_table(const std::string &tableName) const
 {
-	return table.is_valid && tables.count(table.name) > 0;
+	return tables.count(tableName) > 0;
+}
+
+table::table repository::fake_repository::read_table(const std::string &tableName) const
+{
+	if (tables.count(tableName))
+	{
+		return table::to_table(tables.at(tableName));
+	}
+	else
+	{
+		return table::invalid_table("Fake data store didn't contain table " + tableName + ".");
+	}
 }

@@ -1,81 +1,87 @@
-.app {
-
+.app
+{
 	display: flex;
 }
 
-.app .page {
-
+.app .page
+{
 	min-width: 1000px;
 }
 
-.app .side-bar {
-
+.app .side-bar
+{
 	background: #eee;
-	height: 100vh;
+	height: 100vmin;
 }
 
-button {
-
+button
+{
 	cursor: pointer;
 }
 
-.create-table {
-
+.create-table
+{
 	background: #eee;
 	padding: 2%;
 }
 
-.create-table .submit, .create-table .cancel {
-
+.create-table .submit, .create-table .cancel
+{
     margin-top: 2%;
 }
 
-.create-table .cancel {
-
+.create-table .cancel
+{
     float: right;
 }
 
-.create-table .submit.disabled {
-
+.create-table .submit.disabled
+{
 	color: #999;
 	border-color: #e5e5e5;
 	background: #ddd;
 	cursor: auto;
 }
 
-.create-table .input-error {
-
+.create-table .input-error
+{
 	border-color: #f0506e;
 }
 
-.create-table .error {
-
+.create-table .error
+{
 	color: red;
 }
 
-.create-table .dependency {
-
+.create-table .dependency
+{
 	margin-bottom: 2%;
 }
 
-.create-table .dependency button {
-
+.create-table .dependency button
+{
 	margin-left: 2%;
 }
 
-.tables .new-table {
-
+.tables .new-table
+{
 	float: right;
 }
 
-.tables svg {
-	
+.tables svg
+{
 	display: block;
 	margin: auto;
 }
 
-.table-detail {
-
+.table-detail
+{
 	min-width: 500px;
 	padding: 2%;
+}
+
+.table-detail .cancel
+{
+	float: right;
+	margin-right: 2%;
 }

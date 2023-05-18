@@ -19,7 +19,9 @@ namespace repository
 
 			std::set<table::table> list_tables() const override;
 
-			bool has_table(const table::table &table) const override;
+			bool has_table(const std::string &tableName) const override;
+
+			table::table read_table(const std::string &tableName) const override;
 	};
 }
 

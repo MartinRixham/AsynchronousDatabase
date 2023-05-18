@@ -1,4 +1,10 @@
 #include <set>
+#include <regex>
+#include <string>
+#include <iostream>
+
+#include <boost/json.hpp>
+#include <boost/beast.hpp>
 
 #include "router.h"
 
@@ -27,6 +33,22 @@ namespace
 	{
 		return { boost::beast::http::status::ok, json };
 	}
+
+	std::string read_parameter(const std::string &parameters, const std::string &name)
+	{
+		std::stringstream in(parameters);
+
+		std::string key;
+		std::string value;
+
+		while (key != name)
+		{
+			std::getline(in, key, '=');
+			std::getline(in, value, '&');
+		}
+
+		return value;
+	}
 }
 
 router::router::router(repository::repository &repo):
@@ -36,7 +58,23 @@ router::router::router(repository::repository &repo):
 
 router::response router::router::get(const std::string &route) const
 {
-	if (route == "/tables")
+	std::smatch matches;
+
+	if (std::regex_search(route, matches, std::regex("^/table[$?](.*)")))
+	{
+		std::string name = read_parameter(matches[1], "name");
+		table::table table = repository.read_table(name);
+
+		if (table.is_valid)
+		{
+			return { boost::beast::http::status::ok, table.json };
+		}
+		else
+		{
+			return { boost::beast::http::status::not_found, boost::json::object() };
+		}
+	}
+	else if (route == "/tables")
 	{
 		const std::set<table::table> tables = repository.list_tables();
 		boost::json::array tables_json;

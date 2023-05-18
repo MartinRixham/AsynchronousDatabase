@@ -42,19 +42,24 @@ std::set<table::table> repository::rocksdb_repository::list_tables() const
 	return tables;
 }
 
-bool repository::rocksdb_repository::has_table(const table::table &table) const
+bool repository::rocksdb_repository::has_table(const std::string &table_name) const
 {
-	if (table.is_valid)
-	{
 		std::string value;
 
-		database->Get(rocksdb::ReadOptions(), "TABLE_" + table.name, &value);
+		database->Get(rocksdb::ReadOptions(), "TABLE_" + table_name, &value);
 
 		return !value.empty();
+}
+
+table::table repository::rocksdb_repository::read_table(const std::string &table_name) const
+{
+	if (has_table(table_name))
+	{
+		return { true, table_name, boost::json::object() };
 	}
 	else
 	{
-		return false;
+		return { false, "", boost::json::object() };
 	}
 }
 

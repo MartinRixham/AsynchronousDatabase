@@ -2,6 +2,7 @@
 #include <string>
 
 #include <gtest/gtest.h>
+#include <boost/beast.hpp>
 #include <boost/json.hpp>
 
 #include "repository/fake_repository.h"
@@ -19,7 +20,7 @@ TEST(router_test, nonsense)
 	ASSERT_EQ(response.status, boost::beast::http::status::bad_request);
 	ASSERT_EQ(response.body["error"].as_string(), "Request to invalid route /wibble.");
 
-	ASSERT_FALSE(repository.has_table(table::valid_table("really a real table", std::vector<std::string>{})));
+	ASSERT_FALSE(repository.has_table("really a real table"));
 }
 
 TEST(router_test, create_table)
@@ -28,9 +29,10 @@ TEST(router_test, create_table)
 	router::router router(repository);
 	boost::json::object request { { "name", "really a real table" }, { "dependencies", boost::json::array() } };
 
-	router.post("/table", request);
+	router::response response = router.post("/table", request);
 
-	ASSERT_TRUE(repository.has_table(table::valid_table("really a real table", std::vector<std::string>{})));
+	ASSERT_EQ(response.status, boost::beast::http::status::ok);
+	ASSERT_TRUE(repository.has_table("really a real table"));
 }
 
 TEST(router_test, fail_to_create_table_with_empty_name)
@@ -60,6 +62,34 @@ TEST(router_test, fail_to_create_duplicate_table)
 }
 
 TEST(router_test, read_table)
+{
+	repository::fake_repository repository;
+	router::router router(repository);
+	boost::json::object request { { "name", "really a real table" }, { "dependencies", boost::json::array() } };
+
+	router.post("/table", request);
+
+	router::response response = router.get("/table?name=really a real table");
+
+	ASSERT_EQ(response.status, boost::beast::http::status::ok);
+	ASSERT_EQ(response.body["name"], "really a real table");
+	ASSERT_EQ(response.body["dependencies"].as_array().size(), 0);
+}
+
+TEST(router_test, fail_to_read_unknown_table)
+{
+	repository::fake_repository repository;
+	router::router router(repository);
+	boost::json::object request { { "name", "really a real table" }, { "dependencies", boost::json::array() } };
+
+	router.post("/table", request);
+
+	router::response response = router.get("/table?name=not really a real table");
+
+	ASSERT_EQ(response.status, boost::beast::http::status::not_found);
+}
+
+TEST(router_test, read_tables)
 {
 	repository::fake_repository repository;
 	router::router router(repository);

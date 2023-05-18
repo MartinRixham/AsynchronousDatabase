@@ -16,7 +16,9 @@ namespace repository
 
 			virtual std::set<table::table> list_tables() const = 0;
 
-			virtual bool has_table(const table::table &table) const = 0;
+			virtual bool has_table(const std::string &table_name) const = 0;
+
+			virtual table::table read_table(const std::string &table_name) const = 0;
 	};
 }
 
