@@ -4,9 +4,9 @@
 #include <iostream>
 
 #if LOG == debug
-#define DEBUG(message) std::cerr << "DEBUG: " << message << std::endl;
+	#define DEBUG(message) std::cerr << "DEBUG: " << message << std::endl;
 #else
-#define DEBUG(message)
+	#define DEBUG(message)
 #endif
 
 #endif
