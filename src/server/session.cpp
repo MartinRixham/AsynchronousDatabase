@@ -4,6 +4,7 @@
 #include <string>
 
 #include "error.h"
+#include "log.h"
 #include "session.h"
 
 namespace
@@ -52,6 +53,7 @@ server::session::session(boost::asio::ip::tcp::socket&& socket, router::router &
 	stream(std::move(socket)),
 	router(router)
 {
+	DEBUG("Session started.");
 }
 
 void server::session::run()
@@ -63,13 +65,12 @@ void server::session::on_read(boost::beast::error_code error, std::size_t bytes_
 {
 	boost::ignore_unused(bytes_transferred);
 
-	if (error == boost::beast::http::error::end_of_stream)
+	if (error)
 	{
-		return close();
-	}
-	else if (error)
-	{
-		throw std::runtime_error(ERROR("Error reading request: " + error.message()));
+		DEBUG("Closing connection: " + error.message());
+		close();
+
+		return;
 	}
 
 	http_response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(handle_request());
@@ -80,26 +81,27 @@ void server::session::on_read(boost::beast::error_code error, std::size_t bytes_
 		boost::beast::bind_front_handler(
 			&session::on_write,
 			shared_from_this(),
-			http_response->need_eof()));
+			http_response->keep_alive()));
 }
 
-void server::session::on_write(bool should_close, boost::beast::error_code error, std::size_t bytes_transferred)
+void server::session::on_write(bool keep_alive, boost::beast::error_code error, std::size_t bytes_transferred)
 {
 	boost::ignore_unused(bytes_transferred);
+	DEBUG("keep alive: " + std::to_string(keep_alive));
 
 	if (error)
 	{
 		throw std::runtime_error(ERROR("Error writing response: " + error.message()));
 	}
-	else if (should_close)
-	{
-		return close();
-	}
-	else
+	else if (keep_alive)
 	{
 		http_response = nullptr;
 
 		read();
+	}
+	else
+	{
+		close();
 	}
 }
 
@@ -162,4 +164,6 @@ void server::session::close()
 	boost::beast::error_code ec;
 
 	stream.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+	DEBUG("Session ended.");
 }

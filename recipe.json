@@ -47,5 +47,8 @@
 					}
 			}
 		],
-	"define": {}
+	"define":
+	{
+		"LOG": "echo debug"
+	}
 }
