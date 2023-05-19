@@ -25,14 +25,15 @@ button
 	padding: 2%;
 }
 
-.create-table .submit, .create-table .cancel
+.create-table .button-row
 {
-    margin-top: 2%;
+    padding-top: 2%;
+	display: flex;
 }
 
 .create-table .cancel
 {
-    float: right;
+    margin-left: auto;
 }
 
 .create-table .submit.disabled
@@ -80,8 +81,14 @@ button
 	padding: 2%;
 }
 
+.table-detail .button-row
+{
+    padding-top: 2%;
+	display: flex;
+}
+
 .table-detail .cancel
 {
-	float: right;
-	margin-right: 2%;
+	margin-left: auto;
+	margin-right: 5%;
 }
