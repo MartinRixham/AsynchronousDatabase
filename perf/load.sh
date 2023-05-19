@@ -2,7 +2,8 @@
 
 threads=4
 
-stop() {
+stop()
+{
   pkill -P $$
 }
 

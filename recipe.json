@@ -49,6 +49,6 @@
 		],
 	"define":
 	{
-		"LOG": "echo debug"
+		"LOG": "echo 1"
 	}
 }
