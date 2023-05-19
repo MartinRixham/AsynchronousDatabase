@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "error.h"
+#include "log.h"
 #include "server.h"
 #include "session.h"
 
@@ -57,7 +58,7 @@ void server::server::on_accept(boost::beast::error_code error, boost::asio::ip::
 {
 	if (error)
 	{
-		throw std::runtime_error(ERROR("Error reading from socket: " + error.message()));
+		DEBUG("Error reading from socket: " + error.message());
 	}
 	else
 	{

@@ -3,7 +3,6 @@
 #include <utility>
 #include <string>
 
-#include "error.h"
 #include "log.h"
 #include "session.h"
 
@@ -61,10 +60,8 @@ void server::session::run()
 	read();
 }
 
-void server::session::on_read(boost::beast::error_code error, std::size_t bytes_transferred)
+void server::session::on_read(boost::beast::error_code error, std::size_t)
 {
-	boost::ignore_unused(bytes_transferred);
-
 	if (error)
 	{
 		DEBUG("Closing connection: " + error.message());
@@ -84,14 +81,15 @@ void server::session::on_read(boost::beast::error_code error, std::size_t bytes_
 			http_response->keep_alive()));
 }
 
-void server::session::on_write(bool keep_alive, boost::beast::error_code error, std::size_t bytes_transferred)
+void server::session::on_write(bool keep_alive, boost::beast::error_code error, std::size_t)
 {
-	boost::ignore_unused(bytes_transferred);
 	DEBUG("keep alive: " + std::to_string(keep_alive));
 
 	if (error)
 	{
-		throw std::runtime_error(ERROR("Error writing response: " + error.message()));
+		DEBUG("Error writing response: " + error.message());
+
+		close();
 	}
 	else if (keep_alive)
 	{

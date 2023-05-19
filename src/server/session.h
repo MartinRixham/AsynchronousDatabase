@@ -29,9 +29,9 @@ namespace server
 
 		void run();
 
-		void on_read(boost::beast::error_code error, std::size_t bytes_transferred);
+		void on_read(boost::beast::error_code error, std::size_t);
 
-		void on_write(bool should_close, boost::beast::error_code error, std::size_t bytes_transferred);
+		void on_write(bool should_close, boost::beast::error_code error, std::size_t);
 
 	private:
 		void read();
