@@ -14,6 +14,11 @@ export default class {
 		}
 	}
 
+	getTable(name) {
+
+		return this.#tables.find(table => table.name == name);
+	}
+
 	getTables() {
 
 		return { tables: [...this.#tables] };

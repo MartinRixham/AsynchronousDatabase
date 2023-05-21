@@ -45,7 +45,8 @@ TEST_F(repository_test, read_table)
 
 	ASSERT_EQ(table.is_valid, true);
 	ASSERT_EQ(table.name, "a table");
-	ASSERT_EQ(table.json, boost::json::object());
+	ASSERT_EQ(table.json["name"].as_string(), "a table");
+	ASSERT_EQ(table.json["dependencies"].as_array().size(), 0);
 }
 
 TEST_F(repository_test, fail_to_read_table_that_does_not_exist)
@@ -56,7 +57,7 @@ TEST_F(repository_test, fail_to_read_table_that_does_not_exist)
 
 	ASSERT_EQ(table.is_valid, false);
 	ASSERT_EQ(table.name, "");
-	ASSERT_EQ(table.json, boost::json::object());
+	ASSERT_EQ(table.json["error"], "No table with name \"not a table\" found in data store.");
 }
 
 TEST_F(repository_test, does_not_have_invalid_table)

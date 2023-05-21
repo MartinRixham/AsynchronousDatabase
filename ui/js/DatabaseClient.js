@@ -10,6 +10,12 @@ export default class {
 			.then(response => response.json())
 	}
 
+	async getTable(name) {
+
+		return fetch("asyncdb/table?name=" + name)
+			.then(response => response.json())
+	}
+
 	async getTables() {
 
 		return fetch("asyncdb/tables")

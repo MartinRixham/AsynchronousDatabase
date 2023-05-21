@@ -9,15 +9,14 @@
 				"package": "rocksdb"
 			},
 			{
+				"package": "libcurl"
+			},
+			{
 				"package": "gtest",
 				"scope": "test"
 			},
 			{
 				"package": "gmock",
-				"scope": "test"
-			},
-			{
-				"package": "libcurl",
 				"scope": "test"
 			}
 		],

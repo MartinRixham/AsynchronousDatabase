@@ -53,13 +53,17 @@ bool repository::rocksdb_repository::has_table(const std::string &table_name) co
 
 table::table repository::rocksdb_repository::read_table(const std::string &table_name) const
 {
-	if (has_table(table_name))
+	std::string value;
+
+	database->Get(rocksdb::ReadOptions(), "TABLE_" + table_name, &value);
+
+	if (value.empty())
 	{
-		return { true, table_name, boost::json::object() };
+		return table::invalid_table("No table with name \"" + table_name + "\" found in data store.");
 	}
 	else
 	{
-		return { false, "", boost::json::object() };
+		return table::to_table(value);
 	}
 }
 

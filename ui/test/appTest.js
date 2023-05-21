@@ -40,7 +40,7 @@ QUnit.test("open and close side bar", async assert => {
 	app.currentPage.onBind(document.createElement("DIV"));
 	await app.currentPage.datumPiecesCurrentPage.onBind();
 
-	app.currentPage.datumPiecesCurrentPage.tables[0].box().click();
+	await app.currentPage.datumPiecesCurrentPage.tables[0].box().click();
 
 	assert.equal(app.sideBar.title().text(), "first table");
 

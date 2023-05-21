@@ -1,7 +1,8 @@
-#include <boost/beast/version.hpp>
-
 #include <utility>
 #include <string>
+
+#include <boost/beast/version.hpp>
+#include <curl/curl.h>
 
 #include "log.h"
 #include "session.h"
@@ -45,6 +46,16 @@ namespace
 		std::string body = boost::json::serialize(boost::json::object { { "error", "Failed to respond due to error: " + why + "." } });
 
 		return make_response(request.version(), request.keep_alive(), boost::beast::http::status::internal_server_error, body);
+	}
+
+	std::string decode_url(const std::string &url)
+	{
+		char *decoded = curl_unescape(url.c_str(), 0);
+		std::string out = decoded;
+
+		curl_free(decoded);
+
+		return out;
 	}
 }
 
@@ -134,16 +145,17 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 	}
 
 	router::response response;
+	std::string url = decode_url(std::string(request.target()));
 
 	try
 	{
 		if (request.method() == boost::beast::http::verb::post)
 		{
-			response = router.post(std::string(request.target()), boost::json::parse(request.body()).as_object());
+			response = router.post(url, boost::json::parse(request.body()).as_object());
 		}
 		else
 		{
-			response = router.get(std::string(request.target()));
+			response = router.get(url);
 		}
 	}
 	catch (const std::exception &error)

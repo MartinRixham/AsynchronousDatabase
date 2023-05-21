@@ -14,7 +14,7 @@ RUN cheesemake/cheesemake verify
 FROM savsgio/alpine-rocksdb:latest
 WORKDIR /
 RUN apk update && \
-    apk add libstdc++
+    apk add libstdc++ curl-dev
 COPY --from=builder build/bin/asyncdb .
 CMD ./asyncdb
 EXPOSE 8080

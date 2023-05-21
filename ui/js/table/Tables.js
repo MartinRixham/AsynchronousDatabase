@@ -3,6 +3,7 @@ import html from "~/html/table/tables.html";
 
 import NewTable from "./NewTable";
 import Table from "./Table";
+import TableDetail from "./TableDetail";
 
 export default class {
 
@@ -69,7 +70,8 @@ export default class {
 	#insertTables(tables) {
 
 		this.tables.push(...tables.map(table =>
-			new Table(table, this.#graphPosition.bind(this), this.#editTable)));
+			new Table(table, this.#graphPosition.bind(this), this.#openTableDetail(table.name))));
+
 
 		const { tableGraph, totalWidth } = this.#buildGraph();
 
@@ -173,5 +175,15 @@ export default class {
 		}
 
 		return count > 0 ? (total / count) / dependencies.length : 0;
+	}
+
+	#openTableDetail(name) {
+
+		return async () =>
+			this.#editTable.open(
+				new TableDetail(
+					await this.#client.getTable(name),
+					this.#fetchPage,
+					this.#editTable.cancel));
 	}
 }
