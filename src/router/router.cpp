@@ -41,13 +41,18 @@ namespace
 		std::string key;
 		std::string value;
 
-		while (key != name)
+		for (int i = 0; i < 16; i++)
 		{
 			std::getline(in, key, '=');
 			std::getline(in, value, '&');
+
+			if (key == name)
+			{
+				return value;
+			}
 		}
 
-		return value;
+		return "";
 	}
 }
 

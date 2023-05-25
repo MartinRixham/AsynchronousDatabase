@@ -89,6 +89,19 @@ TEST(router_test, fail_to_read_unknown_table)
 	ASSERT_EQ(response.status, boost::beast::http::status::not_found);
 }
 
+TEST(router_test, fail_to_read_unknown_parameter)
+{
+	repository::fake_repository repository;
+	router::router router(repository);
+	boost::json::object request { { "name", "really a real table" }, { "dependencies", boost::json::array() } };
+
+	router.post("/table", request);
+
+	router::response response = router.get("/table?lame=really a real table");
+
+	ASSERT_EQ(response.status, boost::beast::http::status::not_found);
+}
+
 TEST(router_test, read_tables)
 {
 	repository::fake_repository repository;
