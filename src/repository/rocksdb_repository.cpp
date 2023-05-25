@@ -44,11 +44,11 @@ std::set<table::table> repository::rocksdb_repository::list_tables() const
 
 bool repository::rocksdb_repository::has_table(const std::string &table_name) const
 {
-		std::string value;
+	std::string value;
 
-		database->Get(rocksdb::ReadOptions(), "TABLE_" + table_name, &value);
+	database->Get(rocksdb::ReadOptions(), "TABLE_" + table_name, &value);
 
-		return !value.empty();
+	return !value.empty();
 }
 
 table::table repository::rocksdb_repository::read_table(const std::string &table_name) const
