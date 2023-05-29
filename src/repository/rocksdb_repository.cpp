@@ -39,6 +39,7 @@ std::set<table::table> repository::rocksdb_repository::list_tables() const
 		tables.insert(table::to_table(it->value().ToString()));
 	}
 
+	delete it;
 	return tables;
 }
 

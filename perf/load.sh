@@ -1,6 +1,6 @@
 #! /usr/bin/env bash
 
-threads=4
+threads=6
 
 stop()
 {
@@ -15,7 +15,7 @@ get_tables()
 	# Runs forever.
 	for (( i=0; i>=0; i++ )); do
 		echo "Request $i"
-		http get localhost:8080/asyncdb/tables
+		curl localhost:8080/asyncdb/tables
 	done
 }
 
