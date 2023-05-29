@@ -41,12 +41,15 @@ export default class {
 		this.#fetchPage(element, html);
 		this.#tables = await this.#getTables();
 
-		this.newDependency =
-			new NewDependency(
-				0,
-				this.#tables,
-				this.#addDependency.bind(this),
-				this.#removeDependency.bind(this));
+		if (this.#tables.length) {
+
+			this.newDependency =
+				new NewDependency(
+					0,
+					this.#tables,
+					this.#addDependency.bind(this),
+					this.#removeDependency.bind(this));
+		}
 	}
 
 	title = new Binding({
@@ -123,12 +126,22 @@ export default class {
 
 		if (this.dependencies.length < 2) {
 
-			this.newDependency =
-				new NewDependency(
-					this.dependencies.length,
-					this.#tables.filter(table => !this.dependencies.map(dependency => dependency.name).includes(table)),
-					this.#addDependency.bind(this),
-					this.#removeDependency.bind(this));
+			const options = 
+				this.#tables.filter(table => !this.dependencies.map(dependency => dependency.name).includes(table));
+
+			if (options.length) {
+
+				this.newDependency =
+					new NewDependency(
+						this.dependencies.length,
+						options,
+						this.#addDependency.bind(this),
+						this.#removeDependency.bind(this));
+			}
+			else {
+
+				this.newDependency = null;
+			}
 		}
 		else {
 

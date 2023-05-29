@@ -55,7 +55,7 @@ QUnit.test("fail to save table with no name", async assert => {
 	assert.equal(tables.tables.length, 0);
 });
 
-QUnit.test("save table with one dependency", async assert => {
+QUnit.test("no new dependency when no options", async assert => {
 
 	const client = new DatabaseClient();
 
@@ -65,11 +65,23 @@ QUnit.test("save table with one dependency", async assert => {
 
 	await newTable.onBind();
 
+	assert.ok(!newTable.newDependency)
+});
+
+QUnit.test("save table with one dependency", async assert => {
+
+	const client = new DatabaseClient();
+
+	client.postTable("\name\":\"my dependency\"")
+
+	const newTable = new NewTable(() => {}, () => ["my dependency"], client, () => {});
+
+	await newTable.onBind();
+
 	newTable.title().value("my new table");
 	newTable.newDependency.select().value("my dependency")
 	newTable.newDependency.add().click();
 
-	assert.ok(!newTable.newDependency.select().value());
 	assert.equal(newTable.dependencies[0].title().text(), "my dependency");
 	assert.deepEqual(newTable.toJSON(), { name: "my new table", dependencies: ["my dependency"] });
 
@@ -86,10 +98,29 @@ QUnit.test("save table with one dependency", async assert => {
 	assert.equal(firstTable.dependencies[0].name, "my dependency");
 });
 
+QUnit.test("no second dependency when only one option", async assert => {
+
+	const client = new DatabaseClient();
+	const tables = () => ["my dependency"];
+	const newTable = new NewTable(() => {}, tables, client, () => {});
+
+	await newTable.onBind();
+
+	newTable.title().value("my new table");
+
+	assert.equal(newTable.newDependency.label().text(), "first dependency")
+
+	newTable.newDependency.select().value("my dependency")
+	newTable.newDependency.add().click();
+
+	assert.ok(!newTable.newDependency)
+});
+
 QUnit.test("save table with two dependencies", async assert => {
 
 	const client = new DatabaseClient();
-	const newTable = new NewTable(() => {}, () => [], client, () => {});
+	const options = () => ["my dependency", "my other dependency"];
+	const newTable = new NewTable(() => {}, options, client, () => {});
 
 	await newTable.onBind();
 
@@ -122,7 +153,8 @@ QUnit.test("save table with two dependencies", async assert => {
 QUnit.test("cannot add third dependency", async assert => {
 
 	const client = new DatabaseClient();
-	const newTable = new NewTable(() => {}, () => [], client, () => {});
+	const options = () => ["my dependency", "my other dependency", "even another one"];
+	const newTable = new NewTable(() => {}, options, client, () => {});
 
 	await newTable.onBind();
 
@@ -159,7 +191,7 @@ QUnit.test("fail to save table with duplicate", async assert => {
 
 QUnit.test("remove dependency", async assert => {
 
-	const newTable = new NewTable(() => {}, () => [], new DatabaseClient(), () => {});
+	const newTable = new NewTable(() => {}, () => ["my dependency"], new DatabaseClient(), () => {});
 
 	await newTable.onBind();
 
@@ -178,7 +210,8 @@ QUnit.test("remove dependency", async assert => {
 
 QUnit.test("remove second dependency", async assert => {
 
-	const newTable = new NewTable(() => {}, () => [], new DatabaseClient(), () => {});
+	const options = () => ["my dependency", "my other dependency"];
+	const newTable = new NewTable(() => {}, options, new DatabaseClient(), () => {});
 
 	await newTable.onBind();
 
@@ -200,7 +233,8 @@ QUnit.test("remove second dependency", async assert => {
 QUnit.test("cannot add same dependency twice", async assert => {
 
 	const client = new DatabaseClient();
-	const newTable = new NewTable(() => {}, () => ["first table", "second table"], client, () => {});
+	const options = () => ["first table", "second table"];
+	const newTable = new NewTable(() => {}, options, client, () => {});
 
 	await newTable.onBind();
 
