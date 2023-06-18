@@ -14,7 +14,9 @@ RUN cheesemake/cheesemake verify
 FROM savsgio/alpine-rocksdb:latest
 WORKDIR /
 RUN apk update && \
-    apk add libstdc++ curl-dev
+    apk add libstdc++ curl nginx
+COPY server/server.conf /etc/nginx/http.d/default.conf
+COPY ui/dist /usr/share/nginx/html
 COPY --from=builder build/bin/asyncdb .
-CMD ./asyncdb
-EXPOSE 8080
+CMD nginx & ./asyncdb
+EXPOSE 80
