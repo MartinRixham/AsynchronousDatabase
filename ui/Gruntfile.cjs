@@ -22,7 +22,10 @@ module.exports = function(grunt) {
 		qunit: {
 			all: {
 				options: {
-					urls: ['http://localhost:' + port]
+					urls: ['http://localhost:' + port],
+					puppeteer: {
+						executablePath: "chromium-browser"
+					}
 				}
 			}
 		}
