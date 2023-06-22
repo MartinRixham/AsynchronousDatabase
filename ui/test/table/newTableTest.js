@@ -65,6 +65,7 @@ QUnit.test("no new dependency when no options", async assert => {
 
 	await newTable.onBind();
 
+	assert.ok(!newTable.dependencyTitle().visible());
 	assert.ok(!newTable.newDependency)
 });
 
@@ -82,6 +83,7 @@ QUnit.test("save table with one dependency", async assert => {
 	newTable.newDependency.select().value("my dependency")
 	newTable.newDependency.add().click();
 
+	assert.ok(newTable.dependencyTitle().visible());
 	assert.equal(newTable.dependencies[0].title().text(), "my dependency");
 	assert.deepEqual(newTable.toJSON(), { name: "my new table", dependencies: ["my dependency"] });
 
@@ -126,6 +128,7 @@ QUnit.test("save table with two dependencies", async assert => {
 
 	newTable.title().value("my new table");
 
+	assert.ok(newTable.dependencyTitle().visible());
 	assert.equal(newTable.newDependency.label().text(), "first dependency")
 
 	newTable.newDependency.select().value("my dependency")

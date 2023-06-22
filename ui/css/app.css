@@ -1,6 +1,7 @@
 .app
 {
 	display: flex;
+	padding-top: 1%;
 }
 
 .app .page
@@ -38,7 +39,7 @@ button
 
 .create-table .submit.disabled
 {
-	color: #999;
+	color: #eee;
 	border-color: #e5e5e5;
 	background: #ddd;
 	cursor: auto;

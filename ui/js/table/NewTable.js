@@ -1,4 +1,4 @@
-import { Binding, Click } from "Datum";
+import { Binding, Click, Visible } from "Datum";
 import html from "~/html/table/newTable.html";
 
 import NewDependency from "./NewDependency";
@@ -67,6 +67,11 @@ export default class {
 			"input-error": () => !this.#isValid() && this.updated
 		}
 	});
+
+	dependencyTitle = new Visible(() => {
+
+		return this.#tables.length;
+	})
 
 	save = new Binding({
 		click: async () => {
