@@ -31,7 +31,7 @@ button
 	display: flex;
 }
 
-.create-table .cancel
+.create-table .submit
 {
     margin-left: auto;
 }
@@ -85,10 +85,4 @@ button
 {
     padding-top: 2%;
 	display: flex;
-}
-
-.table-detail .cancel
-{
-	margin-left: auto;
-	margin-right: 5%;
 }
