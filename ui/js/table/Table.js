@@ -31,7 +31,7 @@ export default class {
 
 			const { depth, width } = this.graphPosition();
 
-			element.setAttribute("y", 150 + depth * 180);
+			element.setAttribute("y", 50 + depth * 180);
 			element.setAttribute("x", 50 + width * 180);
 		}
 	});
@@ -42,7 +42,7 @@ export default class {
 
 			const { depth, width } = this.graphPosition();
 
-			element.setAttribute("y", 125 + depth * 180);
+			element.setAttribute("y", 25 + depth * 180);
 			element.setAttribute("x", 20 + width * 180);
 		}
 	});

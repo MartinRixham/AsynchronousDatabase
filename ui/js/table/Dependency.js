@@ -23,12 +23,12 @@ export default class {
 		element.setAttribute(
 			"d",
 			"M " + (90 + from.width * 180) +
-			" " + (165 + from.depth * 180) +
+			" " + (65 + from.depth * 180) +
 			" C " + (90 + from.width * 180) +
-			" " + (210 + from.depth * 180) +
+			" " + (110 + from.depth * 180) +
 			" " + (90 + to.width * 180) +
-			" " + (80 + to.depth * 180) +
+			" " + (-20 + to.depth * 180) +
 			" " + (90 + to.width * 180) +
-			" " + (120 + to.depth * 180));
+			" " + (20 + to.depth * 180));
 	});
 }
