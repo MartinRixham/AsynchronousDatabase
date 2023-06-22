@@ -22,20 +22,13 @@ export default class {
 
 	select = new Value(value => {
 
-		if (value != undefined) {
+		if (value) {
 
 			this.name = value;
+			this.#addDependency(this)
 		}
 
 		return value;
-	});
-
-	add = new Click(() => {
-
-		if (this.name) {
-
-			this.#addDependency(this)
-		}
 	});
 
 	remove = new Click(() => {

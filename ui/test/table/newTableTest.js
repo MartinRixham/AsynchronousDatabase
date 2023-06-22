@@ -81,7 +81,6 @@ QUnit.test("save table with one dependency", async assert => {
 
 	newTable.title().value("my new table");
 	newTable.newDependency.select().value("my dependency")
-	newTable.newDependency.add().click();
 
 	assert.ok(newTable.dependencyTitle().visible());
 	assert.equal(newTable.dependencies[0].title().text(), "my dependency");
@@ -113,7 +112,6 @@ QUnit.test("no second dependency when only one option", async assert => {
 	assert.equal(newTable.newDependency.label().text(), "first dependency")
 
 	newTable.newDependency.select().value("my dependency")
-	newTable.newDependency.add().click();
 
 	assert.ok(!newTable.newDependency)
 });
@@ -132,12 +130,10 @@ QUnit.test("save table with two dependencies", async assert => {
 	assert.equal(newTable.newDependency.label().text(), "first dependency")
 
 	newTable.newDependency.select().value("my dependency")
-	newTable.newDependency.add().click();
 
 	assert.equal(newTable.newDependency.label().text(), "second dependency")
 
 	newTable.newDependency.select().value("my other dependency")
-	newTable.newDependency.add().click();
 
 	assert.equal(newTable.dependencies[0].title().text(), "my dependency");
 	assert.equal(newTable.dependencies[1].title().text(), "my other dependency");
@@ -162,10 +158,8 @@ QUnit.test("cannot add third dependency", async assert => {
 	await newTable.onBind();
 
 	newTable.newDependency.select().value("my dependency")
-	newTable.newDependency.add().click();
 
 	newTable.newDependency.select().value("my other dependency")
-	newTable.newDependency.add().click();
 
 	assert.ok(!newTable.newDependency);
 });
@@ -200,7 +194,6 @@ QUnit.test("remove dependency", async assert => {
 
 	newTable.title().value("my new table");
 	newTable.newDependency.select().value("my dependency")
-	newTable.newDependency.add().click();
 
 	assert.equal(newTable.dependencies.length, 1);
 
@@ -220,9 +213,7 @@ QUnit.test("remove second dependency", async assert => {
 
 	newTable.title().value("my new table");
 	newTable.newDependency.select().value("my dependency")
-	newTable.newDependency.add().click();
 	newTable.newDependency.select().value("my other dependency")
-	newTable.newDependency.add().click();
 
 	assert.equal(newTable.dependencies.length, 2);
 
@@ -244,7 +235,6 @@ QUnit.test("cannot add same dependency twice", async assert => {
 	assert.equal(newTable.newDependency.options.length, 2);
 
 	newTable.newDependency.select().value("first table")
-	newTable.newDependency.add().click();
 
 	assert.equal(newTable.newDependency.options.length, 1);
 });
