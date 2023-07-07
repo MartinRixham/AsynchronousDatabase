@@ -1,3 +1,13 @@
-- name: CloudFormation Deploy Action
-  uses: MGenteluci/cloudformation-deploy-action@v1.4.1
+name: Deploy Cloud Formation
+on:
+  push:
+    branches:
+    - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: MGenteluci/cloudformation-deploy-action@v1.4.1
 
