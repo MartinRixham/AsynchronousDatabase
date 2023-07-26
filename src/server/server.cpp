@@ -36,6 +36,8 @@ server::server::server(
 	}
 
 	port_number = acceptor.local_endpoint().port();
+
+	DEBUG("Server started.");
 }
 
 void server::server::serve()
