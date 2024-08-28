@@ -8,6 +8,7 @@
 #include <boost/beast/core.hpp>
 
 #include "router/router.h"
+#include "repository/rocksdb_repository.h"
 
 namespace server
 {

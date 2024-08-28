@@ -1,4 +1,3 @@
-#include <vector>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -7,7 +6,6 @@
 
 #include "repository/fake_repository.h"
 #include "router/router.h"
-#include "table/table.h"
 
 TEST(router_test, nonsense)
 {

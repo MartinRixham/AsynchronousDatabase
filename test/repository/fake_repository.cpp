@@ -1,5 +1,3 @@
-#include <algorithm>
-
 #include "fake_repository.h"
 
 repository::fake_repository::fake_repository()

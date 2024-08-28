@@ -7,7 +7,7 @@
 #include <boost/beast/http.hpp>
 
 #include "response.h"
-#include "repository/rocksdb_repository.h"
+#include "repository/repository.h"
 
 namespace router
 {
