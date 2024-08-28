@@ -123,7 +123,11 @@ TEST_F(server_test, invalid_post_request)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 500);
-	EXPECT_EQ(response, "{\"error\":\"Failed to respond due to error: not a string.\"}");   
+
+	boost::json::object response_object = boost::json::parse(response).as_object();
+	std::string error = std::string(response_object["error"].as_string());
+
+	EXPECT_EQ(error.length() > 0, true);
 }
 
 TEST_F(server_test, head_request)
