@@ -15,10 +15,10 @@ TEST(router_test, nonsense)
 
 	router::response response = router.post("/wibble", request);
 
-	ASSERT_EQ(response.status, boost::beast::http::status::bad_request);
-	ASSERT_EQ(response.body["error"].as_string(), "Request to invalid route /wibble.");
+	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
+	EXPECT_EQ(response.body["error"].as_string(), "Request to invalid route /wibble.");
 
-	ASSERT_FALSE(repository.has_table("really a real table"));
+	EXPECT_FALSE(repository.has_table("really a real table"));
 }
 
 TEST(router_test, create_table)
@@ -29,8 +29,8 @@ TEST(router_test, create_table)
 
 	router::response response = router.post("/table", request);
 
-	ASSERT_EQ(response.status, boost::beast::http::status::ok);
-	ASSERT_TRUE(repository.has_table("really a real table"));
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_TRUE(repository.has_table("really a real table"));
 }
 
 TEST(router_test, fail_to_create_table_with_empty_name)
@@ -41,8 +41,8 @@ TEST(router_test, fail_to_create_table_with_empty_name)
 
 	router::response response = router.post("/table", request);
 
-	ASSERT_EQ(response.status, boost::beast::http::status::bad_request);
-	ASSERT_EQ(response.body["error"].as_string(), "Table requires name of length greater than 0.");
+	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
+	EXPECT_EQ(response.body["error"].as_string(), "Table requires name of length greater than 0.");
 }
 
 TEST(router_test, fail_to_create_duplicate_table)
@@ -55,8 +55,8 @@ TEST(router_test, fail_to_create_duplicate_table)
 
 	router::response response = router.post("/table", request);
 
-	ASSERT_EQ(response.status, boost::beast::http::status::bad_request);
-	ASSERT_EQ(response.body["error"].as_string(), "A table with the name \"table name\" already exists.");
+	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
+	EXPECT_EQ(response.body["error"].as_string(), "A table with the name \"table name\" already exists.");
 }
 
 TEST(router_test, read_table)
@@ -69,9 +69,9 @@ TEST(router_test, read_table)
 
 	router::response response = router.get("/table?name=really a real table");
 
-	ASSERT_EQ(response.status, boost::beast::http::status::ok);
-	ASSERT_EQ(response.body["name"], "really a real table");
-	ASSERT_EQ(response.body["dependencies"].as_array().size(), 0);
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.body["name"], "really a real table");
+	EXPECT_EQ(response.body["dependencies"].as_array().size(), 0);
 }
 
 TEST(router_test, fail_to_read_unknown_table)
@@ -84,7 +84,7 @@ TEST(router_test, fail_to_read_unknown_table)
 
 	router::response response = router.get("/table?name=not really a real table");
 
-	ASSERT_EQ(response.status, boost::beast::http::status::not_found);
+	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
 }
 
 TEST(router_test, fail_to_read_unknown_parameter)
@@ -97,7 +97,7 @@ TEST(router_test, fail_to_read_unknown_parameter)
 
 	router::response response = router.get("/table?lame=really a real table");
 
-	ASSERT_EQ(response.status, boost::beast::http::status::not_found);
+	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
 }
 
 TEST(router_test, read_tables)
@@ -118,17 +118,17 @@ TEST(router_test, read_tables)
 
 	router::response response = router.get("/tables");
 
-	ASSERT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 
 	boost::json::array tables = response.body["tables"].as_array();
 
-	ASSERT_EQ(tables.size(), 2);
-	ASSERT_EQ(tables[0].as_object()["name"], "first table");
+	EXPECT_EQ(tables.size(), 2);
+	EXPECT_EQ(tables[0].as_object()["name"], "first table");
 
 	boost::json::object second_table = tables[1].as_object();
 
-	ASSERT_EQ(second_table["name"], "second table");
-	ASSERT_EQ(second_table["dependencies"].as_array()[0], "first table");
+	EXPECT_EQ(second_table["name"], "second table");
+	EXPECT_EQ(second_table["dependencies"].as_array()[0], "first table");
 }
 
 TEST(router_test, fail_to_create_table_with_invalid_dependency)
@@ -147,11 +147,11 @@ TEST(router_test, fail_to_create_table_with_invalid_dependency)
 
 	router::response response = router.post("/table", second_request);
 
-	ASSERT_EQ(response.status, boost::beast::http::status::bad_request);
-	ASSERT_EQ(response.body["error"], "Dependency \"not a table\" is not a table.");
+	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
+	EXPECT_EQ(response.body["error"], "Dependency \"not a table\" is not a table.");
 
 	boost::json::array tables = router.get("/tables").body["tables"].as_array();
 
-	ASSERT_EQ(tables.size(), 1);
-	ASSERT_EQ(tables[0].as_object()["name"], "first table");
+	EXPECT_EQ(tables.size(), 1);
+	EXPECT_EQ(tables[0].as_object()["name"], "first table");
 }

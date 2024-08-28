@@ -127,7 +127,7 @@ TEST_F(server_test, invalid_post_request)
 	boost::json::object response_object = boost::json::parse(response).as_object();
 	std::string error = std::string(response_object["error"].as_string());
 
-	EXPECT_EQ(error.length() > 0, true);
+	EXPECT_TRUE(error.length() > 0);
 }
 
 TEST_F(server_test, head_request)

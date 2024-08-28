@@ -1,6 +1,5 @@
 #include <set>
 #include <vector>
-#include <filesystem>
 
 #include <gtest/gtest.h>
 #include <rocksdb/db.h>
@@ -31,10 +30,10 @@ TEST_F(repository_test, create_and_read_tables)
 	std::set<table::table> table_set = repository.list_tables();
 	std::vector<table::table> tables(table_set.begin(), table_set.end());
 
-	ASSERT_EQ(tables.size(), 2);
+	EXPECT_EQ(tables.size(), 2);
 
-	ASSERT_EQ(tables[0].name, "first table");
-	ASSERT_EQ(tables[1].name, "second table");
+	EXPECT_EQ(tables[0].name, "first table");
+	EXPECT_EQ(tables[1].name, "second table");
 }
 
 TEST_F(repository_test, read_table)
@@ -43,10 +42,10 @@ TEST_F(repository_test, read_table)
 
 	table::table table = repository.read_table("a table");
 
-	ASSERT_EQ(table.is_valid, true);
-	ASSERT_EQ(table.name, "a table");
-	ASSERT_EQ(table.json["name"].as_string(), "a table");
-	ASSERT_EQ(table.json["dependencies"].as_array().size(), 0);
+	EXPECT_EQ(table.is_valid, true);
+	EXPECT_EQ(table.name, "a table");
+	EXPECT_EQ(table.json["name"].as_string(), "a table");
+	EXPECT_EQ(table.json["dependencies"].as_array().size(), 0);
 }
 
 TEST_F(repository_test, fail_to_read_table_that_does_not_exist)
@@ -55,9 +54,9 @@ TEST_F(repository_test, fail_to_read_table_that_does_not_exist)
 
 	table::table table = repository.read_table("not a table");
 
-	ASSERT_EQ(table.is_valid, false);
-	ASSERT_EQ(table.name, "");
-	ASSERT_EQ(table.json["error"], "No table with name \"not a table\" found in data store.");
+	EXPECT_EQ(table.is_valid, false);
+	EXPECT_EQ(table.name, "");
+	EXPECT_EQ(table.json["error"], "No table with name \"not a table\" found in data store.");
 }
 
 TEST_F(repository_test, does_not_have_invalid_table)
@@ -66,7 +65,7 @@ TEST_F(repository_test, does_not_have_invalid_table)
 
 	std::set<table::table> tables = repository.list_tables();
 
-	ASSERT_EQ(tables.size(), 0);
+	EXPECT_EQ(tables.size(), 0);
 }
 
 TEST_F(repository_test, has_valid_table)
@@ -75,7 +74,7 @@ TEST_F(repository_test, has_valid_table)
 
 	bool has_table = repository.has_table("a table");
 
-	ASSERT_TRUE(has_table);
+	EXPECT_TRUE(has_table);
 }
 
 TEST_F(repository_test, does_not_have_table)
@@ -84,5 +83,5 @@ TEST_F(repository_test, does_not_have_table)
 
 	bool has_table = repository.has_table("not a table");
 
-	ASSERT_FALSE(has_table);
+	EXPECT_FALSE(has_table);
 }
