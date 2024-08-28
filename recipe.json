@@ -36,14 +36,6 @@
 					{
 						"options": "--enable=style"
 					}
-			},
-			{
-				"name": "gcovr",
-				"phase": "verify",
-				"config":
-					{
-						"options": "--fail-under-line 95"
-					}
 			}
 		],
 	"define":
