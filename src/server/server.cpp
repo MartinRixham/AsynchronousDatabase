@@ -37,7 +37,7 @@ server::server::server(
 
 	port_number = acceptor.local_endpoint().port();
 
-	DEBUG("Server started.");
+	DEBUG("Server started on port: " + std::to_string(port_number) + ".");
 }
 
 void server::server::serve()
