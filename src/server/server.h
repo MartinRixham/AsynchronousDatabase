@@ -37,6 +37,8 @@ namespace server
 
 		boost::asio::ip::port_type port() const;
 
+		void close();
+
 	private:
 		void accept();
 	};

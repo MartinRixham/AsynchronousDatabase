@@ -15,7 +15,7 @@ server::server::server(
 		acceptor(boost::asio::make_strand(io_context)),
 		repository(repository::rocksdb_repository()),
 		router(router::router(repository))
-{   
+{
 	boost::beast::error_code error;
 	boost::asio::ip::tcp::endpoint endpoint { boost::asio::ip::address_v4::any(), port };
 
@@ -80,4 +80,9 @@ void server::server::accept()
 	acceptor.async_accept(
 		boost::asio::make_strand(io_context),
 		boost::beast::bind_front_handler(&server::on_accept, shared_from_this()));
+}
+
+void server::server::close()
+{
+	acceptor.close();
 }
