@@ -39,7 +39,7 @@
 			}
 		],
 	"define":
-	{
-		"LOG": "echo 1"
-	}
+		{
+			"LOG": "echo 1"
+		}
 }
