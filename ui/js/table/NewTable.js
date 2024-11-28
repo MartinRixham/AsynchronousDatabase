@@ -3,7 +3,7 @@ import html from "~/html/table/newTable.html";
 
 import NewDependency from "./NewDependency";
 
-export default class {
+export default class NewTable {
 
 	name = "";
 

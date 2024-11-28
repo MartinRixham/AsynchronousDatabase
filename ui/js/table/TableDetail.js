@@ -1,7 +1,7 @@
 import html from "~/html/table/tableDetail.html";
 import { Text, Click } from "Datum";
 
-export default class {
+export default class TableDetail {
 
 	#fetchPage;
 

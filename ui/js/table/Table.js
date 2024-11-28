@@ -1,7 +1,7 @@
 import { Binding } from "Datum";
 import Dependency from "./Dependency";
 
-export default class {
+export default class Table {
 
 	name = "";
 

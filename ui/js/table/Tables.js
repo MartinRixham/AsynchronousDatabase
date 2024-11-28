@@ -5,7 +5,7 @@ import NewTable from "./NewTable";
 import Table from "./Table";
 import TableDetail from "./TableDetail";
 
-export default class {
+export default class Tables {
 
 	tables = [];
 

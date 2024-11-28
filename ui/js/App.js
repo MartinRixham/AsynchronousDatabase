@@ -1,6 +1,7 @@
-import { NavPiece } from "@datumjs/pieces"
+import { NavPiece } from "@datumjs/pieces";
 
-import html from "~/html/app.html"
+import html from "~/html/app.html";
+import Node from "./Node";
 import NewTable from "./table/NewTable";
 import Tables from "./table/Tables";
 
@@ -9,6 +10,8 @@ export default class App {
 	currentPage = null;
 
 	sideBar = null;
+
+	nodeDetails = null;
 
 	#client;
 
@@ -46,6 +49,8 @@ export default class App {
 						() => { this.currentPage.showPage(0); })
 				}
 			]);
+
+		this.nodeDetails = new Node(this.#fetchPage);
 	}
 
 	#setSideBar(component) {

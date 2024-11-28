@@ -1,6 +1,6 @@
 import { Update } from "Datum";
 
-export default class {
+export default class Dependency {
 
 	name;
 

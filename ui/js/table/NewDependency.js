@@ -1,6 +1,6 @@
 import { Value, Click, Text } from "Datum";
 
-export default class {
+export default class NewDependency {
 
 	name = "";
 
