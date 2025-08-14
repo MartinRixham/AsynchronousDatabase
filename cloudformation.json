@@ -1,0 +1,32 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Elastic Beanstalk Multi-container Docker Environment",
+  "Resources": {
+    "MyApplication": {
+      "Type": "AWS::ElasticBeanstalk::Application",
+      "Properties": {
+        "ApplicationName": "MyDockerApp",
+        "Description": "Elastic Beanstalk application for multi-container Docker"
+      }
+    },
+    "MyEnvironment": {
+      "Type": "AWS::ElasticBeanstalk::Environment",
+      "Properties": {
+        "EnvironmentName": "MyDockerEnv",
+        "ApplicationName": {
+          "Ref": "MyApplication"
+        },
+        "SolutionStackName": "64bit Amazon Linux 2 v4.2.3 running Docker",
+        "VersionLabel": "InitialVersion",
+        "OptionSettings": [
+          {
+            "Namespace": "aws:autoscaling:launchconfiguration",
+            "OptionName": "InstanceType",
+            "Value": "t3.micro"
+          }
+        ]
+      }
+    }
+  }
+}
+
