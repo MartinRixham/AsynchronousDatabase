@@ -31,21 +31,22 @@ jobs:
       id: get_version
       run: |
         VERSION=$(cat version)
+        echo "Version: $VERSION"
         echo "VERSION=$VERSION" >> $GITHUB_ENV
 
     - name: Check if version exists in ECR
+      id: check_version
       run: |
         if aws ecr describe-images \
           --repository-name asyncdb \
           --image-ids imageTag=$VERSION \
-          --region eu-west-2 \
-          --query 'imageDetails[0].imageTags[0]' \
-          --output text 2>/dev/null | grep -q "$VERSION"; then
+          --query 'imageDetails[0].imageTags[0]'
+        then
           echo "Image version $VERSION already exists in ECR."
+          echo "publish=false" >> $GITHUB_OUTPUT
+        else
           echo "publish=true" >> $GITHUB_OUTPUT
-          else
-            echo "publish=false" >> $GITHUB_OUTPUT
-          fi
+        fi
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
