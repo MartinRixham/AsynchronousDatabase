@@ -1,30 +1,171 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Elastic Beanstalk Multi-container Docker Environment",
+  "Description": "Minimal 2-AZ EC2 cluster with ASG, pulling from ECR",
+  "Parameters": {
+    "InstanceType": {
+      "Type": "String",
+      "Default": "t3.micro"
+    },
+    "DesiredCapacity": {
+      "Type": "Number",
+      "Default": 2
+    },
+    "ECSAMI": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+      "Default": "/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id"
+    }
+  },
   "Resources": {
-    "MyApplication": {
-      "Type": "AWS::ElasticBeanstalk::Application",
+    "VPC": {
+      "Type": "AWS::EC2::VPC",
       "Properties": {
-        "ApplicationName": "MyDockerApp",
-        "Description": "Elastic Beanstalk application for multi-container Docker"
+        "CidrBlock": "10.0.0.0/16",
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true
       }
     },
-    "MyEnvironment": {
-      "Type": "AWS::ElasticBeanstalk::Environment",
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway"
+    },
+    "AttachGateway": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
       "Properties": {
-        "EnvironmentName": "MyDockerEnv",
-        "ApplicationName": {
-          "Ref": "MyApplication"
-        },
-        "SolutionStackName": "64bit Amazon Linux 2 v4.2.3 running Docker",
-        "VersionLabel": "InitialVersion",
-        "OptionSettings": [
+        "VpcId": { "Ref": "VPC" },
+        "InternetGatewayId": { "Ref": "InternetGateway" }
+      }
+    },
+    "PublicSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "CidrBlock": "10.0.1.0/24",
+        "AvailabilityZone": { "Fn::Select": [ 0, { "Fn::GetAZs": "" } ] },
+        "MapPublicIpOnLaunch": true
+      }
+    },
+    "PublicSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "CidrBlock": "10.0.2.0/24",
+        "AvailabilityZone": { "Fn::Select": [ 1, { "Fn::GetAZs": "" } ] },
+        "MapPublicIpOnLaunch": true
+      }
+    },
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" }
+      }
+    },
+    "PublicRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "AttachGateway",
+      "Properties": {
+        "RouteTableId": { "Ref": "PublicRouteTable" },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": { "Ref": "InternetGateway" }
+      }
+    },
+    "SubnetRouteTableAssociation1": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": { "Ref": "PublicSubnet1" },
+        "RouteTableId": { "Ref": "PublicRouteTable" }
+      }
+    },
+    "SubnetRouteTableAssociation2": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": { "Ref": "PublicSubnet2" },
+        "RouteTableId": { "Ref": "PublicRouteTable" }
+      }
+    },
+    "InstanceSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "GroupDescription": "Allow inbound traffic",
+        "SecurityGroupIngress": [
           {
-            "Namespace": "aws:autoscaling:launchconfiguration",
-            "OptionName": "InstanceType",
-            "Value": "t3.micro"
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0"
           }
         ]
+      }
+    },
+    "InstanceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": { "Service": [ "ec2.amazonaws.com" ] },
+              "Action": [ "sts:AssumeRole" ]
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ]
+      }
+    },
+    "InstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Roles": [ { "Ref": "InstanceRole" } ]
+      }
+    },
+    "LaunchTemplate": {
+      "Type": "AWS::EC2::LaunchTemplate",
+      "Properties": {
+        "LaunchTemplateData": {
+          "ImageId": { "Ref": "ECSAMI" },
+          "InstanceType": { "Ref": "InstanceType" },
+          "IamInstanceProfile": {
+            "Name": { "Ref": "InstanceProfile" }
+          },
+          "SecurityGroupIds": [ { "Ref": "InstanceSecurityGroup" } ],
+          "UserData": {
+            "Fn::Base64": {
+              "Fn::Join": [
+                "",
+                [
+                  "#! /bin/bash\n",
+                  "REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com\n",
+                  "IMAGE=asyncdb/0.0.2\n",
+                  "aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL\n",
+                  "docker pull $REGISTRY/$IMAGE\n",
+                  "docker run -d -p 80:80 $REGISTRY/$IMAGE\n"
+                ]
+              ]
+            }
+          }
+        }
+      }
+    },
+    "AutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "VPCZoneIdentifier": [ { "Ref": "PublicSubnet1" }, { "Ref": "PublicSubnet2" } ],
+        "LaunchTemplate": {
+          "LaunchTemplateId": { "Ref": "LaunchTemplate" },
+          "Version": { "Fn::GetAtt": [ "LaunchTemplate", "LatestVersionNumber" ] }
+        },
+        "DesiredCapacity": { "Ref": "DesiredCapacity" },
+        "MinSize": "1",
+        "MaxSize": "4"
       }
     }
   }
