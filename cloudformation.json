@@ -143,11 +143,17 @@
                 "",
                 [
                   "#! /bin/bash\n",
+                  "sudo yum update\n",
+                  "sudo yum -y install unzip\n",
+                  "curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\"\n",
+                  "unzip awscliv2.zip\n",
+                  "./aws/install\n",
                   "REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com\n",
-                  "IMAGE=asyncdb/0.0.2\n",
+                  "VERSION=0.0.2\n",
+                  "IMAGE=$REGISTRY_URL/asyncdb:$VERSION\n",
                   "aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL\n",
-                  "docker pull $REGISTRY/$IMAGE\n",
-                  "docker run -d -p 80:80 $REGISTRY/$IMAGE\n"
+                  "docker pull $IMAGE\n",
+                  "docker run -d -p 80:80 $IMAGE\n"
                 ]
               ]
             }
