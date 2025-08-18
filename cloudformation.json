@@ -34,7 +34,7 @@
       "Type": "AWS::EC2::Subnet",
       "Properties": {
         "VpcId": { "Ref": "VPC" },
-        "CidrBlock": "10.0.1.0/24",
+        "CidrBlock": "10.0.0.0/24",
         "AvailabilityZone": { "Fn::Select": [ 0, { "Fn::GetAZs": "" } ] },
         "MapPublicIpOnLaunch": true
       }
@@ -43,7 +43,7 @@
       "Type": "AWS::EC2::Subnet",
       "Properties": {
         "VpcId": { "Ref": "VPC" },
-        "CidrBlock": "10.0.2.0/24",
+        "CidrBlock": "10.0.1.0/24",
         "AvailabilityZone": { "Fn::Select": [ 1, { "Fn::GetAZs": "" } ] },
         "MapPublicIpOnLaunch": true
       }
@@ -52,7 +52,7 @@
       "Type": "AWS::EC2::Subnet",
       "Properties": {
         "VpcId": { "Ref": "VPC" },
-        "CidrBlock": "10.0.3.0/24",
+        "CidrBlock": "10.0.2.0/24",
         "AvailabilityZone": { "Fn::Select": [ 2, { "Fn::GetAZs": "" } ] },
         "MapPublicIpOnLaunch": true
       }
@@ -118,13 +118,46 @@
       "Type": "AWS::EC2::SecurityGroup",
       "Properties": {
         "VpcId": { "Ref": "VPC" },
-        "GroupDescription": "Allow inbound traffic from  application load balancer",
+        "GroupDescription": "Allow inbound traffic from application load balancer",
         "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": "0.0.0.0/0"
+          },
           {
             "IpProtocol": "tcp",
             "FromPort": 80,
             "ToPort": 80,
             "SourceSecurityGroupId": { "Ref": "ALBSecurityGroup" }
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "EtcdSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "GroupDescription": "Allow etcd traffic",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 2379,
+            "ToPort": 2380,
+            "CidrIp": "0.0.0.0/0"
           }
         ],
         "SecurityGroupEgress": [
@@ -170,23 +203,24 @@
             "Name": { "Ref": "InstanceProfile" }
           },
           "SecurityGroupIds": [ { "Ref": "InstanceSecurityGroup" } ],
+          "KeyName": "asyncdb",
           "UserData": {
             "Fn::Base64": {
               "Fn::Join": [
-                "",
+                "\n",
                 [
-                  "#! /bin/bash\n",
-                  "sudo yum update\n",
-                  "sudo yum -y install unzip\n",
-                  "curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\"\n",
-                  "unzip awscliv2.zip\n",
-                  "./aws/install\n",
-                  "REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com\n",
-                  "VERSION=0.0.2\n",
-                  "IMAGE=$REGISTRY_URL/asyncdb:$VERSION\n",
-                  "aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL\n",
-                  "docker pull $IMAGE\n",
-                  "docker run -d -p 80:80 $IMAGE\n"
+                  "#! /bin/bash",
+                  "sudo yum update",
+                  "sudo yum -y install unzip",
+                  "curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\"",
+                  "unzip awscliv2.zip",
+                  "./aws/install",
+                  "REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com",
+                  "VERSION=0.0.2",
+                  "IMAGE=$REGISTRY_URL/asyncdb:$VERSION",
+                  "aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL",
+                  "docker pull $IMAGE",
+                  "docker run -d -p 80:80 $IMAGE"
                 ]
               ]
             }
@@ -199,7 +233,11 @@
       "Properties": {
         "Name": "ClusterALB",
         "Scheme": "internet-facing",
-        "Subnets": [{ "Ref": "PublicSubnet1" }, { "Ref": "PublicSubnet2" }, { "Ref": "PublicSubnet3" }],
+        "Subnets": [
+          { "Ref": "PublicSubnet1" },
+          { "Ref": "PublicSubnet2" },
+          { "Ref": "PublicSubnet3" }
+        ],
         "SecurityGroups": [{ "Ref": "ALBSecurityGroup" }]
       }
     },
@@ -230,7 +268,11 @@
     "AutoScalingGroup": {
       "Type": "AWS::AutoScaling::AutoScalingGroup",
       "Properties": {
-        "VPCZoneIdentifier": [ { "Ref": "PublicSubnet1" }, { "Ref": "PublicSubnet2" }, { "Ref": "PublicSubnet3" } ],
+        "VPCZoneIdentifier": [
+          { "Ref": "PublicSubnet1" },
+          { "Ref": "PublicSubnet2" },
+          { "Ref": "PublicSubnet3" }
+        ],
         "LaunchTemplate": {
           "LaunchTemplateId": { "Ref": "LaunchTemplate" },
           "Version": { "Fn::GetAtt": [ "LaunchTemplate", "LatestVersionNumber" ] }
@@ -239,6 +281,122 @@
         "MinSize": "1",
         "MaxSize": "4",
         "TargetGroupARNs":[{ "Ref":"ALBTargetGroup" } ]
+      }
+    },
+    "DiscoveryTokenLambdaRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ]
+      }
+    },
+    "DiscoveryTokenLambda": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Handler": "index.handler",
+        "Role": { "Fn::GetAtt": ["DiscoveryTokenLambdaRole", "Arn"] },
+        "Runtime": "python3.9",
+        "Timeout": 30,
+        "Code": {
+          "ZipFile": {
+            "Fn::Join": [
+              "\n",
+              [
+                "import urllib.request",
+                "import cfnresponse",
+                "def handler(event, context):",
+                "    try:",
+                "        if event['RequestType'] in ('Create','Update'):",
+                "            url = \"https://discovery.etcd.io/new?size=3\"",
+                "            token = urllib.request.urlopen(url).read().decode().strip()",
+                "            cfnresponse.send(event, context, cfnresponse.SUCCESS,",
+                "                             { 'DiscoveryURL': token })",
+                "        else:",
+                "            cfnresponse.send(event, context, cfnresponse.SUCCESS, {})",
+                "    except Exception as e:",
+                "        print(\"Error:\", e)",
+                "        cfnresponse.send(event, context, cfnresponse.FAILED, {})"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "DiscoveryTokenCustomResource": {
+      "Type": "Custom::EtcdDiscovery",
+      "Properties": {
+        "ServiceToken": { "Fn::GetAtt": ["DiscoveryTokenLambda", "Arn"] }
+      }
+    },
+    "EtcdLaunchTemplate": {
+      "Type": "AWS::EC2::LaunchTemplate",
+      "Properties": {
+        "LaunchTemplateData": {
+          "ImageId": { "Ref": "ECSAMI" },
+          "InstanceType": { "Ref": "InstanceType" },
+          "SecurityGroupIds": [{ "Ref": "EtcdSecurityGroup" }],
+          "KeyName": "asyncdb",
+          "UserData": {
+            "Fn::Base64": {
+              "Fn::Join": [
+                "\n",
+                [
+                  "#! /bin/bash",
+                  "PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)",
+                  "PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)",
+                  "INSTANCE=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)",
+                  { "Fn::Sub": ["DISCOVERY_URL='${DiscoveryTokenCustomResource.DiscoveryURL}'", {}] },
+                  "docker run -d -v /usr/share/ca-certificates/:/etc/ssl/certs -p 4001:4001 -p 2380:2380 -p 2379:2379 \\",
+                  "  --name etcd quay.io/coreos/etcd:v2.3.8 \\",
+                  "  -name ${INSTANCE} \\",
+                  "  -advertise-client-urls http://${PUBLIC_IP}:2379,http://${PUBLIC_IP}:4001 \\",
+                  "  -listen-client-urls http://0.0.0.0:2379,http://0.0.0.0:4001 \\",
+                  "  -initial-advertise-peer-urls http://${PUBLIC_IP}:2380 \\",
+                  "  -listen-peer-urls http://0.0.0.0:2380 \\",
+                  "  -discovery ${DISCOVERY_URL} \\"
+                ]
+              ]
+            }
+          }
+        }
+      }
+    },
+    "EtcdAutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "VPCZoneIdentifier": [
+          { "Ref": "PublicSubnet1" },
+          { "Ref": "PublicSubnet2" },
+          { "Ref": "PublicSubnet3" }
+        ],
+        "LaunchTemplate": {
+          "LaunchTemplateId": { "Ref": "EtcdLaunchTemplate" },
+          "Version": { "Fn::GetAtt": ["EtcdLaunchTemplate", "LatestVersionNumber"] }
+        },
+        "MinSize": "3",
+        "MaxSize": "3",
+        "DesiredCapacity": "3",
+        "HealthCheckType": "EC2",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "etcd-node",
+            "PropagateAtLaunch": true
+          }
+        ]
       }
     }
   }
