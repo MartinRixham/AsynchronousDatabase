@@ -85,3 +85,25 @@ TEST_F(repository_test, does_not_have_table)
 
 	EXPECT_FALSE(has_table);
 }
+
+TEST_F(repository_test, does_not_delete_invalid_table)
+{
+	repository.create_table(table::valid_table("a table", std::vector<std::string>()));
+
+	repository.delete_table("not a table");
+
+	bool has_table = repository.has_table("a table");
+
+	EXPECT_TRUE(has_table);
+}
+
+TEST_F(repository_test, delete_table_from_repository)
+{
+	repository.create_table(table::valid_table("a table", std::vector<std::string>()));
+
+	repository.delete_table("a table");
+
+	bool has_table = repository.has_table("a table");
+
+	EXPECT_FALSE(has_table);
+}

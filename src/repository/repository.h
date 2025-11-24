@@ -19,6 +19,8 @@ namespace repository
 			virtual bool has_table(const std::string &table_name) const = 0;
 
 			virtual table::table read_table(const std::string &table_name) const = 0;
+
+			virtual void delete_table(const std::string &table_name) = 0;
 	};
 }
 

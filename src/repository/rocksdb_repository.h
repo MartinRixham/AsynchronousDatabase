@@ -20,6 +20,8 @@ namespace repository
 
 			table::table read_table(const std::string &table_name) const override;
 
+			void delete_table(const std::string &table_name) override;
+
 			~rocksdb_repository();
 	};
 }

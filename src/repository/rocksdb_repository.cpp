@@ -68,6 +68,22 @@ table::table repository::rocksdb_repository::read_table(const std::string &table
 	}
 }
 
+void repository::rocksdb_repository::delete_table(const std::string &table_name)
+{
+	std::string value;
+
+	database->Get(rocksdb::ReadOptions(), "TABLE_" + table_name, &value);
+
+	if (value.empty())
+	{
+		return;
+	}
+	else
+	{
+		database->Delete(rocksdb::WriteOptions(), "TABLE_" + table_name);
+	}
+}
+
 repository::rocksdb_repository::~rocksdb_repository()
 {
 	delete database;
