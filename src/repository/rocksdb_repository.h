@@ -3,6 +3,8 @@
 
 #include <string>
 
+#include <rocksdb/db.h>
+
 #include "repository.h"
 
 namespace repository

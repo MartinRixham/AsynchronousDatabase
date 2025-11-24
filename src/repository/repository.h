@@ -3,8 +3,6 @@
 
 #include <set>
 
-#include <rocksdb/db.h>
-
 #include "table/table.h"
 
 namespace repository
