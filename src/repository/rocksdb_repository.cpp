@@ -6,13 +6,16 @@
 #include "error.h"
 #include "rocksdb_repository.h"
 
-repository::rocksdb_repository::rocksdb_repository()
+repository::rocksdb_repository::rocksdb_repository(const std::string &directory)
 {
 	rocksdb::Options options;
 	options.create_if_missing = true;
 
-	std::filesystem::create_directory("/tmp/asyncdb");
-	rocksdb::Status status = rocksdb::DB::Open(options, "/tmp/asyncdb/" + std::to_string(std::rand()), &database);
+	std::filesystem::path directory_path = std::filesystem::path(directory);
+	std::filesystem::create_directories(directory_path);
+
+	std::filesystem::path database_path = directory_path / std::to_string(std::rand());
+	rocksdb::Status status = rocksdb::DB::Open(options, database_path.string(), &database);
 
 	if (!status.ok())
 	{

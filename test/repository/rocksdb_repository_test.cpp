@@ -1,5 +1,6 @@
 #include <set>
 #include <vector>
+#include <filesystem>
 
 #include <gtest/gtest.h>
 #include <rocksdb/db.h>
@@ -13,14 +14,32 @@ class repository_test: public ::testing::Test
 protected:
 	repository::rocksdb_repository repository;
 
-	void SetUp()
+	repository::rocksdb_repository faulty_repository;
+
+	repository_test():
+		repository("/tmp/asyncdb"),
+		faulty_repository("/tmp/faulty")
 	{
 	}
 
-	void TearDown()
+	void SetUp() override
+	{
+	}
+
+	void TearDown() override
 	{
 	}
 };
+
+TEST_F(repository_test, fail_to_create_table_with_faulty_repository)
+{
+	faulty_repository.create_table(table::valid_table("first table", std::vector<std::string>()));
+
+	std::set<table::table> table_set = faulty_repository.list_tables();
+	std::vector<table::table> tables(table_set.begin(), table_set.end());
+
+	EXPECT_EQ(tables.size(), 1);
+}
 
 TEST_F(repository_test, create_and_read_tables)
 {

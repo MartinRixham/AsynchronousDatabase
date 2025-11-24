@@ -13,7 +13,7 @@ server::server::server(
 		thread_count(threads),
 		io_context(thread_count),
 		acceptor(boost::asio::make_strand(io_context)),
-		repository(repository::rocksdb_repository()),
+		repository(repository::rocksdb_repository("/tmp/asyncdb")),
 		router(router::router(repository))
 {
 	boost::beast::error_code error;
