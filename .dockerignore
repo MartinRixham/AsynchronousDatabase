@@ -1,0 +1,11 @@
+# The UI stage runs "npm install" itself, and the builder stage compiles from
+# source, so neither needs the local build output in the context.
+**/node_modules
+ui/dist
+build/
+
+# Not read by any stage of the Dockerfile.
+.git
+.github
+.vscode
+*.pem

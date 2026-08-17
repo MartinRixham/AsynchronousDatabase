@@ -1,22 +1,93 @@
+:root
+{
+	--panel: #ffffff;
+	--page: #f2f5f8;
+	--rule: #d9e0e7;
+	--ink: #253746;
+	--muted: #74838f;
+	--accent: #1e87f0;
+	--accent-pale: #eaf3fd;
+	--chrome: #22303c;
+	--chrome-ink: #c3d0da;
+	--mono: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+body
+{
+	margin: 0;
+	background: var(--page);
+	color: var(--ink);
+}
+
 .app
 {
 	display: flex;
+	min-height: 100vh;
+	align-items: stretch;
 }
 
 .app .page
 {
 	min-width: 1000px;
+	background: var(--panel);
+	border: 1px solid var(--rule);
+	border-radius: 3px;
+	padding: 20px;
 }
 
 .app .side-bar
 {
-	background: #eee;
-	height: 100vmin;
+	background: var(--chrome);
+	color: var(--chrome-ink);
+	min-height: 100vh;
+	min-width: 220px;
+	padding: 16px;
+	box-sizing: border-box;
+}
+/*
+.app .side-bar:empty
+{
+	min-width: 0;
+	padding: 0;
+}
+*/
+
+.app .side-bar h2
+{
+	color: #fff;
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+	padding-bottom: 10px;
+}
+
+.app .uk-container
+{
+	flex: 1;
+	padding-bottom: 40px;
 }
 
 .app h1
 {
 	margin-top: 1%;
+	font-size: 20px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ink);
+	border-bottom: 2px solid var(--accent);
+	padding-bottom: 12px;
+}
+
+.app h3
+{
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--muted);
 }
 
 button
@@ -24,10 +95,40 @@ button
 	cursor: pointer;
 }
 
+.uk-button
+{
+	border-radius: 3px;
+	font-size: 12px;
+}
+
 .create-table
 {
-	background: #eee;
+	background: var(--page);
 	padding: 2%;
+	border: 1px solid var(--rule);
+	border-left: 3px solid var(--accent);
+	border-radius: 3px;
+	margin-bottom: 20px;
+}
+
+.create-table .uk-label
+{
+	background: transparent;
+	color: var(--muted);
+	padding: 0;
+	font-size: 11px;
+	letter-spacing: 0.1em;
+}
+
+.create-table .uk-input,
+.create-table select
+{
+	font-family: var(--mono);
+	background: var(--panel);
+	border: 1px solid var(--rule);
+	border-radius: 3px;
+	padding: 6px 8px;
+	color: var(--ink);
 }
 
 .create-table .button-row
@@ -62,6 +163,7 @@ button
 .create-table .dependency
 {
 	margin-bottom: 2%;
+	font-family: var(--mono);
 }
 
 .create-table .dependency button
@@ -80,10 +182,45 @@ button
 	margin: auto;
 }
 
+.tables svg rect
+{
+	fill: var(--accent-pale);
+	stroke: var(--accent);
+	stroke-width: 1.5;
+	rx: 3px;
+	cursor: pointer;
+}
+
+.tables svg rect:hover
+{
+	fill: #d6e9fb;
+}
+
+.tables svg text
+{
+	font-family: var(--mono);
+	font-size: 13px;
+	fill: #14456b;
+	pointer-events: none;
+}
+
+.tables svg path
+{
+	stroke: var(--muted);
+}
+
+.tables svg marker path
+{
+	fill: var(--muted);
+	stroke: none;
+}
+
 .table-detail
 {
 	min-width: 500px;
 	padding: 2%;
+	color: var(--chrome-ink);
+	font-family: var(--mono);
 }
 
 .table-detail .button-row
