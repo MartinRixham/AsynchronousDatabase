@@ -7,10 +7,11 @@
     "test": "test"
   },
   "scripts": {
-    "build": "parcel build --no-optimize index.html",
-    "test": "parcel build test/index.html --no-optimize --dist-dir dist/test && grunt",
-    "start": "parcel index.html",
-    "start:test": "http-server dist/test"
+    "build": "vite build",
+    "lint": "eslint js test",
+    "test": "npm run lint && vitest run",
+    "test:watch": "vitest",
+    "start": "vite"
   },
   "repository": {
     "type": "git",
@@ -24,19 +25,13 @@
   "homepage": "https://github.com/MartinRixham/AsynchronousDatabase#readme",
   "devDependencies": {
     "eslint": "8.39.0",
-    "grunt": "1.6.1",
-    "grunt-contrib-connect": "3.0.0",
-    "grunt-contrib-qunit": "7.0.0",
-    "grunt-eslint": "24.0.1",
-    "http-server": "14.1.1",
-    "nyc": "15.1.0",
-    "parcel": "2.12.0",
-    "process": "0.11.10",
-    "qunit": "2.17.2"
+    "jsdom": "30.0.1",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
   },
   "dependencies": {
     "@datumjs/pieces": "0.5.0",
-    "Datum": "0.13.3",
+    "@datumjs/datum": "0.14.3",
     "uikit": "3.9.4"
   }
 }

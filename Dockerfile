@@ -14,7 +14,7 @@ RUN cheesemake/cheesemake verify
 FROM alpine:latest AS ui
 WORKDIR /ui
 ENV CI=1
-RUN apk update && apk add npm chromium 
+RUN apk update && apk add npm
 COPY ui .
 RUN rm -rf node_modules
 RUN npm install

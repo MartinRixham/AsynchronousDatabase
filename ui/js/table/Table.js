@@ -1,4 +1,4 @@
-import { Binding } from "Datum";
+import { Binding } from "@datumjs/datum";
 import Dependency from "./Dependency";
 
 export default class Table {

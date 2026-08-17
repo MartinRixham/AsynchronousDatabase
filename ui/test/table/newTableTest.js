@@ -1,240 +1,241 @@
-import QUnit from "qunit";
+import { describe, test, expect } from "vitest";
 import NewTable from "~/js/table/NewTable";
 import DatabaseClient from "../FakeDatabaseClient";
 
-QUnit.module("new table");
+describe("new table", () => {
 
-QUnit.test("set table value", assert => {
+	test("set table value", () => {
 
-	const newTable = new NewTable(() => {}, () => []);
+		const newTable = new NewTable(() => {}, () => []);
 
-	newTable.onBind();
+		newTable.onBind();
 
-	newTable.title().value("my new table");
+		newTable.title().value("my new table");
 
-	assert.equal(newTable.title().value(), "my new table");
-});
+		expect(newTable.title().value()).toBe("my new table");
+	});
 
-QUnit.test("save table", async assert => {
+	test("save table", async () => {
 
-	let savedTable = null;
+		let savedTable = null;
 
-	const onNewTable = (table) => {
+		const onNewTable = (table) => {
 
-		savedTable = table;
-	};
+			savedTable = table;
+		};
 
-	const client = new DatabaseClient();
-	const newTable = new NewTable(() => {}, () => [], client, onNewTable);
+		const client = new DatabaseClient();
+		const newTable = new NewTable(() => {}, () => [], client, onNewTable);
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	newTable.title().value("my new table");
-	await newTable.save().click();
+		newTable.title().value("my new table");
+		await newTable.save().click();
 
-	assert.equal(savedTable.name, "my new table");
+		expect(savedTable.name).toBe("my new table");
 
-	const tables = await client.getTables();
+		const tables = await client.getTables();
 
-	assert.equal(tables.tables.length, 1);
-	assert.equal(tables.tables[0].name, "my new table");
-});
+		expect(tables.tables.length).toBe(1);
+		expect(tables.tables[0].name).toBe("my new table");
+	});
 
-QUnit.test("fail to save table with no name", async assert => {
+	test("fail to save table with no name", async () => {
 
-	const client = new DatabaseClient();
-	const newTable = new NewTable(() => {}, () => [], client, () => {});
+		const client = new DatabaseClient();
+		const newTable = new NewTable(() => {}, () => [], client, () => {});
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	newTable.title().value("");
-	newTable.save().click();
+		newTable.title().value("");
+		newTable.save().click();
 
-	const tables = await client.getTables();
+		const tables = await client.getTables();
 
-	assert.equal(tables.tables.length, 0);
-});
+		expect(tables.tables.length).toBe(0);
+	});
 
-QUnit.test("no new dependency when no options", async assert => {
+	test("no new dependency when no options", async () => {
 
-	const client = new DatabaseClient();
+		const client = new DatabaseClient();
 
-	client.postTable("\name\":\"my dependency\"")
+		client.postTable("\name\":\"my dependency\"")
 
-	const newTable = new NewTable(() => {}, () => [], client, () => {});
+		const newTable = new NewTable(() => {}, () => [], client, () => {});
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	assert.ok(!newTable.dependencyTitle().visible());
-	assert.ok(!newTable.newDependency)
-});
+		expect(newTable.dependencyTitle().visible()).toBeFalsy();
+		expect(newTable.newDependency).toBeFalsy();
+	});
 
-QUnit.test("save table with one dependency", async assert => {
+	test("save table with one dependency", async () => {
 
-	const client = new DatabaseClient();
+		const client = new DatabaseClient();
 
-	client.postTable("\name\":\"my dependency\"")
+		client.postTable("\name\":\"my dependency\"")
 
-	const newTable = new NewTable(() => {}, () => ["my dependency"], client, () => {});
+		const newTable = new NewTable(() => {}, () => ["my dependency"], client, () => {});
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	newTable.title().value("my new table");
-	newTable.newDependency.select().value("my dependency")
+		newTable.title().value("my new table");
+		newTable.newDependency.select().value("my dependency")
 
-	assert.ok(newTable.dependencyTitle().visible());
-	assert.equal(newTable.dependencies[0].title().text(), "my dependency");
-	assert.deepEqual(newTable.toJSON(), { name: "my new table", dependencies: ["my dependency"] });
+		expect(newTable.dependencyTitle().visible()).toBeTruthy();
+		expect(newTable.dependencies[0].title().text()).toBe("my dependency");
+		expect(newTable.toJSON()).toEqual({ name: "my new table", dependencies: ["my dependency"] });
 
-	newTable.save().click();
+		newTable.save().click();
 
-	const tables = await client.getTables();
+		const tables = await client.getTables();
 
-	assert.equal(tables.tables.length, 2);
+		expect(tables.tables.length).toBe(2);
 
-	const firstTable = tables.tables[1];
+		const firstTable = tables.tables[1];
 
-	assert.equal(firstTable.name, "my new table");
-	assert.equal(firstTable.dependencies.length, 1);
-	assert.equal(firstTable.dependencies[0].name, "my dependency");
-});
+		expect(firstTable.name).toBe("my new table");
+		expect(firstTable.dependencies.length).toBe(1);
+		expect(firstTable.dependencies[0].name).toBe("my dependency");
+	});
 
-QUnit.test("no second dependency when only one option", async assert => {
+	test("no second dependency when only one option", async () => {
 
-	const client = new DatabaseClient();
-	const tables = () => ["my dependency"];
-	const newTable = new NewTable(() => {}, tables, client, () => {});
+		const client = new DatabaseClient();
+		const tables = () => ["my dependency"];
+		const newTable = new NewTable(() => {}, tables, client, () => {});
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	newTable.title().value("my new table");
+		newTable.title().value("my new table");
 
-	assert.equal(newTable.newDependency.label().text(), "first dependency")
+		expect(newTable.newDependency.label().text()).toBe("first dependency");
 
-	newTable.newDependency.select().value("my dependency")
+		newTable.newDependency.select().value("my dependency")
 
-	assert.ok(!newTable.newDependency)
-});
+		expect(newTable.newDependency).toBeFalsy();
+	});
 
-QUnit.test("save table with two dependencies", async assert => {
+	test("save table with two dependencies", async () => {
 
-	const client = new DatabaseClient();
-	const options = () => ["my dependency", "my other dependency"];
-	const newTable = new NewTable(() => {}, options, client, () => {});
+		const client = new DatabaseClient();
+		const options = () => ["my dependency", "my other dependency"];
+		const newTable = new NewTable(() => {}, options, client, () => {});
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	newTable.title().value("my new table");
+		newTable.title().value("my new table");
 
-	assert.ok(newTable.dependencyTitle().visible());
-	assert.equal(newTable.newDependency.label().text(), "first dependency")
+		expect(newTable.dependencyTitle().visible()).toBeTruthy();
+		expect(newTable.newDependency.label().text()).toBe("first dependency");
 
-	newTable.newDependency.select().value("my dependency")
+		newTable.newDependency.select().value("my dependency")
 
-	assert.equal(newTable.newDependency.label().text(), "second dependency")
+		expect(newTable.newDependency.label().text()).toBe("second dependency");
 
-	newTable.newDependency.select().value("my other dependency")
+		newTable.newDependency.select().value("my other dependency")
 
-	assert.equal(newTable.dependencies[0].title().text(), "my dependency");
-	assert.equal(newTable.dependencies[1].title().text(), "my other dependency");
-	assert.deepEqual(newTable.toJSON(), { name: "my new table", dependencies: ["my dependency", "my other dependency"] });
+		expect(newTable.dependencies[0].title().text()).toBe("my dependency");
+		expect(newTable.dependencies[1].title().text()).toBe("my other dependency");
+		expect(newTable.toJSON()).toEqual({ name: "my new table", dependencies: ["my dependency", "my other dependency"] });
 
-	newTable.save().click();
+		newTable.save().click();
 
-	const tables = await client.getTables();
-	const firstTable = tables.tables[0];
+		const tables = await client.getTables();
+		const firstTable = tables.tables[0];
 
-	assert.equal(firstTable.dependencies.length, 2);
-	assert.equal(firstTable.dependencies[0].name, "my dependency");
-	assert.equal(firstTable.dependencies[1].name, "my other dependency");
-});
+		expect(firstTable.dependencies.length).toBe(2);
+		expect(firstTable.dependencies[0].name).toBe("my dependency");
+		expect(firstTable.dependencies[1].name).toBe("my other dependency");
+	});
 
-QUnit.test("cannot add third dependency", async assert => {
+	test("cannot add third dependency", async () => {
 
-	const client = new DatabaseClient();
-	const options = () => ["my dependency", "my other dependency", "even another one"];
-	const newTable = new NewTable(() => {}, options, client, () => {});
+		const client = new DatabaseClient();
+		const options = () => ["my dependency", "my other dependency", "even another one"];
+		const newTable = new NewTable(() => {}, options, client, () => {});
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	newTable.newDependency.select().value("my dependency")
+		newTable.newDependency.select().value("my dependency")
 
-	newTable.newDependency.select().value("my other dependency")
+		newTable.newDependency.select().value("my other dependency")
 
-	assert.ok(!newTable.newDependency);
-});
+		expect(newTable.newDependency).toBeFalsy();
+	});
 
-QUnit.test("fail to save table with duplicate", async assert => {
+	test("fail to save table with duplicate", async () => {
 
-	let savedTables = [];
+		let savedTables = [];
 
-	const onNewTable = (table) => {
+		const onNewTable = (table) => {
 
-		savedTables.push(table);
-	};
+			savedTables.push(table);
+		};
 
-	const client = new DatabaseClient();
-	const newTable = new NewTable(() => {}, () => [], client, onNewTable);
+		const client = new DatabaseClient();
+		const newTable = new NewTable(() => {}, () => [], client, onNewTable);
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	newTable.title().value("a table");
-	newTable.save().click();
-	await newTable.save().click();
+		newTable.title().value("a table");
+		newTable.save().click();
+		await newTable.save().click();
 
-	assert.equal(newTable.error().text(), "A table with the name \"a table\" already exists.");
-	assert.equal(savedTables.length, 1);
-});
+		expect(newTable.error().text()).toBe("A table with the name \"a table\" already exists.");
+		expect(savedTables.length).toBe(1);
+	});
 
-QUnit.test("remove dependency", async assert => {
+	test("remove dependency", async () => {
 
-	const newTable = new NewTable(() => {}, () => ["my dependency"], new DatabaseClient(), () => {});
+		const newTable = new NewTable(() => {}, () => ["my dependency"], new DatabaseClient(), () => {});
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	newTable.title().value("my new table");
-	newTable.newDependency.select().value("my dependency")
+		newTable.title().value("my new table");
+		newTable.newDependency.select().value("my dependency")
 
-	assert.equal(newTable.dependencies.length, 1);
+		expect(newTable.dependencies.length).toBe(1);
 
-	newTable.dependencies[0].remove().click();
+		newTable.dependencies[0].remove().click();
 
-	assert.equal(newTable.dependencies.length, 0);
-	assert.ok(!newTable.newDependency.select().value());
-	assert.equal(newTable.newDependency.label().text(), "first dependency")
-});
+		expect(newTable.dependencies.length).toBe(0);
+		expect(newTable.newDependency.select().value()).toBeFalsy();
+		expect(newTable.newDependency.label().text()).toBe("first dependency");
+	});
 
-QUnit.test("remove second dependency", async assert => {
+	test("remove second dependency", async () => {
 
-	const options = () => ["my dependency", "my other dependency"];
-	const newTable = new NewTable(() => {}, options, new DatabaseClient(), () => {});
+		const options = () => ["my dependency", "my other dependency"];
+		const newTable = new NewTable(() => {}, options, new DatabaseClient(), () => {});
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	newTable.title().value("my new table");
-	newTable.newDependency.select().value("my dependency")
-	newTable.newDependency.select().value("my other dependency")
+		newTable.title().value("my new table");
+		newTable.newDependency.select().value("my dependency")
+		newTable.newDependency.select().value("my other dependency")
 
-	assert.equal(newTable.dependencies.length, 2);
+		expect(newTable.dependencies.length).toBe(2);
 
-	newTable.dependencies[1].remove().click();
+		newTable.dependencies[1].remove().click();
 
-	assert.equal(newTable.dependencies.length, 1);
-	assert.ok(!newTable.newDependency.select().value());
-	assert.equal(newTable.newDependency.label().text(), "second dependency")
-});
+		expect(newTable.dependencies.length).toBe(1);
+		expect(newTable.newDependency.select().value()).toBeFalsy();
+		expect(newTable.newDependency.label().text()).toBe("second dependency");
+	});
 
-QUnit.test("cannot add same dependency twice", async assert => {
+	test("cannot add same dependency twice", async () => {
 
-	const client = new DatabaseClient();
-	const options = () => ["first table", "second table"];
-	const newTable = new NewTable(() => {}, options, client, () => {});
+		const client = new DatabaseClient();
+		const options = () => ["first table", "second table"];
+		const newTable = new NewTable(() => {}, options, client, () => {});
 
-	await newTable.onBind();
+		await newTable.onBind();
 
-	assert.equal(newTable.newDependency.options.length, 2);
+		expect(newTable.newDependency.options.length).toBe(2);
 
-	newTable.newDependency.select().value("first table")
+		newTable.newDependency.select().value("first table")
 
-	assert.equal(newTable.newDependency.options.length, 1);
+		expect(newTable.newDependency.options.length).toBe(1);
+	});
 });

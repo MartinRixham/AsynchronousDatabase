@@ -1,7 +1,5 @@
 .vscode/
 build/
 node_modules/
-.parcel-cache/
 ui/dist/
-.nyc_output/
 *.pem

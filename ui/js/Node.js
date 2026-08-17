@@ -1,4 +1,4 @@
-import html from "~/html/node.html";
+import html from "~/html/node.html?url";
 
 export default class Node {
 

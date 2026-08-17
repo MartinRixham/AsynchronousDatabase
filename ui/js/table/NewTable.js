@@ -1,5 +1,5 @@
-import { Binding, Click, Visible } from "Datum";
-import html from "~/html/table/newTable.html";
+import { Binding, Click, Visible } from "@datumjs/datum";
+import html from "~/html/table/newTable.html?url";
 
 import NewDependency from "./NewDependency";
 

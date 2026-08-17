@@ -1,6 +1,6 @@
 import { NavPiece } from "@datumjs/pieces";
 
-import html from "~/html/app.html";
+import html from "~/html/app.html?url";
 import Node from "./Node";
 import NewTable from "./table/NewTable";
 import Tables from "./table/Tables";

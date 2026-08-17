@@ -1,4 +1,4 @@
-import { Value, Click, Text } from "Datum";
+import { Value, Click, Text } from "@datumjs/datum";
 
 export default class NewDependency {
 

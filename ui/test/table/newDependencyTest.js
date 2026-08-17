@@ -1,75 +1,76 @@
-import QUnit from "qunit";
+import { describe, test, expect } from "vitest";
 import NewDependency from "~/js/table/NewDependency";
 
-QUnit.module("new dependency");
+describe("new dependency", () => {
 
-QUnit.test("list dependency options", async assert => {
+	test("list dependency options", () => {
 
-	const tables = ["first table", "second table"];
-	const dependency = new NewDependency(0, tables, () => {}, () => {});
+		const tables = ["first table", "second table"];
+		const dependency = new NewDependency(0, tables, () => {}, () => {});
 
-	assert.equal(dependency.options.length, 2);
-	assert.equal(dependency.options[0]().text(), "first table");
-	assert.equal(dependency.options[1]().text(), "second table");
-});
+		expect(dependency.options.length).toBe(2);
+		expect(dependency.options[0]().text()).toBe("first table");
+		expect(dependency.options[1]().text()).toBe("second table");
+	});
 
-QUnit.test("add dependency", assert => {
+	test("add dependency", () => {
 
-	let newDependency = null;
+		let newDependency = null;
 
-	const addDependency = (dependency) => {
+		const addDependency = (dependency) => {
 
-		newDependency = dependency;
-	}
+			newDependency = dependency;
+		}
 
-	const tables = ["first table", "second table"];
-	const dependency = new NewDependency(0, tables, addDependency);
+		const tables = ["first table", "second table"];
+		const dependency = new NewDependency(0, tables, addDependency);
 
-	assert.equal(dependency.label().text(), "first dependency");
+		expect(dependency.label().text()).toBe("first dependency");
 
-	dependency.select().value("second table");
+		dependency.select().value("second table");
 
-	assert.equal(newDependency.title().text(), "second table");
-});
+		expect(newDependency.title().text()).toBe("second table");
+	});
 
-QUnit.test("cannot add empty dependency", assert => {
+	test("cannot add empty dependency", () => {
 
-	let newDependency = null;
+		let newDependency = null;
 
-	const addDependency = (dependency) => {
+		const addDependency = (dependency) => {
 
-		newDependency = dependency;
-	}
+			newDependency = dependency;
+		}
 
-	const tables = ["first table", "second table"];
-	const dependency = new NewDependency(0, tables, addDependency);
+		const tables = ["first table", "second table"];
+		const dependency = new NewDependency(0, tables, addDependency);
 
-	dependency.select().value("");
+		dependency.select().value("");
 
-	assert.ok(!newDependency);
-});
+		expect(newDependency).toBeFalsy();
+	});
 
-QUnit.test("add second dependency", assert => {
+	test("add second dependency", () => {
 
-	const tables = ["first table", "second table"];
-	const dependency = new NewDependency(1, tables, () => {});
+		const tables = ["first table", "second table"];
+		const dependency = new NewDependency(1, tables, () => {});
 
-	assert.equal(dependency.label().text(), "second dependency");
-});
+		expect(dependency.label().text()).toBe("second dependency");
+	});
 
-QUnit.test("remove dependency", assert => {
+	test("remove dependency", () => {
 
-	let removedDependency = null;
+		let removedDependency = null;
 
-	const removeDependency = (name) => {
+		const removeDependency = (name) => {
 
-		removedDependency = name;
-	}
+			removedDependency = name;
+		}
 
-	const dependency = new NewDependency(0, [], () => {}, removeDependency);
+		const dependency = new NewDependency(0, [], () => {}, removeDependency);
 
-	dependency.select().value("first table");
-	dependency.remove().click();
+		dependency.select().value("first table");
+		dependency.remove().click();
 
-	assert.equal(removedDependency, "first table");
+		expect(removedDependency).toBe("first table");
+	});
 });

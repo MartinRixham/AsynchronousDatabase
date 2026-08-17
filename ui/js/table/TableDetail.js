@@ -1,5 +1,5 @@
-import html from "~/html/table/tableDetail.html";
-import { Text, Click } from "Datum";
+import html from "~/html/table/tableDetail.html?url";
+import { Text, Click } from "@datumjs/datum";
 
 export default class TableDetail {
 

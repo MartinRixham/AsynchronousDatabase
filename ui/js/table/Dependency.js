@@ -1,4 +1,4 @@
-import { Update } from "Datum";
+import { Update } from "@datumjs/datum";
 
 export default class Dependency {
 

@@ -1,5 +1,5 @@
-import { Binding, Update } from "Datum";
-import html from "~/html/table/tables.html";
+import { Binding, Update } from "@datumjs/datum";
+import html from "~/html/table/tables.html?url";
 
 import NewTable from "./NewTable";
 import Table from "./Table";
