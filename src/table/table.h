@@ -11,7 +11,7 @@ namespace table
 {
 	struct table
 	{
-		bool is_valid;
+		bool is_valid = false;
 
 		std::string name;
 

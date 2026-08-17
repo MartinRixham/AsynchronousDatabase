@@ -86,8 +86,3 @@ void repository::rocksdb_repository::delete_table(const std::string &table_name)
 		database->Delete(rocksdb::WriteOptions(), "TABLE_" + table_name);
 	}
 }
-
-repository::rocksdb_repository::~rocksdb_repository()
-{
-	delete database;
-}

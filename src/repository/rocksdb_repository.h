@@ -1,6 +1,7 @@
 #ifndef REPOSITORY_ROCSKDB_REPOSITORY_H
 #define REPOSITORY_ROCSKDB_REPOSITORY_H
 
+#include <memory>
 #include <string>
 
 #include <rocksdb/db.h>
@@ -11,7 +12,7 @@ namespace repository
 {
 	class rocksdb_repository : public repository
 	{
-		rocksdb::DB *database;
+		std::unique_ptr<rocksdb::DB> database;
 
 	public:
 		explicit rocksdb_repository(const std::string &directory);
@@ -25,8 +26,6 @@ namespace repository
 		table::table read_table(const std::string &table_name) const override;
 
 		void delete_table(const std::string &table_name) override;
-
-		~rocksdb_repository();
 	};
 }
 
