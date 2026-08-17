@@ -56,7 +56,7 @@ namespace
 }
 
 router::router::router(repository::repository &repo):
-    repository(repo)
+	repository(repo)
 {
 }
 
@@ -98,8 +98,8 @@ router::response router::router::get(const std::string &route) const
 
 router::response router::router::post(const std::string &route, const boost::json::object &body)
 {
-    if (route == "/table")
-    {
+	if (route == "/table")
+	{
 		const std::set<table::table> table_set = repository.list_tables();
 		std::set<std::string> tables;
 
@@ -113,7 +113,7 @@ router::response router::router::post(const std::string &route, const boost::jso
 		repository.create_table(table);
 
 		return post_table_response(table);
-    }
+	}
 
 	return invalid_route_response(route);
 }

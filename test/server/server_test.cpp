@@ -9,14 +9,14 @@
 
 size_t writer(void *ptr, size_t size, size_t nmemb, std::string *stream)
 {
-	std::string temp(static_cast<const char*>(ptr), size * nmemb);
-    stream->append(temp);
+	std::string temp(static_cast<const char *>(ptr), size * nmemb);
+	stream->append(temp);
 
-    return size*nmemb;
+	return size * nmemb;
 }
 
-class server_test: public ::testing::Test
-{ 
+class server_test : public ::testing::Test
+{
 protected:
 	std::thread thread;
 
@@ -28,10 +28,7 @@ protected:
 		auto server = std::make_shared<server::server>(0, 2);
 		port = server->port();
 
-		thread = std::thread([server]()
-			{
-				server->serve();
-			});
+		thread = std::thread([server]() { server->serve(); });
 	}
 
 	void TearDown()
@@ -49,7 +46,7 @@ TEST_F(server_test, get_request)
 	struct curl_slist *headers = NULL;
 
 	headers = curl_slist_append(headers, "Connection: close");
- 
+
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 	curl_easy_setopt(curl, CURLOPT_URL, "localhost/tables");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
@@ -65,7 +62,7 @@ TEST_F(server_test, get_request)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{\"tables\":[]}");	
+	EXPECT_EQ(response, "{\"tables\":[]}");
 }
 
 TEST_F(server_test, post_request)
@@ -94,7 +91,7 @@ TEST_F(server_test, post_request)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 400);
-	EXPECT_EQ(response, "{\"error\":\"Table requires name of length greater than 0.\"}");   
+	EXPECT_EQ(response, "{\"error\":\"Table requires name of length greater than 0.\"}");
 }
 
 TEST_F(server_test, invalid_post_request)
@@ -111,7 +108,8 @@ TEST_F(server_test, invalid_post_request)
 	curl_easy_setopt(curl, CURLOPT_URL, "localhost/table");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "{\"name\":\"table name\",\"dependencies\":[{\"name\":\"dependency name\"}]}");
+	curl_easy_setopt(
+		curl, CURLOPT_POSTFIELDS, "{\"name\":\"table name\",\"dependencies\":[{\"name\":\"dependency name\"}]}");
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writer);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
@@ -139,7 +137,7 @@ TEST_F(server_test, head_request)
 	struct curl_slist *headers = NULL;
 
 	headers = curl_slist_append(headers, "Connection: close");
- 
+
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 	curl_easy_setopt(curl, CURLOPT_URL, "localhost/tables");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
@@ -156,7 +154,7 @@ TEST_F(server_test, head_request)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "");   
+	EXPECT_EQ(response, "");
 }
 
 TEST_F(server_test, put_request)
@@ -168,7 +166,7 @@ TEST_F(server_test, put_request)
 	struct curl_slist *headers = NULL;
 
 	headers = curl_slist_append(headers, "Connection: close");
- 
+
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 	curl_easy_setopt(curl, CURLOPT_URL, "localhost");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
@@ -193,7 +191,7 @@ TEST_F(server_test, two_get_requests)
 	auto curl = curl_easy_init();
 	long http_code = 0;
 	std::string response;
- 
+
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 	curl_easy_setopt(curl, CURLOPT_URL, "localhost/tables");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
@@ -204,7 +202,7 @@ TEST_F(server_test, two_get_requests)
 	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{\"tables\":[]}");  
+	EXPECT_EQ(response, "{\"tables\":[]}");
 	response = "";
 
 	struct curl_slist *headers = NULL;
@@ -221,7 +219,7 @@ TEST_F(server_test, two_get_requests)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{\"tables\":[]}");  
+	EXPECT_EQ(response, "{\"tables\":[]}");
 }
 
 TEST_F(server_test, post_then_get_table)
@@ -229,7 +227,7 @@ TEST_F(server_test, post_then_get_table)
 	auto curl = curl_easy_init();
 	long http_code = 0;
 	std::string response;
- 
+
 	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 	curl_easy_setopt(curl, CURLOPT_URL, "localhost/table");
 	curl_easy_setopt(curl, CURLOPT_PORT, port);
@@ -242,7 +240,7 @@ TEST_F(server_test, post_then_get_table)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{}"); 
+	EXPECT_EQ(response, "{}");
 
 	curl_easy_cleanup(curl);
 
@@ -270,5 +268,5 @@ TEST_F(server_test, post_then_get_table)
 
 	EXPECT_EQ(status, CURLE_OK);
 	EXPECT_EQ(http_code, 200);
-	EXPECT_EQ(response, "{\"name\":\"a table name\",\"dependencies\":[]}"); 
+	EXPECT_EQ(response, "{\"name\":\"a table name\",\"dependencies\":[]}");
 }

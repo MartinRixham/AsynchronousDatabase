@@ -9,16 +9,16 @@ namespace repository
 {
 	class repository
 	{
-		public:
-			virtual void create_table(const table::table &table) = 0;
+	public:
+		virtual void create_table(const table::table &table) = 0;
 
-			virtual std::set<table::table> list_tables() const = 0;
+		virtual std::set<table::table> list_tables() const = 0;
 
-			virtual bool has_table(const std::string &table_name) const = 0;
+		virtual bool has_table(const std::string &table_name) const = 0;
 
-			virtual table::table read_table(const std::string &table_name) const = 0;
+		virtual table::table read_table(const std::string &table_name) const = 0;
 
-			virtual void delete_table(const std::string &table_name) = 0;
+		virtual void delete_table(const std::string &table_name) = 0;
 	};
 }
 

@@ -49,7 +49,7 @@ TEST(router_test, fail_to_create_duplicate_table)
 {
 	repository::fake_repository repository;
 	router::router router(repository);
-	boost::json::object request { { "name", "table name" } , { "dependencies", boost::json::array() } };
+	boost::json::object request { { "name", "table name" }, { "dependencies", boost::json::array() } };
 
 	router.post("/table", request);
 

@@ -13,7 +13,7 @@ namespace router
 {
 	class router
 	{
-        repository::repository &repository;
+		repository::repository &repository;
 
 	public:
 		explicit router(repository::repository &repo);

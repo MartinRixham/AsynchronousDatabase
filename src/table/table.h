@@ -18,7 +18,7 @@ namespace table
 		boost::json::object json;
 	};
 
-	bool operator <(const table &lhs, const table &rhs);
+	bool operator<(const table &lhs, const table &rhs);
 
 	table parse_table(const boost::json::object &json, const std::set<std::string> &tables);
 

@@ -1,6 +1,6 @@
 #include "table.h"
 
-bool table::operator <(const table &lhs, const table &rhs)
+bool table::operator<(const table &lhs, const table &rhs)
 {
 	return lhs.name < rhs.name;
 }
@@ -12,8 +12,8 @@ table::table table::parse_table(const boost::json::object &json, const std::set<
 		return invalid_table("Table requires name of length greater than 0.");
 	}
 
-	std::string name = std::string(json.at("name").as_string()); 
-	
+	std::string name = std::string(json.at("name").as_string());
+
 	if (tables.find(name) != tables.end())
 	{
 		return invalid_table("A table with the name \"" + name + "\" already exists.");

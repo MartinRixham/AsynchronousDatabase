@@ -13,20 +13,20 @@ namespace repository
 	{
 		rocksdb::DB *database;
 
-		public:
-			explicit rocksdb_repository(const std::string &directory);
+	public:
+		explicit rocksdb_repository(const std::string &directory);
 
-			void create_table(const table::table &table) override;
+		void create_table(const table::table &table) override;
 
-			std::set<table::table> list_tables() const override;
+		std::set<table::table> list_tables() const override;
 
-			bool has_table(const std::string &table_name) const override;
+		bool has_table(const std::string &table_name) const override;
 
-			table::table read_table(const std::string &table_name) const override;
+		table::table read_table(const std::string &table_name) const override;
 
-			void delete_table(const std::string &table_name) override;
+		void delete_table(const std::string &table_name) override;
 
-			~rocksdb_repository();
+		~rocksdb_repository();
 	};
 }
 

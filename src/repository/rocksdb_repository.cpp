@@ -37,7 +37,7 @@ std::set<table::table> repository::rocksdb_repository::list_tables() const
 	rocksdb::Iterator *it = database->NewIterator(options);
 	std::set<table::table> tables;
 
-	for(it->Seek("TABLE"); it->Valid(); it->Next())
+	for (it->Seek("TABLE"); it->Valid(); it->Next())
 	{
 		tables.insert(table::to_table(it->value().ToString()));
 	}

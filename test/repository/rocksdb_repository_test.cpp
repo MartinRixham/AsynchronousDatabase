@@ -9,8 +9,8 @@
 #include "repository/rocksdb_repository.h"
 #include "table/table.h"
 
-class repository_test: public ::testing::Test
-{ 
+class repository_test : public ::testing::Test
+{
 protected:
 	repository::rocksdb_repository repository;
 
