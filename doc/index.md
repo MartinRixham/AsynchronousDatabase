@@ -1,6 +1,4 @@
 ---
-layout: home
-
 hero:
   name: asyncdb
   text: A database for asynchronous data processing

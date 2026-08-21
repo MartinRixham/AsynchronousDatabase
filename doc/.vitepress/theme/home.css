@@ -1,0 +1,23 @@
+/*
+ * The hero normally sits at the very top of the page, so it pulls itself up
+ * under the nav bar and pads itself back down. Inside the doc layout the nav
+ * has already been accounted for, and the doc's own padding gives the top
+ * spacing, so both are removed. The horizontal padding goes too, so the hero
+ * and the cards line up with the article below them rather than being inset
+ * from it twice.
+ */
+
+.VPDoc .VPHero {
+	margin-top: 0;
+	padding: 0 0 48px;
+}
+
+.VPDoc .VPFeatures {
+	padding: 0 0 32px;
+}
+
+@media (min-width: 640px) {
+	.VPDoc .VPHero {
+		padding: 0 0 56px;
+	}
+}
