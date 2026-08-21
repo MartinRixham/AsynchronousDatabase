@@ -1,0 +1,16 @@
+{
+  "name": "asyncdb-doc",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Wiki for asyncdb",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "license": "AGPL-3.0",
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}

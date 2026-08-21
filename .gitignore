@@ -3,3 +3,5 @@ build/
 node_modules/
 ui/dist/
 *.pem
+doc/.vitepress/dist/
+doc/.vitepress/cache/
