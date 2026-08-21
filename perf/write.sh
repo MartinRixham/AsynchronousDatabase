@@ -31,7 +31,7 @@ setup()
 
 	local created
 	created=$(status --request PUT --header 'Content-Type: application/json' \
-		--data "{\"contentType\":\"$content_type\"}" "$base/table/$table")
+		--data "{}" "$base/table/$table")
 
 	if [ "$created" != 201 ]; then
 		echo "Could not create $table: $created." >&2

@@ -36,20 +36,6 @@ The project is in two halves:
 They are shipped together in one Docker image: nginx serves the built UI and reverse-proxies `/asyncdb/*`
 to the server binary.
 
-### The API
-
-Three routes, all JSON:
-
-| Method | Route                | Description                                   |
-| ------ | -------------------- | --------------------------------------------- |
-| `GET`  | `/table?name=<name>` | Fetch one table, or `404` if it does not exist |
-| `GET`  | `/tables`            | List every table                              |
-| `POST` | `/table`             | Create a table                                |
-
-A table is posted as `{ "name": "orders", "dependencies": ["customers"] }`. Creation is rejected with a
-`400` and an `{ "error": ... }` body if the name is empty, if the name is already taken, or if any
-dependency does not name an existing table — so the graph can never contain a dangling edge.
-
 ### How a request travels
 
 Each layer of the server lives in its own directory and namespace under `src/`:
@@ -100,6 +86,6 @@ This wiki is a VitePress site living in `doc/`.
 ```bash
 cd doc
 npm install
-npm run docs:dev      # local preview with hot reload
-npm run docs:build    # static build into doc/.vitepress/dist
+npm run dev           # local preview with hot reload
+npm run build         # static build into doc/.vitepress/dist
 ```

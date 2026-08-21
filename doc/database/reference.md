@@ -16,37 +16,7 @@ Every endpoint, status code, error code and limit in one place.
 | `DELETE` | `/table/{table}/key/{key}` | [Delete a record](/database/records#delete-a-record) |
 | `GET` | `/table/{table}/key` | [Scan a range](/database/scans) |
 | `DELETE` | `/table/{table}/key` | [Delete a range](/database/tables#delete-a-range) |
-| `POST` | `/table/{table}/compact` | [Compact](/database/tables#compact-a-table) |
-| `POST` | `/table/{table}/flush` | [Flush](/database/tables#flush-a-table) |
 | `GET` | `/health` | Liveness, and whether writes are stalled |
-
-## Headers
-
-| Header | On | Means |
-| --- | --- | --- |
-| `X-Key-Encoding` | Any request | [`text` or `base64url`](/database/records#key-encoding), for every key in the request and response |
-| `Durability` | Writes | [`none`, `wal` or `sync`](/database/records#durability) |
-| `If-Match`, `If-None-Match` | `PUT`, `DELETE` | [Conditional writes](/database/records#conditional-writes) |
-| `ETag` | Read responses | Hash of the value bytes |
-| `Retry-After` | `503` | Seconds to wait before retrying |
-
-## Status codes
-
-| Code | When |
-| --- | --- |
-| `200 OK` | A read that found something; a create that changed nothing |
-| `201 Created` | A table created; a record created under `If-None-Match: *` |
-| `202 Accepted` | A compaction started |
-| `204 No Content` | A write, a delete, a flush |
-| `304 Not Modified` | A read whose `If-None-Match` matched |
-| `400 Bad Request` | The request is malformed. See the error code |
-| `404 Not Found` | No such table or key |
-| `409 Conflict` | A table exists with different options |
-| `412 Precondition Failed` | An `If-Match` or `If-None-Match` on a write did not hold |
-| `413 Payload Too Large` | Over a [limit](#limits) |
-| `415 Unsupported Media Type` | The body's type is not the table's declared type |
-| `500 Internal Server Error` | RocksDB failed. The instance may be unhealthy |
-| `503 Service Unavailable` | Writes are stalled |
 
 ## Errors
 
@@ -67,7 +37,8 @@ status — is what a client should branch on.
 | `table_not_found` | 404 | No table of that name |
 | `table_exists` | 409 | The table exists with different options |
 | `invalid_table_name` | 400 | Not 1–64 characters of `[a-z0-9_-]`, or `default` |
-| `invalid_key_encoding` | 400 | A key is not valid UTF-8, or not valid base64url |
+| `dependency_not_found` | 400 | A name in [`dependencies`](/database/tables#dependencies) is not a table |
+| `invalid_key_encoding` | 400 | A key in the path does not percent-decode to valid UTF-8 |
 | `key_too_large` | 413 | Over 4 KiB |
 | `value_too_large` | 413 | Over 16 MiB |
 | `invalid_range` | 400 | A range whose `from` is not below its `to`, or a range delete with no bounds |
@@ -76,15 +47,11 @@ status — is what a client should branch on.
 | `write_stalled` | 503 | RocksDB is applying back pressure |
 | `storage_error` | 500 | RocksDB returned an error |
 
-### Back pressure is a status code
-
-RocksDB slows writers down when memtables or level zero back up, and if the API
-hid that, a client would see it as latency and answer it by sending more.
-`503 write_stalled` with a `Retry-After` says what is happening, so a client can
-back off deliberately. `GET /health` reports the same condition, so an operator
-can see it before the clients do.
-
 ## Limits
+
+Keys and values are strings, and
+[every string is valid](/database/records#keys-and-values). The limits below are
+all that constrain them, and the sizes are counted in UTF-8 bytes.
 
 | Limit | Value | Why |
 | --- | --- | --- |

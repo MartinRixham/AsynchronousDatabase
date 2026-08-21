@@ -10,8 +10,8 @@ GET /table/account/key?prefix=user:&limit=100
 ```json
 {
   "records": [
-    { "key": "user:4821", "value": {"firstName": "Eleanor"} },
-    { "key": "user:7203", "value": {"firstName": "Marcus"} }
+    { "key": "user:4821", "value": "Eleanor Whitmore" },
+    { "key": "user:7203", "value": "Marcus Hale" }
   ],
   "next": "eyJrIjoidXNlcjo3MjAzIiwicyI6NDIxOTl9"
 }
@@ -19,6 +19,11 @@ GET /table/account/key?prefix=user:&limit=100
 
 `records` is in key order. `next` is a cursor, and its absence means the range
 is exhausted.
+
+A scan is the one place a value travels inside a document rather than as the
+body, so it appears as what it is: a JSON string. Keys and values are strings
+and [every string is valid](/database/records#keys-and-values), so a value that
+is itself a JSON document arrives here escaped, and is the client's to parse.
 
 ## The range
 

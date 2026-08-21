@@ -69,47 +69,40 @@ are hundreds of memtables competing for the write buffer. **Tables are dozens,
 not millions.** A table per customer is wrong; a customer prefix inside a table
 is right.
 
-## Keys are bytes, and ordering is byte-wise
+## Keys and values are strings
 
-RocksDB orders keys by unsigned byte comparison, and this API does not offer
-another comparator. That is deliberate: the ordering is the whole contract of a
-range scan, and a comparator that sorted `"10"` before `"9"` in one table and
-not another would make every scan a question about which table it was reading.
+A key is a string and a value is a string. **Every string is valid.** There are
+no reserved keys, no required format and no schema: the service stores the
+string it was given and returns it unchanged, and a value that happens to be a
+JSON document is a string that happens to be a JSON document. Only the
+[size limits](/database/reference#limits) apply, and they are counted in the
+bytes of the UTF-8 encoding.
+
+The empty string is a value like any other, which is why a missing key and an
+empty value are told apart by the status code rather than by the body. The one
+string that is not a key is the empty one, because there is no path that
+addresses it — see [keys and values](/database/records#keys-and-values).
+
+## Ordering is byte-wise
+
+RocksDB orders keys by unsigned byte comparison of their UTF-8 encoding, and
+this API does not offer another comparator. That is deliberate: the ordering is
+the whole contract of a range scan, and a comparator that sorted `"10"` before
+`"9"` in one table and not another would make every scan a question about which
+table it was reading.
+
+Byte-wise on UTF-8 is the same order as code point by code point, which is
+neither alphabetical nor locale-aware: `"Z"` sorts before `"a"`, and `"e"`
+before `"é"`.
 
 The consequence belongs to whoever designs the keys:
 
-- Numbers sort as text unless they are written fixed-width and zero-padded, or
-  big-endian binary.
-- Timestamps sort correctly as ISO-8601 in UTC, or as big-endian epoch
-  milliseconds. Newest-first needs a descending scan, not an inverted key.
+- Numbers sort as text, so they have to be written fixed-width and zero-padded
+  to sort as numbers.
+- Timestamps sort correctly as ISO-8601 in UTC. Newest-first needs a descending
+  scan, not an inverted key.
 - Composite keys work by concatenating parts with a separator that cannot occur
-  inside a part — a zero byte is the usual choice.
+  inside a part — a zero byte, `U+0000`, is the usual choice.
 
-Keys travel in URLs, so the API has to say how bytes become text. See
-[key encoding](/database/records#key-encoding): text keys are percent-encoded in
-the path, binary keys are base64url with a header that says so.
-
-## Values are opaque, and typed by the table
-
-A value is a byte string the service never parses. The table declares one
-`contentType` when it is created, and that is the type every record in it is
-written and read as. A JSON table returns `application/json`; a table of images
-or protobuf declares `application/octet-stream` and the client knows what it
-put there.
-
-Typing the table rather than the record is what keeps a read to one RocksDB
-lookup. Per-record content types would mean storing a header beside every value
-and parsing it on the way out, for a distinction almost no table actually makes.
-
-## Open questions
-
-- **Authentication.** The API is specified as reachable only from inside the
-  network that owns it. A bearer token per client is the obvious next step, and
-  nothing in the design turns on it.
-- **Replication.** One instance, no failover. The durability a client asks for
-  on a write ([durability](/database/records#durability)) is the only guarantee
-  offered, and it is a guarantee about one disk.
-- **Table TTL.** Per-table expiry is proposed, and the exact semantics need
-  confirming against RocksDB's TTL support before it is written down: expired
-  records are removed by compaction, so a TTL bounds space rather than
-  guaranteeing that a record has become unreadable.
+Keys travel in URLs, so they are percent-encoded in the path. See
+[keys and values](/database/records#keys-and-values).
