@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# A plugin belonging to this project rather than to cheesemake, overriding the
+# valgrind plugin that cheesemake provides. That one memchecks build/bin/asyncdb,
+# but asyncdb is a server that serves until it is signalled, so verify would
+# never finish. Memcheck the test binary instead: it drives the same code, a real
+# server included, and it returns.
+
+options="$(echo "$@" | jq -r .options | not is_null)"
+args="$(echo "$@" | jq -r .args | not is_null)"
+
+memcheck()
+{
+	verbose valgrind --leak-check=yes $options "$1" $args < /dev/null
+}
+
+get_sources test | map get_output | filter is_executable_object | map get_executable | map memcheck

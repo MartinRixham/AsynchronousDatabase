@@ -30,6 +30,14 @@ build/test/test_main --gtest_filter='table_test.fail_to_deserialise_table_with_n
 
 Notes:
 - `-Wall -Werror` — any warning fails the build. `cppcheck --enable=style` runs in the `validate` phase.
+- The `verify` phase memchecks under valgrind, which is why `cmk verify` takes minutes rather than seconds.
+  Cheesemake's own `valgrind.chevre` runs `build/bin/asyncdb`, and that serves until it is signalled, so the
+  root `valgrind.chevre` overrides it and runs `build/test/test_main` instead. The suite is clean of definite
+  and possible leaks, but the plugin only reports: `--error-exitcode=1` is deliberately not set, because the
+  release image builds on musl, where a leak of glibc's or RocksDB's own would fail the build untested.
+- **A test that starts a server has to stop it.** `serve()` returns only when the acceptor is closed, and an
+  always-pending accept holds a `shared_ptr` to the server, so a detached serving thread leaks the server,
+  its thread pool and its RocksDB. `server_test` closes and joins in `TearDown`.
 - `compile_flags.txt` is for clangd only; the real flags come from `recipe.json`.
 - Formatting is enforced by `.clang-format` (tabs, Allman braces, 120 columns, `SortIncludes: false`).
 - Naming is `snake_case` throughout, including class names, and each layer lives in its own namespace

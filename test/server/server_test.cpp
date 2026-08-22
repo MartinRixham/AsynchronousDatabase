@@ -33,6 +33,8 @@ struct result
 class server_test : public ::testing::Test
 {
 protected:
+	std::shared_ptr<server::server> database_server;
+
 	std::thread thread;
 
 	boost::asio::ip::port_type port;
@@ -40,15 +42,19 @@ protected:
 	void SetUp()
 	{
 		std::filesystem::remove_all("/tmp/asyncdb/");
-		auto server = std::make_shared<server::server>(0, 2);
-		port = server->port();
+		database_server = std::make_shared<server::server>(0, 2);
+		port = database_server->port();
 
-		thread = std::thread([server]() { server->serve(); });
+		thread = std::thread([server = database_server]() { server->serve(); });
 	}
 
+	// A detached thread would serve for ever, and the server it holds, its threads and its
+	// database with it, so serving is stopped and waited for instead.
 	void TearDown()
 	{
-		thread.detach();
+		database_server->close();
+		thread.join();
+		database_server = nullptr;
 	}
 
 	result request(const std::string &method, const std::string &path, const std::string &body)

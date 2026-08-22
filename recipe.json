@@ -36,6 +36,13 @@
 					{
 						"options": "--enable=style"
 					}
+			},
+			{
+				"name": "valgrind",
+				"phase": "verify",
+				"config":
+					{
+					}
 			}
 		],
 	"define":

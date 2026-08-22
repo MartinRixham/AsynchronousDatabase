@@ -54,6 +54,13 @@ void server::server::serve()
 	}
 
 	io_context.run();
+
+	// Serving ends when the acceptor is closed, and a thread that is still joinable when its
+	// vector goes would terminate the process, so the others are waited for here.
+	for (std::thread &thread : threads)
+	{
+		thread.join();
+	}
 }
 
 void server::server::on_accept(boost::beast::error_code error, boost::asio::ip::tcp::socket socket)
@@ -61,6 +68,14 @@ void server::server::on_accept(boost::beast::error_code error, boost::asio::ip::
 	if (error)
 	{
 		DEBUG("Error reading from socket: " + error.message());
+
+		// Closing the acceptor is how serving is stopped. Accepting again would spin on the same
+		// error, and an accept that is always pending holds a reference to the server, so neither
+		// it nor anything it owns would ever be destroyed.
+		if (!acceptor.is_open())
+		{
+			return;
+		}
 	}
 	else
 	{
@@ -84,5 +99,7 @@ void server::server::accept()
 
 void server::server::close()
 {
-	acceptor.close();
+	// The acceptor belongs to a strand, so it is closed on that strand rather than on whichever
+	// thread asked for it.
+	boost::asio::dispatch(acceptor.get_executor(), [this]() { acceptor.close(); });
 }
