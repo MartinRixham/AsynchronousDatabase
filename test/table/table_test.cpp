@@ -12,7 +12,8 @@ TEST(table_test, deserialise_and_serialise)
 
 	boost::json::object json { { "dependencies", dependencies } };
 
-	table::table table = table::parse_table("a_table", json, std::set<std::string> { "dependency_one", "dependency_two" });
+	table::table table =
+		table::parse_table("a_table", json, std::set<std::string> { "dependency_one", "dependency_two" });
 
 	EXPECT_TRUE(table.is_valid);
 	EXPECT_EQ(
@@ -80,6 +81,7 @@ TEST(table_test, fail_to_deserialise_table_whose_dependencies_are_not_a_list)
 TEST(table_test, valid_names)
 {
 	EXPECT_TRUE(table::is_valid_name("a"));
+	EXPECT_TRUE(table::is_valid_name("a table"));
 	EXPECT_TRUE(table::is_valid_name("account"));
 	EXPECT_TRUE(table::is_valid_name("account_2019-1"));
 	EXPECT_TRUE(table::is_valid_name(std::string(table::max_name_size, 'a')));
@@ -89,7 +91,6 @@ TEST(table_test, invalid_names)
 {
 	EXPECT_FALSE(table::is_valid_name(""));
 	EXPECT_FALSE(table::is_valid_name("Account"));
-	EXPECT_FALSE(table::is_valid_name("a table"));
 	EXPECT_FALSE(table::is_valid_name("account."));
 	EXPECT_FALSE(table::is_valid_name(std::string(table::max_name_size + 1, 'a')));
 

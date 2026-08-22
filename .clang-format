@@ -34,7 +34,13 @@ SpaceBeforeCtorInitializerColon: false
 AlignAfterOpenBracket: AlwaysBreak
 BinPackParameters: false
 BinPackArguments: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowAllArgumentsOnNextLine: false
 PenaltyReturnTypeOnItsOwnLine: 10000
+
+BreakBinaryOperations: RespectPrecedence
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: false
 
 SortIncludes: false
 IncludeBlocks: Preserve

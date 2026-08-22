@@ -19,7 +19,10 @@ table::table table::parse_table(
 	{
 		return invalid_table(
 			"invalid_table_name",
-			"Table name \"" + name + "\" is not 1 to " + std::to_string(max_name_size) +
+			"Table name \"" +
+				name +
+				"\" is not 1 to " +
+				std::to_string(max_name_size) +
 				" characters of [a-z0-9_-], or is reserved.");
 	}
 
@@ -101,6 +104,7 @@ bool table::is_valid_name(const std::string &name)
 
 		if (!(character >= 'a' && character <= 'z') &&
 			!(character >= '0' && character <= '9') &&
+			character != ' ' &&
 			character != '_' &&
 			character != '-')
 		{

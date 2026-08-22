@@ -108,6 +108,7 @@ button
 	border: 1px solid var(--rule);
 	border-left: 3px solid var(--accent);
 	border-radius: 3px;
+	margin-top: 20px;
 	margin-bottom: 20px;
 }
 

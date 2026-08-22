@@ -151,7 +151,7 @@ TEST(router_test, fail_to_create_a_table_with_an_invalid_name)
 	repository::fake_repository repository;
 	router::router router(repository);
 
-	router::response response = router.route(put("/table/An%20Account", "{}"));
+	router::response response = router.route(put("/table/An%2FAccount", "{}"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
 	EXPECT_EQ(error_code(response), "invalid_table_name");
