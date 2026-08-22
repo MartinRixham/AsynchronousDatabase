@@ -1,57 +1,50 @@
-#include <set>
-#include <regex>
 #include <string>
 
 #include <boost/json.hpp>
 #include <boost/beast.hpp>
 
+#include "record/record.h"
+#include "scan/scan.h"
 #include "router.h"
 
 namespace
 {
-	router::response post_table_response(const table::table &table)
+	router::response not_found(const std::string &what)
 	{
-		if (table.is_valid)
-		{
-			return { boost::beast::http::status::ok, boost::json::object() };
-		}
-		else
-		{
-			return { boost::beast::http::status::bad_request, table.json };
-		}
+		return router::error_response("not_found", "No " + what + ".");
 	}
 
-	router::response invalid_route_response(const std::string &route)
+	router::response table_not_found(const std::string &name)
 	{
-		boost::json::object json { { "error", "Request to invalid route " + route + "." } };
-
-		return { boost::beast::http::status::bad_request, json };
+		return router::error_response("table_not_found", "No table named \"" + name + "\".");
 	}
 
-	router::response valid_get_response(const boost::json::object &json)
+	router::response method_not_allowed(const boost::beast::http::verb &method)
 	{
-		return { boost::beast::http::status::ok, json };
+		return router::error_response(
+			"method_not_allowed", std::string(boost::beast::http::to_string(method)) + " is not allowed here.");
 	}
 
-	std::string read_parameter(const std::string &parameters, const std::string &name)
+	boost::json::object parse_body(const std::string &body)
 	{
-		std::stringstream in(parameters);
-
-		std::string key;
-		std::string value;
-
-		for (int i = 0; i < 16; i++)
+		if (body.empty())
 		{
-			std::getline(in, key, '=');
-			std::getline(in, value, '&');
-
-			if (key == name)
-			{
-				return value;
-			}
+			return boost::json::object();
 		}
 
-		return "";
+		return boost::json::parse(body).as_object();
+	}
+
+	boost::json::object to_json(const record::record &record, bool values)
+	{
+		boost::json::object json { { "key", boost::json::string(record.key) } };
+
+		if (values)
+		{
+			json["value"] = boost::json::string(record.value);
+		}
+
+		return json;
 	}
 }
 
@@ -60,60 +53,269 @@ router::router::router(repository::repository &repo):
 {
 }
 
-router::response router::router::get(const std::string &route) const
+router::response router::router::route(const request &request)
 {
-	std::smatch matches;
+	const std::vector<std::string> &path = request.path;
 
-	if (std::regex_search(route, matches, std::regex("^/table[$?](.*)")))
+	if (path.size() == 1 && path[0] == "health")
 	{
-		std::string name = read_parameter(matches[1], "name");
-		table::table table = repository.read_table(name);
-
-		if (table.is_valid)
+		if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
 		{
-			return { boost::beast::http::status::ok, table.json };
-		}
-		else
-		{
-			return { boost::beast::http::status::not_found, boost::json::object() };
-		}
-	}
-	else if (route == "/tables")
-	{
-		const std::set<table::table> tables = repository.list_tables();
-		boost::json::array tables_json;
-
-		for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
-		{
-			tables_json.push_back(it->json);
+			return method_not_allowed(request.method);
 		}
 
-		boost::json::object body { { "tables", tables_json } };
+		boost::json::object health { { "status", "ok" }, { "write_stalled", repository.is_write_stalled() } };
 
-		return valid_get_response(body);
+		return json_response(boost::beast::http::status::ok, health);
 	}
 
-	return invalid_route_response(route);
+	if (path.empty() || path[0] != "table")
+	{
+		return not_found("route for this path");
+	}
+
+	if (path.size() == 1)
+	{
+		return route_tables(request);
+	}
+
+	if (path.size() == 2)
+	{
+		return route_table(request, path[1]);
+	}
+
+	if (path[2] != "key")
+	{
+		return not_found("route for this path");
+	}
+
+	if (path.size() == 3)
+	{
+		return route_range(request, path[1]);
+	}
+
+	if (path.size() == 4)
+	{
+		return route_record(request, path[1], path[3]);
+	}
+
+	return not_found("route for this path");
 }
 
-router::response router::router::post(const std::string &route, const boost::json::object &body)
+router::response router::router::route_tables(const request &request)
 {
-	if (route == "/table")
+	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
 	{
-		const std::set<table::table> table_set = repository.list_tables();
-		std::set<std::string> tables;
-
-		for (std::set<table::table>::const_iterator it = table_set.begin(); it != table_set.end(); ++it)
-		{
-			tables.insert(it->name);
-		}
-
-		table::table table = table::parse_table(body, tables);
-
-		repository.create_table(table);
-
-		return post_table_response(table);
+		return method_not_allowed(request.method);
 	}
 
-	return invalid_route_response(route);
+	const std::set<table::table> tables = repository.list_tables();
+	boost::json::array tables_json;
+
+	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
+	{
+		tables_json.push_back(it->json);
+	}
+
+	// Instances hold dozens of tables, so the list is not paged.
+	return json_response(boost::beast::http::status::ok, boost::json::object { { "tables", tables_json } });
+}
+
+router::response router::router::route_table(const request &request, const std::string &name)
+{
+	if (request.method == boost::beast::http::verb::put)
+	{
+		return create_table(name, request.body);
+	}
+
+	if (request.method == boost::beast::http::verb::delete_)
+	{
+		if (!repository.has_table(name))
+		{
+			return table_not_found(name);
+		}
+
+		repository.delete_table(name);
+
+		return empty_response(boost::beast::http::status::no_content);
+	}
+
+	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
+	{
+		return method_not_allowed(request.method);
+	}
+
+	table::table table = repository.read_table(name);
+
+	if (!table.is_valid)
+	{
+		return table_not_found(name);
+	}
+
+	return json_response(boost::beast::http::status::ok, table.json);
+}
+
+router::response router::router::route_range(const request &request, const std::string &name)
+{
+	if (request.method == boost::beast::http::verb::delete_)
+	{
+		return delete_records(name, request.query);
+	}
+
+	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
+	{
+		return method_not_allowed(request.method);
+	}
+
+	return scan_records(name, request.query);
+}
+
+router::response router::router::route_record(
+	const request &request,
+	const std::string &name,
+	const std::string &key)
+{
+	record::record record = request.method == boost::beast::http::verb::put
+		? record::parse_record(key, request.body)
+		: record::parse_key(key);
+
+	if (!record.is_valid)
+	{
+		return error_response(record.code, record.message);
+	}
+
+	if (!repository.has_table(name))
+	{
+		return table_not_found(name);
+	}
+
+	if (request.method == boost::beast::http::verb::put)
+	{
+		repository.write_record(name, record);
+
+		return empty_response(boost::beast::http::status::no_content);
+	}
+
+	// Deleting a key that is not there is a no op in RocksDB, and reporting 404 would mean a read
+	// before every delete.
+	if (request.method == boost::beast::http::verb::delete_)
+	{
+		repository.delete_record(name, key);
+
+		return empty_response(boost::beast::http::status::no_content);
+	}
+
+	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
+	{
+		return method_not_allowed(request.method);
+	}
+
+	std::optional<std::string> value = repository.read_record(name, key);
+
+	if (!value)
+	{
+		return empty_response(boost::beast::http::status::not_found);
+	}
+
+	return text_response(boost::beast::http::status::ok, *value);
+}
+
+router::response router::router::create_table(const std::string &name, const std::string &body)
+{
+	table::table table = table::parse_table(name, parse_body(body), table_names());
+
+	if (!table.is_valid)
+	{
+		return error_response(table.code, table.message);
+	}
+
+	table::table existing = repository.read_table(name);
+
+	// Creating a table is safe to run at every start up, which is how a service should declare the
+	// tables it needs, so the same options again are not a conflict.
+	if (existing.is_valid)
+	{
+		if (existing == table)
+		{
+			return json_response(boost::beast::http::status::ok, table.json);
+		}
+
+		return error_response("table_exists", "A table named \"" + name + "\" exists with different options.");
+	}
+
+	repository.create_table(table);
+
+	return json_response(boost::beast::http::status::created, table.json);
+}
+
+router::response router::router::scan_records(const std::string &name, const std::string &query)
+{
+	if (!repository.has_table(name))
+	{
+		return table_not_found(name);
+	}
+
+	scan::range range = scan::parse_range(query, repository.instance());
+
+	if (!range.is_valid)
+	{
+		return error_response(range.code, range.message);
+	}
+
+	scan::page page = repository.scan_records(name, range);
+	boost::json::array records;
+
+	for (size_t i = 0; i < page.records.size(); i++)
+	{
+		records.push_back(to_json(page.records[i], range.values));
+	}
+
+	boost::json::object body { { "records", records } };
+
+	// The absence of a cursor means the range is exhausted.
+	if (page.has_more)
+	{
+		body["next"] = scan::encode_cursor(page.records.back().key, repository.instance());
+	}
+
+	return json_response(boost::beast::http::status::ok, body);
+}
+
+router::response router::router::delete_records(const std::string &name, const std::string &query)
+{
+	if (!repository.has_table(name))
+	{
+		return table_not_found(name);
+	}
+
+	scan::range range = scan::parse_range(query, repository.instance());
+
+	if (!range.is_valid)
+	{
+		return error_response(range.code, range.message);
+	}
+
+	// Deleting every record in a table is deleting the table and creating it again, which drops
+	// the column family instead of leaving a tombstone over everything.
+	if (!range.has_from && !range.has_to)
+	{
+		return error_response("invalid_range", "A range delete has to name a range.");
+	}
+
+	repository.delete_records(name, range);
+
+	return empty_response(boost::beast::http::status::no_content);
+}
+
+std::set<std::string> router::router::table_names() const
+{
+	const std::set<table::table> tables = repository.list_tables();
+	std::set<std::string> names;
+
+	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
+	{
+		names.insert(it->name);
+	}
+
+	return names;
 }

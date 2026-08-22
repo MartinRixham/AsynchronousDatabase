@@ -59,7 +59,7 @@ describe("new table", () => {
 
 		const client = new DatabaseClient();
 
-		client.postTable("\name\":\"my dependency\"")
+		client.putTable("\name\":\"my dependency\"")
 
 		const newTable = new NewTable(() => {}, () => [], client, () => {});
 
@@ -73,7 +73,7 @@ describe("new table", () => {
 
 		const client = new DatabaseClient();
 
-		client.postTable("\name\":\"my dependency\"")
+		client.putTable("\name\":\"my dependency\"")
 
 		const newTable = new NewTable(() => {}, () => ["my dependency"], client, () => {});
 

@@ -1,24 +1,33 @@
 export default class DatabaseClient {
 
-	async postTable(table) {
+	async putTable(table) {
 
-		return fetch("asyncdb/table",
+		// Through JSON, so that a table built by the page is sent as the name and the dependencies
+		// the API takes and nothing else.
+		const { name, dependencies } = JSON.parse(JSON.stringify(table))
+
+		const response = await fetch("asyncdb/table/" + encodeURIComponent(name),
 			{
-				method: "POST",
-				body: JSON.stringify(table)
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ dependencies: dependencies })
 			})
-			.then(response => response.json())
+
+		const body = await response.json()
+
+		// An error is { error: { code, message } }, and the page shows the message.
+		return body.error ? { error: body.error.message } : body
 	}
 
 	async getTable(name) {
 
-		return fetch("asyncdb/table?name=" + name)
+		return fetch("asyncdb/table/" + encodeURIComponent(name))
 			.then(response => response.json())
 	}
 
 	async getTables() {
 
-		return fetch("asyncdb/tables")
+		return fetch("asyncdb/table")
 			.then(response => response.json())
 	}
 }

@@ -1,10 +1,11 @@
+#include <algorithm>
 #include <utility>
 #include <string>
 
 #include <boost/beast/version.hpp>
-#include <curl/curl.h>
 
 #include "log.h"
+#include "url/url.h"
 #include "session.h"
 
 namespace
@@ -13,49 +14,51 @@ namespace
 		unsigned version,
 		bool keep_alive,
 		const boost::beast::http::status &status,
-		const std::string &body)
+		const std::string &content_type,
+		const std::string &body,
+		bool head)
 	{
 		boost::beast::http::response<boost::beast::http::string_body> response {
 			status,
 			version,
-			body
+			head ? "" : body
 		};
 
 		response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
-		response.set(boost::beast::http::field::content_type, "application/json");
+
+		if (!content_type.empty())
+		{
+			response.set(boost::beast::http::field::content_type, content_type);
+		}
+
 		response.keep_alive(keep_alive);
-		response.content_length(body.size());
 		response.prepare_payload();
+
+		// HEAD answers the same headers with no body, and the length is the cheap way to ask how
+		// large a value is.
+		if (head && !body.empty())
+		{
+			response.set(boost::beast::http::field::content_length, std::to_string(body.size()));
+		}
 
 		return response;
 	}
 
-	boost::beast::http::response<boost::beast::http::string_body> bad_request(
-		const boost::beast::http::request<boost::beast::http::string_body> &request,
-		const std::string &why)
+	bool is_routable_method(const boost::beast::http::verb &method)
 	{
-		std::string body = boost::json::serialize(boost::json::object { { "error", why } });
-
-		return make_response(request.version(), request.keep_alive(), boost::beast::http::status::bad_request, body);
+		return method == boost::beast::http::verb::get ||
+			method == boost::beast::http::verb::head ||
+			method == boost::beast::http::verb::put ||
+			method == boost::beast::http::verb::delete_;
 	}
 
-	boost::beast::http::response<boost::beast::http::string_body> server_error(
-		const boost::beast::http::request<boost::beast::http::string_body> &request,
-		const std::string &why)
+	// Only a segment that is entirely ".." is a traversal. A key that happens to contain dots is
+	// a key like any other, and travels percent encoded.
+	bool has_traversal(const std::string &target)
 	{
-		std::string body = boost::json::serialize(boost::json::object { { "error", "Failed to respond due to error: " + why + "." } });
+		std::vector<std::string> path = url::split_path(target.substr(0, target.find('?')));
 
-		return make_response(request.version(), request.keep_alive(), boost::beast::http::status::internal_server_error, body);
-	}
-
-	std::string decode_url(const std::string &url)
-	{
-		char *decoded = curl_unescape(url.c_str(), 0);
-		std::string out = decoded;
-
-		curl_free(decoded);
-
-		return out;
+		return std::any_of(path.begin(), path.end(), [](const std::string &segment) { return segment == ".."; });
 	}
 }
 
@@ -129,44 +132,50 @@ void server::session::read()
 
 boost::beast::http::response<boost::beast::http::string_body> server::session::handle_request() const
 {
-	if (request.method() != boost::beast::http::verb::get &&
-		request.method() != boost::beast::http::verb::post &&
-		request.method() != boost::beast::http::verb::head)
-	{
-		return bad_request(request, "Unknown HTTP method.");
-	}
-
-	// Request path must be absolute and not contain "..".
-	if (request.target().empty() ||
-		request.target()[0] != '/' ||
-		request.target().find("..") != boost::beast::string_view::npos)
-	{
-		return bad_request(request, "Invalid request path.");
-	}
-
+	bool head = request.method() == boost::beast::http::verb::head;
+	std::string target(request.target());
 	router::response response;
-	std::string url = decode_url(std::string(request.target()));
 
-	try
+	if (!is_routable_method(request.method()))
 	{
-		if (request.method() == boost::beast::http::verb::post)
+		response = router::error_response(
+			"method_not_allowed", std::string(request.method_string()) + " is not a method of this API.");
+	}
+	else if (target.empty() || target[0] != '/' || has_traversal(target))
+	{
+		response = router::error_response("invalid_path", "Invalid request path.");
+	}
+	else
+	{
+		router::request routed {
+			request.method(),
+			url::split_path(target),
+			url::query_string(target),
+			request.body()
+		};
+
+		try
 		{
-			response = router.post(url, boost::json::parse(request.body()).as_object());
+			response = router.route(routed);
 		}
-		else
+		catch (const repository::storage_error &error)
 		{
-			response = router.get(url);
+			response = router::error_response(error.code(), error.what());
+		}
+		catch (const std::exception &error)
+		{
+			response = router::error_response(
+				"storage_error", "Failed to respond due to error: " + std::string(error.what()) + ".");
 		}
 	}
-	catch (const std::exception &error)
-	{
-		return server_error(request, std::string(error.what()));
-	}
 
-	std::string body = boost::json::serialize(response.body);
-	boost::beast::http::status status = response.status;
-
-	return make_response(request.version(), request.keep_alive(), status, body);
+	return make_response(
+		request.version(),
+		request.keep_alive(),
+		response.status,
+		response.content_type,
+		router::response_body(response),
+		head);
 }
 
 void server::session::close()

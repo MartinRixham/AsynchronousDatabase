@@ -9,8 +9,8 @@ describe("app", () => {
 		const client = new DatabaseClient();
 		const app = new App(client, () => {});
 
-		client.postTable({ name: "first table", dependencies: [] });
-		client.postTable({ name: "second table", dependencies: ["first table"] });
+		client.putTable({ name: "first table", dependencies: [] });
+		client.putTable({ name: "second table", dependencies: ["first table"] });
 
 		app.onBind();
 		app.currentPage.onBind(document.createElement("DIV"));
@@ -33,8 +33,8 @@ describe("app", () => {
 		const client = new DatabaseClient();
 		const app = new App(client, () => {});
 
-		client.postTable({ name: "first table", dependencies: [] });
-		client.postTable({ name: "second table", dependencies: ["first table"] });
+		client.putTable({ name: "first table", dependencies: [] });
+		client.putTable({ name: "second table", dependencies: ["first table"] });
 
 		app.onBind();
 		app.currentPage.onBind(document.createElement("DIV"));

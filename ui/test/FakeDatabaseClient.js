@@ -2,7 +2,7 @@ export default class {
 
 	#tables = [];
 
-	postTable(table) {
+	putTable(table) {
 
 		if (this.#tables.some(t => t.name == table.name)) {
 

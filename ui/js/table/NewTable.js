@@ -78,7 +78,7 @@ export default class NewTable {
 
 			if (this.#isValid()) {
 
-				const result = await this.#client.postTable(this);
+				const result = await this.#client.putTable(this);
 
 				if (result && result.error) {
 

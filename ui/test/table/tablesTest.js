@@ -8,8 +8,8 @@ describe("tables", () => {
 
 		const client = new DatabaseClient();
 
-		client.postTable({ name: "first table", dependencies: [] });
-		client.postTable({ name: "second table", dependencies: ["first table"] });
+		client.putTable({ name: "first table", dependencies: [] });
+		client.putTable({ name: "second table", dependencies: ["first table"] });
 
 		const tables = new Tables(() => {}, client);
 
@@ -48,9 +48,9 @@ describe("tables", () => {
 
 		const client = new DatabaseClient();
 
-		client.postTable({ name: "third table", dependencies: ["second table"] });
-		client.postTable({ name: "second table", dependencies: ["first table"] });
-		client.postTable({ name: "first table", dependencies: [] });
+		client.putTable({ name: "third table", dependencies: ["second table"] });
+		client.putTable({ name: "second table", dependencies: ["first table"] });
+		client.putTable({ name: "first table", dependencies: [] });
 
 		const tables = new Tables(() => {}, client);
 
@@ -67,9 +67,9 @@ describe("tables", () => {
 
 		const client = new DatabaseClient();
 
-		client.postTable({ name: "third table", dependencies: ["first table"] });
-		client.postTable({ name: "first table", dependencies: [] });
-		client.postTable({ name: "second table", dependencies: ["first table"] });
+		client.putTable({ name: "third table", dependencies: ["first table"] });
+		client.putTable({ name: "first table", dependencies: [] });
+		client.putTable({ name: "second table", dependencies: ["first table"] });
 
 		const tables = new Tables(() => {}, client);
 
@@ -86,8 +86,8 @@ describe("tables", () => {
 
 		const client = new DatabaseClient();
 
-		client.postTable({ name: "first table", dependencies: [] });
-		client.postTable({ name: "second table", dependencies: [] });
+		client.putTable({ name: "first table", dependencies: [] });
+		client.putTable({ name: "second table", dependencies: [] });
 
 		const tables = new Tables(() => {}, client);
 
@@ -103,10 +103,10 @@ describe("tables", () => {
 
 		const client = new DatabaseClient();
 
-		client.postTable({ name: "first table", dependencies: [] });
-		client.postTable({ name: "second table", dependencies: [] });
-		client.postTable({ name: "third table", dependencies: ["first table"] });
-		client.postTable({ name: "fourth table", dependencies: ["second table"] });
+		client.putTable({ name: "first table", dependencies: [] });
+		client.putTable({ name: "second table", dependencies: [] });
+		client.putTable({ name: "third table", dependencies: ["first table"] });
+		client.putTable({ name: "fourth table", dependencies: ["second table"] });
 
 		const tables = new Tables(() => {}, client);
 
@@ -124,10 +124,10 @@ describe("tables", () => {
 
 		const client = new DatabaseClient();
 
-		client.postTable({ name: "first table", dependencies: [] });
-		client.postTable({ name: "second table", dependencies: [] });
-		client.postTable({ name: "third table", dependencies: ["second table"] });
-		client.postTable({ name: "fourth table", dependencies: ["first table"] });
+		client.putTable({ name: "first table", dependencies: [] });
+		client.putTable({ name: "second table", dependencies: [] });
+		client.putTable({ name: "third table", dependencies: ["second table"] });
+		client.putTable({ name: "fourth table", dependencies: ["first table"] });
 
 		const tables = new Tables(() => {}, client);
 
@@ -145,9 +145,9 @@ describe("tables", () => {
 
 		const client = new DatabaseClient();
 
-		client.postTable({ name: "first table", dependencies: [] });
-		client.postTable({ name: "second table", dependencies: ["first table"] });
-		client.postTable({ name: "third table", dependencies: ["first table", "second table"] });
+		client.putTable({ name: "first table", dependencies: [] });
+		client.putTable({ name: "second table", dependencies: ["first table"] });
+		client.putTable({ name: "third table", dependencies: ["first table", "second table"] });
 
 		const tables = new Tables(() => {}, client);
 
