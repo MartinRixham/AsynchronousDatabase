@@ -103,6 +103,7 @@ bool table::is_valid_name(const std::string &name)
 		char character = name[i];
 
 		if (!(character >= 'a' && character <= 'z') &&
+			!(character >= 'A' && character <= 'Z') &&
 			!(character >= '0' && character <= '9') &&
 			character != ' ' &&
 			character != '_' &&

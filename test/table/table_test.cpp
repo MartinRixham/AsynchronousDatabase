@@ -83,6 +83,7 @@ TEST(table_test, valid_names)
 	EXPECT_TRUE(table::is_valid_name("a"));
 	EXPECT_TRUE(table::is_valid_name("a table"));
 	EXPECT_TRUE(table::is_valid_name("account"));
+	EXPECT_TRUE(table::is_valid_name("Account"));
 	EXPECT_TRUE(table::is_valid_name("account_2019-1"));
 	EXPECT_TRUE(table::is_valid_name(std::string(table::max_name_size, 'a')));
 }
@@ -90,7 +91,6 @@ TEST(table_test, valid_names)
 TEST(table_test, invalid_names)
 {
 	EXPECT_FALSE(table::is_valid_name(""));
-	EXPECT_FALSE(table::is_valid_name("Account"));
 	EXPECT_FALSE(table::is_valid_name("account."));
 	EXPECT_FALSE(table::is_valid_name(std::string(table::max_name_size + 1, 'a')));
 

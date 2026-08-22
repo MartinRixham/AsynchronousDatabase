@@ -109,8 +109,7 @@ protected:
 
 	std::string error_code(const result &result)
 	{
-		return std::string(
-			boost::json::parse(result.body).as_object().at("error").as_object().at("code").as_string());
+		return std::string(boost::json::parse(result.body).as_object().at("error").as_object().at("code").as_string());
 	}
 };
 
@@ -144,7 +143,7 @@ TEST_F(server_test, put_request)
 
 TEST_F(server_test, put_request_with_an_invalid_name)
 {
-	result response = request("PUT", "/table/An%20Account", "{}");
+	result response = request("PUT", "/table/An%2FAccount", "{}");
 
 	EXPECT_EQ(response.status, CURLE_OK);
 	EXPECT_EQ(response.code, 400);
