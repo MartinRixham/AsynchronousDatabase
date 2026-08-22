@@ -41,8 +41,10 @@ resource, and calling an array `record` would say the wrong thing about what is
 inside it.
 
 Read the pages in that order: [tables](/database/tables),
-[records](/database/records), [scans](/database/scans), and the
-[reference](/database/reference) for status codes, error codes and limits.
+[records](/database/records), [scans](/database/scans),
+[the cluster](/database/cluster) for what changes when there are several
+instances, and the [reference](/database/reference) for status codes, error
+codes and limits.
 
 ## Tables are column families
 

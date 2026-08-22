@@ -24,6 +24,7 @@ export default defineConfig({
 					{ text: "Tables", link: "/database/tables" },
 					{ text: "Records", link: "/database/records" },
 					{ text: "Scans", link: "/database/scans" },
+					{ text: "The cluster", link: "/database/cluster" },
 					{ text: "Reference", link: "/database/reference" }
 				]
 			}

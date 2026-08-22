@@ -62,9 +62,13 @@ namespace
 	}
 }
 
-server::session::session(boost::asio::ip::tcp::socket&& socket, router::router &router):
-	stream(std::move(socket)),
-	router(router)
+server::session::session(
+	boost::asio::ip::tcp::socket&& socket,
+	router::router &router,
+	const std::atomic<bool> &stopping):
+		stream(std::move(socket)),
+		router(router),
+		stopping(stopping)
 {
 	DEBUG("Session started.");
 }
@@ -74,8 +78,26 @@ void server::session::run()
 	read();
 }
 
+void server::session::stop()
+{
+	// The stream belongs to the connection's own executor, so it is asked there rather than on
+	// whichever thread is shutting the server down.
+	boost::asio::dispatch(
+		stream.get_executor(),
+		[self = shared_from_this()]()
+		{
+			if (self->waiting)
+			{
+				// The pending read ends in an error, which is the path that closes a session.
+				self->stream.cancel();
+			}
+		});
+}
+
 void server::session::on_read(boost::beast::error_code error, std::size_t)
 {
+	waiting = false;
+
 	if (error)
 	{
 		DEBUG("Closing connection: " + error.message());
@@ -105,7 +127,7 @@ void server::session::on_write(bool keep_alive, boost::beast::error_code error, 
 
 		close();
 	}
-	else if (keep_alive)
+	else if (keep_alive && !stopping)
 	{
 		http_response = nullptr;
 
@@ -122,6 +144,8 @@ void server::session::read()
 	request = {};
 
 	stream.expires_after(std::chrono::seconds(60));
+
+	waiting = true;
 
 	boost::beast::http::async_read(
 		stream,
@@ -151,7 +175,8 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 			request.method(),
 			url::split_path(target),
 			url::query_string(target),
-			request.body()
+			request.body(),
+			!request[cluster::forwarded_header].empty()
 		};
 
 		try
@@ -169,9 +194,11 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 		}
 	}
 
+	// A connection is not kept alive into a shutdown: the client is told to close, and finds
+	// another node or comes back to this one.
 	return make_response(
 		request.version(),
-		request.keep_alive(),
+		request.keep_alive() && !stopping,
 		response.status,
 		response.content_type,
 		router::response_body(response),

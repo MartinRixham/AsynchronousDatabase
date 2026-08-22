@@ -1,10 +1,36 @@
-version: '3'
 services:
-  asyncdb:
+  asyncdb-1:
     build: .
-    container_name: asyncdb
+    container_name: asyncdb-1
+    environment:
+      # Where etcd answers, and this node as the other nodes reach it. Nodes talk to the API port
+      # directly rather than through the nginx the browser uses.
+      - ASYNCDB_ETCD=http://etcd:2379
+      - ASYNCDB_NODE=http://asyncdb-1:8080
     ports:
       - 8080:80
+    depends_on:
+      - etcd
+  asyncdb-2:
+    build: .
+    container_name: asyncdb-2
+    environment:
+      - ASYNCDB_ETCD=http://etcd:2379
+      - ASYNCDB_NODE=http://asyncdb-2:8080
+    ports:
+      - 8081:80
+    depends_on:
+      - etcd
+  asyncdb-3:
+    build: .
+    container_name: asyncdb-3
+    environment:
+      - ASYNCDB_ETCD=http://etcd:2379
+      - ASYNCDB_NODE=http://asyncdb-3:8080
+    ports:
+      - 8082:80
+    depends_on:
+      - etcd
   etcd:
     image: quay.io/coreos/etcd:v3.5.9
     container_name: etcd

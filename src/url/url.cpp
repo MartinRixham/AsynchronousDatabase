@@ -4,6 +4,18 @@
 
 #include "url.h"
 
+// A path segment or a query value is escaped whole, so that a slash, a question mark or a zero
+// byte inside a key travels as text rather than as punctuation of the URL.
+std::string url::encode(const std::string &text)
+{
+	char *encoded = curl_easy_escape(NULL, text.c_str(), static_cast<int>(text.size()));
+	std::string out(encoded);
+
+	curl_free(encoded);
+
+	return out;
+}
+
 std::string url::decode(const std::string &encoded)
 {
 	int length = 0;

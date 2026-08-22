@@ -4,6 +4,8 @@
 #include <boost/beast.hpp>
 #include <boost/json.hpp>
 
+#include "base64/base64.h"
+#include "cluster/fake_cluster.h"
 #include "repository/fake_repository.h"
 #include "router/router.h"
 #include "url/url.h"
@@ -563,4 +565,445 @@ TEST(router_test, a_path_below_a_key_is_not_a_route)
 
 	EXPECT_EQ(router.route(get("/table/account/key/4821/name")).status, boost::beast::http::status::not_found);
 	EXPECT_EQ(router.route(get("/table/account/wibble")).status, boost::beast::http::status::not_found);
+}
+
+namespace
+{
+	const std::string here = "http://asyncdb-1:8080";
+
+	const std::string there = "http://asyncdb-2:8080";
+
+	cluster::fake_cluster two_nodes()
+	{
+		return cluster::fake_cluster(here, { here, there });
+	}
+
+	router::response page(const boost::json::array &records, bool has_more)
+	{
+		boost::json::object body { { "records", records } };
+
+		if (has_more)
+		{
+			body["next"] = "a cursor of the other node's";
+		}
+
+		return router::json_response(boost::beast::http::status::ok, body);
+	}
+
+	boost::json::object record_json(const std::string &key, const std::string &value)
+	{
+		return boost::json::object { { "key", key }, { "value", value } };
+	}
+
+	std::string cursor_key(const router::response &response)
+	{
+		std::string decoded;
+
+		base64::decode(std::string(response.json.at("next").as_string()), &decoded);
+
+		return std::string(boost::json::parse(decoded).as_object().at("k").as_string());
+	}
+}
+
+TEST(router_cluster_test, read_a_record_from_the_node_that_owns_the_key)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.owns("4821", there);
+	nodes.answer(there, router::text_response(boost::beast::http::status::ok, "a value"));
+
+	router::response response = router.route(get("/table/account/key/4821"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.text, "a value");
+
+	// The request travels as it stands, so the node that owns the key answers the same question.
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, there);
+	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::get);
+	EXPECT_EQ(nodes.sent()[0].second.path, (std::vector<std::string> { "table", "account", "key", "4821" }));
+}
+
+TEST(router_cluster_test, read_a_record_this_node_owns_without_a_hop)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "4821", "a value");
+	nodes.forget();
+
+	router::response response = router.route(get("/table/account/key/4821"));
+
+	EXPECT_EQ(response.text, "a value");
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
+TEST(router_cluster_test, write_a_record_to_the_node_that_owns_the_key)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.owns("4821", there);
+
+	router::response response = router.route(put("/table/account/key/4821", "a value"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].second.body, "a value");
+	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
+}
+
+TEST(router_cluster_test, delete_a_record_on_the_node_that_owns_the_key)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.owns("4821", there);
+
+	router::response response = router.route(del("/table/account/key/4821"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
+}
+
+// The node that was sent the request is the node that answers it, whatever it makes of the
+// membership, so two nodes that disagree for a moment cannot bounce a request between them.
+TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.owns("4821", there);
+
+	router::request forwarded = put("/table/account/key/4821", "a value");
+
+	forwarded.forwarded = true;
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+}
+
+TEST(router_cluster_test, fail_to_write_to_a_table_that_is_not_there_without_a_hop)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.owns("4821", there);
+
+	router::response response = router.route(put("/table/account/key/4821", "a value"));
+
+	EXPECT_EQ(error_code(response), "table_not_found");
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
+TEST(router_cluster_test, create_a_table_on_every_node)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	router::response response = router.route(put("/table/account", "{}"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::created);
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, there);
+	EXPECT_EQ(nodes.sent()[0].second.path, (std::vector<std::string> { "table", "account" }));
+	EXPECT_EQ(nodes.sent()[0].second.body, "{}");
+}
+
+TEST(router_cluster_test, fail_to_create_a_table_a_node_refuses)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.answer(there, router::error_response("table_exists", "A table named \"account\" exists."));
+
+	router::response response = router.route(put("/table/account", "{}"));
+
+	EXPECT_EQ(error_code(response), "table_exists");
+}
+
+TEST(router_cluster_test, create_a_forwarded_table_without_passing_it_on)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	router::request forwarded = put("/table/account", "{}");
+
+	forwarded.forwarded = true;
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::created);
+	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(repository.has_table("account"));
+}
+
+TEST(router_cluster_test, delete_a_table_on_every_node)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+
+	router::response response = router.route(del("/table/account"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
+}
+
+// A node that never had the table has nothing to say about a deletion the rest of the cluster is
+// carrying out, so it agrees rather than answering that it is not there.
+TEST(router_cluster_test, agree_to_a_forwarded_deletion_of_a_table_that_is_not_there)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	router::request forwarded = del("/table/account");
+
+	forwarded.forwarded = true;
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router.route(del("/table/account")).status, boost::beast::http::status::not_found);
+}
+
+TEST(router_cluster_test, scan_every_node_and_answer_in_key_order)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	write_record(router, "account", "c", "3");
+	write_record(router, "account", "e", "5");
+	nodes.forget();
+	nodes.answer(there, page(boost::json::array { record_json("b", "2"), record_json("d", "4") }, false));
+
+	router::response response = router.route(get("/table/account/key"));
+
+	EXPECT_EQ(keys(response), (std::vector<std::string> { "a", "b", "c", "d", "e" }));
+	EXPECT_FALSE(response.json.contains("next"));
+
+	// The bounds of the range travel resolved, because a cursor of this node's is one no other
+	// node would take.
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].second.query, "limit=100&values=true&reverse=false");
+}
+
+TEST(router_cluster_test, answer_the_values_of_every_node)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	nodes.answer(there, page(boost::json::array { record_json("b", "2") }, false));
+
+	boost::json::array records = router.route(get("/table/account/key")).json.at("records").as_array();
+
+	ASSERT_EQ(records.size(), 2u);
+	EXPECT_EQ(records[1].as_object().at("value").as_string(), "2");
+}
+
+TEST(router_cluster_test, hold_the_merged_page_to_the_limit)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	write_record(router, "account", "c", "3");
+	write_record(router, "account", "e", "5");
+	nodes.answer(there, page(boost::json::array { record_json("b", "2"), record_json("d", "4") }, true));
+
+	router::response response = router.route(get("/table/account/key?limit=2"));
+
+	EXPECT_EQ(keys(response), (std::vector<std::string> { "a", "b" }));
+
+	// The cursor is this node's own and names the last key it answered with, so the next page
+	// starts with the keys this one dropped.
+	EXPECT_EQ(cursor_key(response), "b");
+}
+
+TEST(router_cluster_test, page_through_a_scan_of_every_node)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	write_record(router, "account", "c", "3");
+	nodes.answer(there, page(boost::json::array { record_json("b", "2") }, false));
+
+	router::response first = router.route(get("/table/account/key?limit=2"));
+
+	EXPECT_EQ(keys(first), (std::vector<std::string> { "a", "b" }));
+
+	nodes.forget();
+	nodes.answer(there, page(boost::json::array(), false));
+
+	std::string cursor = std::string(first.json.at("next").as_string());
+	router::response second = router.route(get("/table/account/key?limit=2&cursor=" + cursor));
+
+	EXPECT_EQ(keys(second), (std::vector<std::string> { "c" }));
+
+	// The other node is asked from where the last page ended rather than for a cursor it never
+	// issued.
+	EXPECT_EQ(nodes.sent()[0].second.query, "limit=2&values=true&reverse=false&from=b%00");
+}
+
+TEST(router_cluster_test, scan_every_node_backwards)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	write_record(router, "account", "c", "3");
+	nodes.answer(there, page(boost::json::array { record_json("b", "2"), record_json("d", "4") }, false));
+
+	router::response response = router.route(get("/table/account/key?reverse=true"));
+
+	EXPECT_EQ(keys(response), (std::vector<std::string> { "d", "c", "b", "a" }));
+}
+
+TEST(router_cluster_test, scan_a_prefix_of_every_node)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.answer(there, page(boost::json::array(), false));
+
+	router.route(get("/table/account/key?prefix=a"));
+
+	// A prefix is a range, and the other node is asked for the range rather than for the prefix
+	// it was written as.
+	EXPECT_EQ(nodes.sent()[0].second.query, "limit=100&values=true&reverse=false&from=a&to=b");
+}
+
+// A key belongs to one node, so a key from two nodes is a key whose owner changed and the copy
+// left behind is passed over rather than answered twice.
+TEST(router_cluster_test, answer_a_key_two_nodes_hold_once)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	nodes.answer(there, page(boost::json::array { record_json("a", "1") }, false));
+
+	EXPECT_EQ(keys(router.route(get("/table/account/key"))), (std::vector<std::string> { "a" }));
+}
+
+TEST(router_cluster_test, serve_a_forwarded_scan_where_it_stands)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	nodes.forget();
+
+	router::request forwarded = get("/table/account/key");
+
+	forwarded.forwarded = true;
+
+	EXPECT_EQ(keys(router.route(forwarded)), (std::vector<std::string> { "a" }));
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
+TEST(router_cluster_test, fail_to_scan_when_a_node_does_not_answer)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
+
+	EXPECT_EQ(error_code(router.route(get("/table/account/key"))), "storage_error");
+}
+
+TEST(router_cluster_test, delete_a_range_on_every_node)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	nodes.forget();
+
+	router::response response = router.route(del("/table/account/key?prefix=a"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
+	EXPECT_TRUE(repository.read_record("account", "a") == std::nullopt);
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
+	EXPECT_EQ(nodes.sent()[0].second.query, "limit=100&values=true&reverse=false&from=a&to=b");
+}
+
+TEST(router_cluster_test, fail_to_delete_a_range_a_node_refuses)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.answer(there, router::error_response("write_stalled", "Writes are stalled."));
+
+	EXPECT_EQ(error_code(router.route(del("/table/account/key?prefix=a"))), "write_stalled");
+}
+
+TEST(router_cluster_test, name_the_nodes_of_the_cluster_in_the_health_of_the_instance)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	boost::json::array named = router.route(get("/health")).json.at("nodes").as_array();
+
+	ASSERT_EQ(named.size(), 2u);
+	EXPECT_EQ(named[0].as_string(), here);
+	EXPECT_EQ(named[1].as_string(), there);
+}
+
+TEST(router_cluster_test, name_no_nodes_when_the_instance_stands_alone)
+{
+	repository::fake_repository repository;
+	router::router router(repository);
+
+	EXPECT_FALSE(router.route(get("/health")).json.contains("nodes"));
 }

@@ -29,4 +29,7 @@ COPY server/server.conf /etc/nginx/http.d/default.conf
 COPY --from=ui /ui/dist /usr/share/nginx/html
 COPY --from=builder /build/bin/asyncdb .
 CMD nginx & ./asyncdb
-EXPOSE 80
+
+# 80 is nginx and the UI, and 8080 is the API, which is how the other nodes of a cluster reach
+# this one.
+EXPOSE 80 8080

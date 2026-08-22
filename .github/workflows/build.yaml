@@ -65,7 +65,7 @@ jobs:
       if: steps.check_version.outputs.publish == 'true'
       run: |
         IMAGE_URI=${{ steps.ecr-login.outputs.registry }}/asyncdb:$VERSION
-        docker push $IMAGE_URI
+        # docker push $IMAGE_URI
       env:
         VERSION: ${{ env.VERSION }}
 

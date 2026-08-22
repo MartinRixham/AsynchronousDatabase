@@ -1,17 +1,24 @@
 #ifndef SERVER_SERVER_H
 #define SERVER_SERVER_H
 
+#include <atomic>
+#include <memory>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #include <rocksdb/db.h>
 #include <boost/asio.hpp>
 #include <boost/beast/core.hpp>
 
+#include "cluster/etcd_cluster.h"
 #include "router/router.h"
 #include "repository/rocksdb_repository.h"
 
 namespace server
 {
+	class session;
+
 	class server : public std::enable_shared_from_this<server>
 	{
 		int const thread_count;
@@ -24,12 +31,34 @@ namespace server
 
 		repository::rocksdb_repository repository;
 
+		// The other instances, when there are any: a key belongs to one of them, and a request
+		// for a key this instance does not hold is answered by asking the one that does.
+		cluster::etcd_cluster own_nodes;
+
+		cluster::cluster &nodes;
+
 		router::router router;
+
+		// Serving ends when the acceptor is closed and every connection has gone, and a connection
+		// that is kept alive between requests goes when it is told to. The sessions are held
+		// weakly: a connection that ends first is gone from here by having ended.
+		std::mutex session_mutex;
+
+		std::vector<std::weak_ptr<session>> sessions;
+
+		std::atomic<bool> stopping = false;
 
 	public:
 		explicit server(
 			boost::asio::ip::port_type port,
 			int thread_count = std::thread::hardware_concurrency());
+
+		// The cluster a test names itself, rather than the one etcd names. Nothing is registered
+		// and nothing is renewed: the membership is what it was given.
+		server(
+			boost::asio::ip::port_type port,
+			int thread_count,
+			cluster::cluster &nodes);
 
 		void serve();
 
@@ -40,6 +69,14 @@ namespace server
 		void close();
 
 	private:
+		void hold(const std::shared_ptr<session> &session);
+
+		server(
+			boost::asio::ip::port_type port,
+			int thread_count,
+			const cluster::config &configuration,
+			cluster::cluster *external);
+
 		void accept();
 	};
 }

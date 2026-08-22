@@ -1,6 +1,7 @@
 #ifndef SERVER_SESSION_H
 #define SERVER_SESSION_H
 
+#include <atomic>
 #include <memory>
 
 #include <boost/beast/core.hpp>
@@ -24,10 +25,25 @@ namespace server
 
 		router::router &router;
 
+		// The server is shutting down. A connection is not kept alive past the response it is
+		// writing, and one that is waiting for a request that may never come is cut.
+		const std::atomic<bool> &stopping;
+
+		// True between asking for a request and receiving one, which is the only state a session
+		// can be left in for as long as a client cares to leave it there.
+		bool waiting = false;
+
 	public:
-		explicit session(boost::asio::ip::tcp::socket&& socket, router::router &router);
+		session(
+			boost::asio::ip::tcp::socket&& socket,
+			router::router &router,
+			const std::atomic<bool> &stopping);
 
 		void run();
+
+		// Ends a connection that is only waiting. One in the middle of a request is left to
+		// finish it, and closes rather than waiting for another.
+		void stop();
 
 		void on_read(boost::beast::error_code error, std::size_t);
 

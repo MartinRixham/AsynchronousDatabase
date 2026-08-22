@@ -1,69 +1,14 @@
 #include <algorithm>
-#include <cstring>
 
 #include <boost/json.hpp>
 #include <boost/lexical_cast/try_lexical_convert.hpp>
 
+#include "base64/base64.h"
 #include "url/url.h"
 #include "scan.h"
 
 namespace
 {
-	constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-	std::string encode_base64(const std::string &text)
-	{
-		std::string encoded;
-
-		for (size_t i = 0; i < text.size(); i += 3)
-		{
-			size_t remaining = text.size() - i;
-			unsigned int group = static_cast<unsigned char>(text[i]) << 16;
-
-			group |= (remaining > 1 ? static_cast<unsigned char>(text[i + 1]) : 0) << 8;
-			group |= remaining > 2 ? static_cast<unsigned char>(text[i + 2]) : 0;
-
-			encoded += alphabet[(group >> 18) & 0x3f];
-			encoded += alphabet[(group >> 12) & 0x3f];
-			encoded += remaining > 1 ? alphabet[(group >> 6) & 0x3f] : '=';
-			encoded += remaining > 2 ? alphabet[group & 0x3f] : '=';
-		}
-
-		return encoded;
-	}
-
-	bool decode_base64(const std::string &encoded, std::string *text)
-	{
-		unsigned int group = 0;
-		int bits = 0;
-
-		for (size_t i = 0; i < encoded.size(); i++)
-		{
-			if (encoded[i] == '=')
-			{
-				break;
-			}
-
-			const char *found = strchr(alphabet, encoded[i]);
-
-			if (found == NULL || encoded[i] == '\0')
-			{
-				return false;
-			}
-
-			group = (group << 6) | static_cast<unsigned int>(found - alphabet);
-			bits += 6;
-
-			if (bits >= 8)
-			{
-				bits -= 8;
-				*text += static_cast<char>((group >> bits) & 0xff);
-			}
-		}
-
-		return true;
-	}
-
 	// The least string that is strictly greater than every key beginning with the prefix. A
 	// prefix of nothing but 0xff bytes has none, and the range it names runs to the end.
 	bool prefix_end(const std::string &prefix, std::string *end)
@@ -105,7 +50,7 @@ namespace
 	{
 		std::string decoded;
 
-		if (!decode_base64(cursor, &decoded))
+		if (!base64::decode(cursor, &decoded))
 		{
 			return false;
 		}
@@ -211,5 +156,5 @@ std::string scan::encode_cursor(const std::string &key, const std::string &insta
 {
 	boost::json::object cursor { { "k", boost::json::string(key) }, { "s", boost::json::string(instance) } };
 
-	return encode_base64(boost::json::serialize(cursor));
+	return base64::encode(boost::json::serialize(cursor));
 }

@@ -1,12 +1,15 @@
 #ifndef ROUTER_ROUTER_H
 #define ROUTER_ROUTER_H
 
+#include <optional>
 #include <set>
 #include <string>
 
 #include "api_error.h"
 #include "request.h"
 #include "response.h"
+#include "cluster/cluster.h"
+#include "cluster/standalone.h"
 #include "repository/repository.h"
 
 namespace router
@@ -15,8 +18,15 @@ namespace router
 	{
 		repository::repository &repository;
 
+		// What a router built without a cluster routes against: one node owning every key.
+		cluster::standalone alone;
+
+		cluster::cluster &nodes;
+
 	public:
 		explicit router(repository::repository &repo);
+
+		router(repository::repository &repo, cluster::cluster &nodes);
 
 		response route(const request &request);
 
@@ -29,11 +39,17 @@ namespace router
 
 		response route_record(const request &request, const std::string &name, const std::string &key);
 
-		response create_table(const std::string &name, const std::string &body);
+		response create_table(const request &request, const std::string &name);
 
-		response scan_records(const std::string &name, const std::string &query);
+		response delete_table(const request &request, const std::string &name);
 
-		response delete_records(const std::string &name, const std::string &query);
+		response scan_records(const request &request, const std::string &name);
+
+		response delete_records(const request &request, const std::string &name);
+
+		// Sends the request to every other node and returns the first answer that is an error, or
+		// nothing at all when every node agreed. A request that arrived forwarded goes no further.
+		std::optional<response> broadcast(const request &request);
 
 		std::set<std::string> table_names() const;
 

@@ -19,6 +19,10 @@ namespace router
 		std::string query;
 
 		std::string body;
+
+		// True when another node sent this request here because this node owns the key. It is
+		// served where it stands: it is neither forwarded again nor broadcast.
+		bool forwarded = false;
 	};
 }
 
