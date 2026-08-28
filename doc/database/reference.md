@@ -37,13 +37,13 @@ status — is what a client should branch on.
 | `table_not_found` | 404 | No table of that name |
 | `table_exists` | 409 | The table exists with different options |
 | `invalid_table_name` | 400 | Not 1–64 characters of `[a-z0-9_-]`, or `default` |
+| `invalid_body` | 400 | The body of a [table](/database/tables#create-a-table) is not a JSON object |
 | `dependency_not_found` | 400 | A name in [`dependencies`](/database/tables#dependencies) is not a table |
 | `invalid_key_encoding` | 400 | A key in the path does not percent-decode to valid UTF-8 |
 | `key_too_large` | 413 | Over 4 KiB |
 | `value_too_large` | 413 | Over 16 MiB |
 | `invalid_range` | 400 | A range whose `from` is not below its `to`, or a range delete with no bounds |
 | `invalid_cursor` | 400 | A cursor this instance did not issue |
-| `precondition_failed` | 412 | The conditional write did not hold |
 | `write_stalled` | 503 | RocksDB is applying back pressure |
 | `storage_error` | 500 | RocksDB returned an error |
 

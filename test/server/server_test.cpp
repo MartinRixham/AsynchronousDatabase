@@ -155,8 +155,8 @@ TEST_F(server_test, put_request_with_a_body_that_is_not_json)
 	result response = request("PUT", "/table/account", "not json");
 
 	EXPECT_EQ(response.status, CURLE_OK);
-	EXPECT_EQ(response.code, 500);
-	EXPECT_EQ(error_code(response), "storage_error");
+	EXPECT_EQ(response.code, 400);
+	EXPECT_EQ(error_code(response), "invalid_body");
 }
 
 TEST_F(server_test, write_then_read_a_record)

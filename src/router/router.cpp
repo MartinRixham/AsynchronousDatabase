@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <optional>
 #include <string>
 
 #include <boost/json.hpp>
@@ -27,14 +28,25 @@ namespace
 			"method_not_allowed", std::string(boost::beast::http::to_string(method)) + " is not allowed here.");
 	}
 
-	boost::json::object parse_body(const std::string &body)
+	// A body that is not a JSON object is a request the client got wrong, not a failure of this
+	// service, so it is answered rather than thrown: boost::json::parse throws on malformed input
+	// and as_object throws on an array or a number, and either would escape as a 500.
+	std::optional<boost::json::object> parse_body(const std::string &body)
 	{
 		if (body.empty())
 		{
 			return boost::json::object();
 		}
 
-		return boost::json::parse(body).as_object();
+		boost::system::error_code error;
+		boost::json::value json = boost::json::parse(body, error);
+
+		if (error || !json.is_object())
+		{
+			return std::nullopt;
+		}
+
+		return json.as_object();
 	}
 
 	boost::json::object to_json(const record::record &record, bool values)
@@ -337,7 +349,14 @@ router::response router::router::route_record(
 
 router::response router::router::create_table(const request &request, const std::string &name)
 {
-	table::table table = table::parse_table(name, parse_body(request.body), table_names());
+	std::optional<boost::json::object> body = parse_body(request.body);
+
+	if (!body)
+	{
+		return error_response("invalid_body", "The body of a table is a JSON object.");
+	}
+
+	table::table table = table::parse_table(name, *body, table_names());
 
 	if (!table.is_valid)
 	{

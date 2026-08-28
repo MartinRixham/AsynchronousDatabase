@@ -160,6 +160,30 @@ TEST(router_test, fail_to_create_a_table_with_an_invalid_name)
 	EXPECT_FALSE(repository.has_table("An Account"));
 }
 
+TEST(router_test, fail_to_create_a_table_from_a_body_that_is_not_json)
+{
+	repository::fake_repository repository;
+	router::router router(repository);
+
+	router::response response = router.route(put("/table/account", "not json"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
+	EXPECT_EQ(error_code(response), "invalid_body");
+	EXPECT_FALSE(repository.has_table("account"));
+}
+
+TEST(router_test, fail_to_create_a_table_from_a_body_that_is_not_an_object)
+{
+	repository::fake_repository repository;
+	router::router router(repository);
+
+	router::response response = router.route(put("/table/account", "[]"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
+	EXPECT_EQ(error_code(response), "invalid_body");
+	EXPECT_FALSE(repository.has_table("account"));
+}
+
 TEST(router_test, fail_to_create_a_table_that_depends_on_one_that_is_not_there)
 {
 	repository::fake_repository repository;

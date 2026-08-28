@@ -57,6 +57,30 @@ npm run build       # emits ui/dist, served by nginx in the image
 
 Vitest only picks up files matching `test/**/*Test.js`.
 
+### Wiki (`doc/`) and API collection (`api/`)
+
+`doc/` is the VitePress site that *is* the API spec — `cd doc && npm run dev` to read it, `npm run
+build` to render it. Neither CI nor the image builds it. `api/` is a Postman collection whose
+assertions come from that spec, and it runs headless against a server that is already up (see
+`api/README.md`):
+
+```bash
+cmk run   # serves on 8080 with no cluster; or docker-compose up -d and use the compose environment
+newman run api/asyncdb.postman_collection.json -e api/asyncdb.local.postman_environment.json
+```
+
+The eight folders are ordered and depend on each other — folder 0 drops what the last run left, and
+a scan's second page carries the cursor its first page issued — so run whole folders, in order. The
+`clusterSize` variable is what makes folder 8 assert a three-node cluster or a lone instance.
+
+### Load tests (`perf/`)
+
+`perf/read.sh` and `perf/write.sh` share `perf/harness.sh`, which forks `THREADS` curl workers over
+persistent connections and reports latency percentiles. Everything is an environment variable:
+`THREADS`, `REQUESTS`, `BASE` (default `http://localhost:8080/asyncdb`), plus `URL` for reads and
+`TABLE` and `VALUE_BYTES` for writes. They drive a server that is already running and are
+no part of `cmk`.
+
 ### Running the whole thing
 
 `docker-compose up`, then the UI is on `localhost:8080`. The image runs nginx on port 80 serving
@@ -165,10 +189,13 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
   to persist. Follow this pattern rather than throwing; exceptions are reserved for genuine
   infrastructure failure — `repository::storage_error` carries `storage_error` or `write_stalled`, and
   `ERROR(...)` from `src/error.h` prefixes file/function/line.
-- `table::parse_table` enforces the invariants: a name of 1–64 characters of `[a-z0-9_-]` that is not
-  `default`, and every dependency must name an existing table — so the dependency graph can never
-  contain a dangling edge. `PUT /table/{table}` is idempotent: the same options again are `200`, and
+- `table::parse_table` enforces the invariants: a name of 1–64 characters that is not `default`, and
+  every dependency must name an existing table — so the dependency graph can never contain a
+  dangling edge. `PUT /table/{table}` is idempotent: the same options again are `200`, and
   different ones are `409`, which is why a cycle cannot be built.
+  **The accepted characters are `[A-Za-z0-9_ -]`** — either case, digits, space, underscore, hyphen —
+  which `doc/database/`, `reference.md` and `is_valid_name`'s own error message all still describe as
+  `[a-z0-9_-]`; `api/README.md` asserts against the wider set the code actually takes.
 - `record::parse_record` enforces the limits (4 KiB of key, 16 MiB of value) and that a key is valid
   UTF-8. A value is never looked at — every string is a value, and the empty one is told from a missing
   key by the status code, which is why `read_record` returns a `std::optional`.
@@ -221,6 +248,8 @@ Built on [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum), not a m
 ## Release
 
 Pushing to `master` builds the Docker image and, **only if the tag in the `version` file does not already
-exist in ECR**, pushes it and git-tags the commit. Bump `version` to cut a release; leaving it unchanged
-makes CI a no-op publish. AWS infrastructure lives in `cloudformation.json`, driven by the `Makefile`
-(`make create-stack` / `update-stack` / `delete-stack`).
+exist in ECR**, tags it and git-tags the commit. Bump `version` to cut a release; leaving it unchanged
+makes CI a no-op publish. Note that the `docker push` line in `.github/workflows/build.yaml` is currently
+commented out, so a release tags the commit but ships no image until it is put back. AWS infrastructure
+lives in `cloudformation.json`, driven by the `Makefile` (`make create-stack` / `update-stack` /
+`delete-stack`).

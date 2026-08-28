@@ -41,6 +41,11 @@ options, `409 Conflict` when it existed with different ones. Creating a table is
 therefore safe to run at every start-up, which is how a service should declare
 the tables it needs.
 
+The body is a JSON object of the options below, and an empty body is the
+defaults. A body that is not a JSON object — malformed, or a list or a number —
+is `400 invalid_body`. This is the one body the service parses: a
+[value](/database/records#keys-and-values) is never looked at.
+
 | Option | Default | Means |
 | --- | --- | --- |
 | `dependencies` | `[]` | The names of the tables this one is derived from. See [dependencies](#dependencies) |

@@ -1,0 +1,2962 @@
+{
+	"info": {
+		"_postman_id": "a5f7d3c1-9b26-4c7a-9d51-3e0a1f7c8b40",
+		"name": "asyncdb",
+		"description": "The key journeys of the asyncdb HTTP/JSON API, in the order a client lives them: declare the table graph, write and read records, scan and page a range, delete a range, drop the table. Folders 1 to 7 run against one instance; folder 8 runs against the three of docker-compose.\n\nRun the whole collection with the runner or with newman — the requests depend on the ones before them, and folder 0 makes a re-run start from a clean table.\n\nEvery assertion is drawn from doc/database, which is the spec: the codes are the documented codes, the statuses the documented statuses.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "0 · Reset",
+			"description": "Drop what a previous run left, so a create is a create. A table that is not there is 404, and that is a pass here too.",
+			"item": [
+				{
+					"name": "Drop the derived table if it is there",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{derivedTable}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{derivedTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"dropped, or was not there\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([204, 404]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Drop the table if it is there",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"dropped, or was not there\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([204, 404]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "1 · Health",
+			"description": "Liveness, whether writes are stalled, and the nodes this instance can see.",
+			"item": [
+				{
+					"name": "GET /health",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/health",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"health"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const body = pm.response.json();",
+									"",
+									"pm.test(\"status is ok\", function () {",
+									"    pm.expect(body.status).to.eql(\"ok\");",
+									"});",
+									"",
+									"pm.test(\"writes are not stalled\", function () {",
+									"    pm.expect(body.write_stalled).to.eql(false);",
+									"});",
+									"",
+									"pm.test(\"nodes is absent alone, and a list in a cluster\", function () {",
+									"    if (body.nodes !== undefined) {",
+									"        pm.expect(body.nodes).to.be.an(\"array\");",
+									"        pm.expect(body.nodes.length).to.be.above(1);",
+									"    }",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "HEAD /health",
+					"request": {
+						"method": "HEAD",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/health",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"health"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with the length the body would have had\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(Number(pm.response.headers.get(\"Content-Length\"))).to.be.above(0);",
+									"    pm.expect(pm.response.text()).to.eql(\"\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "POST /health is not allowed",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{baseUrl}}/health",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"health"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"405 method_not_allowed\", function () {",
+									"    pm.response.to.have.status(405);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"method_not_allowed\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "2 · Declare the table graph",
+			"description": "What a service does at every start up: create the tables it needs, in the order the dependencies point in. The same options again are 200, different ones are 409, and a dependency that is not a table is refused — which is why the graph can hold no dangling edge and no cycle.",
+			"item": [
+				{
+					"name": "Create the table",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n\t\"dependencies\": []\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"201 created\", function () { pm.response.to.have.status(201); });",
+									"",
+									"const body = pm.response.json();",
+									"",
+									"pm.test(\"the table as it was created\", function () {",
+									"    pm.expect(body.name).to.eql(pm.variables.get(\"table\"));",
+									"    pm.expect(body.dependencies).to.eql([]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Create it again with the same options",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n\t\"dependencies\": []\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200, so declaring at every start up is safe\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.json().name).to.eql(pm.variables.get(\"table\"));",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Create the derived table",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n\t\"dependencies\": [ \"{{table}}\" ]\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{derivedTable}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{derivedTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"201 with the edge recorded\", function () {",
+									"    pm.response.to.have.status(201);",
+									"    pm.expect(pm.response.json().dependencies).to.eql([ pm.variables.get(\"table\") ]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Create it again with different options",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n\t\"dependencies\": []\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{derivedTable}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{derivedTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"409 table_exists\", function () {",
+									"    pm.response.to.have.status(409);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"table_exists\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Depend on a table that does not exist",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n\t\"dependencies\": [ \"no-such-table\" ]\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/postman-dangling",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"postman-dangling"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"400 dependency_not_found\", function () {",
+									"    pm.response.to.have.status(400);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"dependency_not_found\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A name with a character a table name may not hold",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/postman.account",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"postman.account"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"400 invalid_table_name\", function () {",
+									"    pm.response.to.have.status(400);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"invalid_table_name\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "The reserved name default",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/default",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"default"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"400 invalid_table_name\", function () {",
+									"    pm.response.to.have.status(400);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"invalid_table_name\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A body that is not a JSON object",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "not json"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/postman-malformed",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"postman-malformed"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"400 invalid_body\", function () {",
+									"    pm.response.to.have.status(400);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"invalid_body\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Inspect the table",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{derivedTable}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{derivedTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with name and dependencies\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    const body = pm.response.json();",
+									"    pm.expect(body.name).to.eql(pm.variables.get(\"derivedTable\"));",
+									"    pm.expect(body.dependencies).to.eql([ pm.variables.get(\"table\") ]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Inspect a table that is not there",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/no-such-table",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"no-such-table"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 table_not_found\", function () {",
+									"    pm.response.to.have.status(404);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"table_not_found\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "List the tables",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const tables = pm.response.json().tables;",
+									"const names = tables.map(function (table) { return table.name; });",
+									"",
+									"pm.test(\"both tables are in the graph\", function () {",
+									"    pm.expect(names).to.include(pm.variables.get(\"table\"));",
+									"    pm.expect(names).to.include(pm.variables.get(\"derivedTable\"));",
+									"});",
+									"",
+									"pm.test(\"every dependency names a table that is listed\", function () {",
+									"    tables.forEach(function (table) {",
+									"        table.dependencies.forEach(function (dependency) {",
+									"            pm.expect(names).to.include(dependency);",
+									"        });",
+									"    });",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "3 · The record lifecycle",
+			"description": "One key, one value, and the four operations most clients will ever use. A value is bytes the service never looks at, the empty value is a value, and a missing key is told from it by the status code.",
+			"item": [
+				{
+					"name": "Write a record",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{{value}}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{key}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{key}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204 no content\", function () {",
+									"    pm.response.to.have.status(204);",
+									"    pm.expect(pm.response.text()).to.eql(\"\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Read it back",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{key}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{key}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"pm.test(\"the body is the value, with no envelope\", function () {",
+									"    pm.expect(pm.response.text()).to.eql(pm.variables.get(\"value\"));",
+									"});",
+									"",
+									"pm.test(\"served as text\", function () {",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/plain\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Ask whether it exists, and how large it is",
+					"request": {
+						"method": "HEAD",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{key}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{key}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200, the headers of the GET and no body\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text()).to.eql(\"\");",
+									"});",
+									"",
+									"// The limits are counted in UTF-8 bytes, and this is how the sandbox counts them.",
+									"function bytes(text)",
+									"{",
+									"    return unescape(encodeURIComponent(text)).length;",
+									"}",
+									"",
+									"pm.test(\"Content-Length is the length the value would have had\", function () {",
+									"    pm.expect(Number(pm.response.headers.get(\"Content-Length\")))",
+									"        .to.eql(bytes(pm.variables.get(\"value\")));",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Overwrite it",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"firstName\":\"Eleanor\",\"lastName\":\"Whitmore\"}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{key}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{key}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204, a write is a write\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A JSON value comes back byte for byte",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{key}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{key}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with the bytes that were written\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text()).to.eql(\"{\\\"firstName\\\":\\\"Eleanor\\\",\\\"lastName\\\":\\\"Whitmore\\\"}\");",
+									"});",
+									"",
+									"pm.test(\"the structure is the client's to give it\", function () {",
+									"    pm.expect(JSON.parse(pm.response.text()).firstName).to.eql(\"Eleanor\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "The empty value is a value",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-empty",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-empty"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "An empty value reads 200, not 404",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-empty",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-empty"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with an empty body\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text()).to.eql(\"\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A missing key reads 404",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-never-written",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-never-written"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 with no body\", function () {",
+									"    pm.response.to.have.status(404);",
+									"    pm.expect(pm.response.text()).to.eql(\"\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A record of a table that is not there",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "nowhere to put this"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/no-such-table/key/{{key}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"no-such-table",
+								"key",
+								"{{key}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 table_not_found\", function () {",
+									"    pm.response.to.have.status(404);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"table_not_found\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Delete the record",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{key}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{key}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "It is gone",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{key}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{key}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404\", function () { pm.response.to.have.status(404); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Deleting it again is still 204",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{key}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{key}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204: a delete is a no op, not a read before a write\", function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "4 · Keys the API must not mangle",
+			"description": "A key is any non-empty string of at most 4 KiB, percent-encoded into the path. The path is split at its unencoded slashes before anything is decoded, so an encoded slash stays one segment.",
+			"item": [
+				{
+					"name": "A key with a space and a unicode character",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "café au lait"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman%20caf%C3%A9",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman%20caf%C3%A9"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "It reads back under the same encoding",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman%20caf%C3%A9",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman%20caf%C3%A9"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with the value\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text()).to.eql(\"caf\\u00e9 au lait\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A key containing a slash stays one key",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "one segment"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman%2Fslash",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman%2Fslash"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "And reads back as one key",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman%2Fslash",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman%2Fslash"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with the value\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text()).to.eql(\"one segment\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A key that is not valid UTF-8",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/%ff%fe",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"%ff%fe"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"400 invalid_key_encoding\", function () {",
+									"    pm.response.to.have.status(400);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"invalid_key_encoding\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A key over 4 KiB",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "too long a key to index"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{oversizedKey}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{oversizedKey}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// One byte over the 4 KiB a key may be.",
+									"pm.collectionVariables.set(\"oversizedKey\", \"k\".repeat(4097));"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"413 key_too_large\", function () {",
+									"    pm.response.to.have.status(413);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"key_too_large\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "5 · Scans",
+			"description": "Reading records in key order, which is what an ordered store is for. The range is a prefix, or a from that is inclusive and a to that is exclusive; reverse only changes the direction of travel; and a page that did not exhaust the range carries a cursor.",
+			"item": [
+				{
+					"name": "Seed user:1",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "Eleanor Whitmore"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{scanPrefix}}1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{scanPrefix}}1"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Seed user:2",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "Marcus Hale"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{scanPrefix}}2",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{scanPrefix}}2"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Seed user:3",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "Priya Raman"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{scanPrefix}}3",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{scanPrefix}}3"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Seed user:4",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "Tobias Lund"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{scanPrefix}}4",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{scanPrefix}}4"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Seed a key outside the prefix",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "not in the range"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-outside",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-outside"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Scan the prefix",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?prefix={{scanPrefix}}&limit=100",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "{{scanPrefix}}"
+								},
+								{
+									"key": "limit",
+									"value": "100"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const body = pm.response.json();",
+									"const keys = body.records.map(function (record) { return record.key; });",
+									"const prefix = pm.variables.get(\"scanPrefix\");",
+									"",
+									"pm.test(\"the four seeded records, and nothing outside the prefix\", function () {",
+									"    pm.expect(keys).to.eql([ prefix + \"1\", prefix + \"2\", prefix + \"3\", prefix + \"4\" ]);",
+									"});",
+									"",
+									"pm.test(\"values travel as JSON strings\", function () {",
+									"    pm.expect(body.records[0].value).to.eql(\"Eleanor Whitmore\");",
+									"});",
+									"",
+									"pm.test(\"no cursor, because the range is exhausted\", function () {",
+									"    pm.expect(body.next).to.be.undefined;",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Scan keys only",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?prefix={{scanPrefix}}&values=false",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "{{scanPrefix}}"
+								},
+								{
+									"key": "values",
+									"value": "false"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"pm.test(\"every record is a key and no value\", function () {",
+									"    pm.response.json().records.forEach(function (record) {",
+									"        pm.expect(record.key).to.be.a(\"string\");",
+									"        pm.expect(record.value).to.be.undefined;",
+									"    });",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "from is inclusive and to is exclusive",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?from={{scanPrefix}}2&to={{scanPrefix}}4",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "{{scanPrefix}}2"
+								},
+								{
+									"key": "to",
+									"value": "{{scanPrefix}}4"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const prefix = pm.variables.get(\"scanPrefix\");",
+									"const keys = pm.response.json().records.map(function (record) { return record.key; });",
+									"",
+									"pm.test(\"from is in the page and to is not\", function () {",
+									"    pm.expect(keys).to.eql([ prefix + \"2\", prefix + \"3\" ]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Reverse keeps the bounds and turns the walk around",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?prefix={{scanPrefix}}&reverse=true",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "{{scanPrefix}}"
+								},
+								{
+									"key": "reverse",
+									"value": "true"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const prefix = pm.variables.get(\"scanPrefix\");",
+									"const keys = pm.response.json().records.map(function (record) { return record.key; });",
+									"",
+									"pm.test(\"the same range, newest key first\", function () {",
+									"    pm.expect(keys).to.eql([ prefix + \"4\", prefix + \"3\", prefix + \"2\", prefix + \"1\" ]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Page one of two",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?prefix={{scanPrefix}}&limit=2",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "{{scanPrefix}}"
+								},
+								{
+									"key": "limit",
+									"value": "2"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const body = pm.response.json();",
+									"const prefix = pm.variables.get(\"scanPrefix\");",
+									"",
+									"pm.test(\"the limit is honoured\", function () {",
+									"    pm.expect(body.records.map(function (record) { return record.key; }))",
+									"        .to.eql([ prefix + \"1\", prefix + \"2\" ]);",
+									"});",
+									"",
+									"pm.test(\"a cursor, because the range is not exhausted\", function () {",
+									"    pm.expect(body.next).to.be.a(\"string\");",
+									"});",
+									"",
+									"pm.collectionVariables.set(\"cursor\", body.next);"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Page two, resuming after the cursor",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?prefix={{scanPrefix}}&limit=2&cursor={{cursor}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "{{scanPrefix}}"
+								},
+								{
+									"key": "limit",
+									"value": "2"
+								},
+								{
+									"key": "cursor",
+									"value": "{{cursor}}"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const body = pm.response.json();",
+									"const prefix = pm.variables.get(\"scanPrefix\");",
+									"",
+									"pm.test(\"strictly after the last key of the first page, nothing repeated\", function () {",
+									"    pm.expect(body.records.map(function (record) { return record.key; }))",
+									"        .to.eql([ prefix + \"3\", prefix + \"4\" ]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A cursor this instance did not issue",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?cursor=eyJrIjoieCIsInMiOiJub3QtdGhpcy1pbnN0YW5jZSJ9",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "cursor",
+									"value": "eyJrIjoieCIsInMiOiJub3QtdGhpcy1pbnN0YW5jZSJ9"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"400 invalid_cursor\", function () {",
+									"    pm.response.to.have.status(400);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"invalid_cursor\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A range whose from is not below its to",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?from={{scanPrefix}}9&to={{scanPrefix}}1",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "{{scanPrefix}}9"
+								},
+								{
+									"key": "to",
+									"value": "{{scanPrefix}}1"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"400 invalid_range\", function () {",
+									"    pm.response.to.have.status(400);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"invalid_range\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Scan the whole table",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const keys = pm.response.json().records.map(function (record) { return record.key; });",
+									"",
+									"// RocksDB orders keys by their UTF-8 bytes, which is not the order a default sort gives.",
+									"function bytes(text)",
+									"{",
+									"    return unescape(encodeURIComponent(text));",
+									"}",
+									"",
+									"function byBytes(left, right)",
+									"{",
+									"    const a = bytes(left);",
+									"    const b = bytes(right);",
+									"",
+									"    return a < b ? -1 : (a > b ? 1 : 0);",
+									"}",
+									"",
+									"pm.test(\"unbounded is the whole table, in key order\", function () {",
+									"    pm.expect(keys).to.include(pm.variables.get(\"scanPrefix\") + \"1\");",
+									"    pm.expect(keys).to.include(\"postman-outside\");",
+									"    pm.expect(keys).to.eql(keys.slice().sort(byBytes));",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Scan a table that is not there",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/no-such-table/key",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"no-such-table",
+								"key"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 table_not_found\", function () {",
+									"    pm.response.to.have.status(404);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"table_not_found\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "6 · Delete a range",
+			"description": "An operator action: one range tombstone instead of a delete per key. It takes the same range parameters as a scan, and refuses a request that names no range at all — deleting every record in a table is deleting the table.",
+			"item": [
+				{
+					"name": "A range delete that names no range",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"400 invalid_range\", function () {",
+									"    pm.response.to.have.status(400);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"invalid_range\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Delete the prefix",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?prefix={{scanPrefix}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "{{scanPrefix}}"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "The range is empty",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?prefix={{scanPrefix}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "{{scanPrefix}}"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with no records and no cursor\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    const body = pm.response.json();",
+									"    pm.expect(body.records).to.eql([]);",
+									"    pm.expect(body.next).to.be.undefined;",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A key outside the range survived it",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-outside",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-outside"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200, the tombstone covered the range and nothing else\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text()).to.eql(\"not in the range\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "7 · Drop the tables",
+			"description": "The cheap way to delete a lot of data: the column family goes and the data goes with it. A table that is not there is 404, and the records of a dropped table are gone even where the table is created again.",
+			"item": [
+				{
+					"name": "Drop the derived table",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{derivedTable}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{derivedTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Drop the table",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Dropping it again is 404",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 table_not_found\", function () {",
+									"    pm.response.to.have.status(404);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"table_not_found\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Create it again",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"201, and dependencies default to none\", function () {",
+									"    pm.response.to.have.status(201);",
+									"    pm.expect(pm.response.json().dependencies).to.eql([]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "The data went with the column family",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with an empty table\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.json().records).to.eql([]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Leave nothing behind",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "8 · The cluster",
+			"description": "Only for the three instances of docker-compose, addressed by node1, node2 and node3. Every node answers for every key: a table is created on all of them, a record is served by the node that owns its key whichever node was asked, and a scan is asked of every node and merged back into key order.\n\nRunning this folder against a single instance fails at the first request, which is the point — it is asserting that there is a cluster.",
+			"item": [
+				{
+					"name": "Every node names the same membership",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{node1}}/health",
+							"host": [
+								"{{node1}}"
+							],
+							"path": [
+								"health"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const body = pm.response.json();",
+									"const size = Number(pm.variables.get(\"clusterSize\"));",
+									"",
+									"// An instance that joined no cluster names no nodes at all, and the rest of this folder",
+									"// still runs: node1, node2 and node3 are then the one instance, and every request is",
+									"// answered where it lands rather than forwarded. Only the membership is unassertable.",
+									"if (size < 2) {",
+									"    pm.test(\"skipped: one instance names no membership, so run this folder against a cluster\", function () {",
+									"        pm.expect(body).to.not.have.property(\"nodes\");",
+									"    });",
+									"} else {",
+									"    pm.test(\"the node names the cluster as it sees it\", function () {",
+									"        pm.expect(body.nodes, \"no nodes: this instance is standing alone\").to.be.an(\"array\");",
+									"        pm.expect(body.nodes.length).to.eql(size);",
+									"    });",
+									"}"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Clean up after a previous run",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{node1}}/table/{{clusterTable}}",
+							"host": [
+								"{{node1}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"dropped, or was not there\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([204, 404]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Create the table on node 1",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}"
+						},
+						"url": {
+							"raw": "{{node1}}/table/{{clusterTable}}",
+							"host": [
+								"{{node1}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"201\", function () { pm.response.to.have.status(201); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Node 2 has it too",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{node2}}/table/{{clusterTable}}",
+							"host": [
+								"{{node2}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200: a create is carried out on every node\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.json().name).to.eql(pm.variables.get(\"clusterTable\"));",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Node 3 has it too",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{node3}}/table/{{clusterTable}}",
+							"host": [
+								"{{node3}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Write a record to node 1",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "written to node 1"
+						},
+						"url": {
+							"raw": "{{node1}}/table/{{clusterTable}}/key/{{scanPrefix}}1",
+							"host": [
+								"{{node1}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}",
+								"key",
+								"{{scanPrefix}}1"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204, wherever the key is owned\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Read it from node 2",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{node2}}/table/{{clusterTable}}/key/{{scanPrefix}}1",
+							"host": [
+								"{{node2}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}",
+								"key",
+								"{{scanPrefix}}1"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with the value, forwarded to the node that owns the key\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text()).to.eql(\"written to node 1\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Read it from node 3",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{node3}}/table/{{clusterTable}}/key/{{scanPrefix}}1",
+							"host": [
+								"{{node3}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}",
+								"key",
+								"{{scanPrefix}}1"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with the value\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text()).to.eql(\"written to node 1\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Write a second record to node 2",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "written to node 2"
+						},
+						"url": {
+							"raw": "{{node2}}/table/{{clusterTable}}/key/{{scanPrefix}}2",
+							"host": [
+								"{{node2}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}",
+								"key",
+								"{{scanPrefix}}2"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Write a third record to node 3",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "written to node 3"
+						},
+						"url": {
+							"raw": "{{node3}}/table/{{clusterTable}}/key/{{scanPrefix}}3",
+							"host": [
+								"{{node3}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}",
+								"key",
+								"{{scanPrefix}}3"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "One scan sees every node's share",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{node3}}/table/{{clusterTable}}/key?prefix={{scanPrefix}}",
+							"host": [
+								"{{node3}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "{{scanPrefix}}"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const prefix = pm.variables.get(\"scanPrefix\");",
+									"const keys = pm.response.json().records.map(function (record) { return record.key; });",
+									"",
+									"pm.test(\"the pages of every node, merged into key order\", function () {",
+									"    pm.expect(keys).to.eql([ prefix + \"1\", prefix + \"2\", prefix + \"3\" ]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A range delete reaches every node",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{node1}}/table/{{clusterTable}}/key?prefix={{scanPrefix}}",
+							"host": [
+								"{{node1}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "{{scanPrefix}}"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "And the range is empty everywhere",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{node2}}/table/{{clusterTable}}/key?prefix={{scanPrefix}}",
+							"host": [
+								"{{node2}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "{{scanPrefix}}"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with no records\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.json().records).to.eql([]);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Drop the table from node 2",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{node2}}/table/{{clusterTable}}",
+							"host": [
+								"{{node2}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "It is gone from node 1",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{node1}}/table/{{clusterTable}}",
+							"host": [
+								"{{node1}}"
+							],
+							"path": [
+								"table",
+								"{{clusterTable}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 table_not_found: a delete is carried out on every node\", function () {",
+									"    pm.response.to.have.status(404);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"table_not_found\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "table",
+			"value": "postman-account",
+			"type": "string"
+		},
+		{
+			"key": "derivedTable",
+			"value": "postman-transaction",
+			"type": "string"
+		},
+		{
+			"key": "clusterTable",
+			"value": "postman-cluster",
+			"type": "string"
+		},
+		{
+			"key": "key",
+			"value": "4821",
+			"type": "string"
+		},
+		{
+			"key": "value",
+			"value": "Eleanor Whitmore",
+			"type": "string"
+		},
+		{
+			"key": "scanPrefix",
+			"value": "postman:user:",
+			"type": "string"
+		},
+		{
+			"key": "clusterSize",
+			"value": "3",
+			"type": "string"
+		},
+		{
+			"key": "cursor",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "oversizedKey",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
