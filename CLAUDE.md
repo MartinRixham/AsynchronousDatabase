@@ -252,5 +252,6 @@ exist in ECR**, tags it and git-tags the commit. Bump `version` to cut a release
 makes CI a no-op publish. Note that the `docker push` line in `.github/workflows/build.yaml` is currently
 commented out, so a release tags the commit but ships no image until it is put back. AWS infrastructure
 lives in `cloudformation.json`, driven by the `Makefile` (`make create-stack` / `update-stack` /
-`delete-stack`), and is documented in `doc/deployment/` — including the gaps, chief among them that the
-stack passes neither `ASYNCDB_ETCD` nor `ASYNCDB_NODE`, so its instances are not actually a cluster.
+`delete-stack`), and is documented in `doc/deployment/`. The etcd tier is three instances at addresses
+fixed in the template's `Etcd` mapping, not a discovery service: `ASYNCDB_ETCD` is `Fn::FindInMap` of
+that same mapping, which is what joins the database tier into a cluster.

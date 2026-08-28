@@ -2,9 +2,9 @@
 
 `cloudformation.json` in the root of the repository is the whole of the
 infrastructure: one template, one stack, no modules and no state file. It builds
-a VPC across three availability zones, an application load balancer, a group of
-instances running the asyncdb image from ECR, and a second group of instances
-running etcd for them to find each other through.
+a VPC across three availability zones, an application load balancer, an auto
+scaling group of instances running the asyncdb image from ECR, and three
+instances running etcd for them to find each other through.
 
 ```
                      internet
@@ -15,15 +15,15 @@ running etcd for them to find each other through.
         ┌────────────────┼────────────────┐        one public subnet per AZ
         │                │                │
    ┌────┴────┐      ┌────┴────┐      ┌────┴────┐   AutoScalingGroup, desired 3
-   │ asyncdb │      │ asyncdb │      │ asyncdb │   nginx :80, API :8080
-   └────┬────┘      └────┬────┘      └────┬────┘
+   │ asyncdb │──────│ asyncdb │──────│ asyncdb │   nginx :80, API :8080
+   └────┬────┘      └────┬────┘      └────┬────┘   forwarding to each other
         └────────────────┼────────────────┘
-                         │                        (see the gaps below — the
-        ┌────────────────┼────────────────┐        instances do not yet talk
-        │                │                │        to either)
-   ┌────┴────┐      ┌────┴────┐      ┌────┴────┐   EtcdAutoScalingGroup, fixed 3
-   │  etcd   │      │  etcd   │      │  etcd   │   :2379 clients, :2380 peers
-   └─────────┘      └─────────┘      └─────────┘
+                         │  ASYNCDB_ETCD names all three
+        ┌────────────────┼────────────────┐
+        │                │                │
+   ┌────┴────┐      ┌────┴────┐      ┌────┴────┐   Etcd1..3, fixed addresses
+   │  etcd   │──────│  etcd   │──────│  etcd   │   :2379 clients, :2380 peers
+   └─────────┘      └─────────┘      └─────────┘   10.0.0.10 .1.10 .2.10
 ```
 
 The shape is the one [the cluster](/database/cluster) describes — several
@@ -73,9 +73,9 @@ its neighbours.
 
 | Page | Resources |
 | --- | --- |
-| [The network](/deployment/network) | `VPC`, `InternetGateway`, `AttachGateway`, `PublicSubnet1`–`3`, `PublicRouteTable`, `PublicRoute`, `SubnetRouteTableAssociation1`–`3`, `ALBSecurityGroup`, `InstanceSecurityGroup`, `EtcdSecurityGroup` |
+| [The network](/deployment/network) | `VPC`, `InternetGateway`, `AttachGateway`, `PublicSubnet1`–`3`, `PublicRouteTable`, `PublicRoute`, `SubnetRouteTableAssociation1`–`3`, `ALBSecurityGroup`, `InstanceSecurityGroup`, `EtcdSecurityGroup`, `InstanceApiIngress`, `EtcdPeerIngress` |
 | [The database tier](/deployment/database) | `InstanceRole`, `InstanceProfile`, `LaunchTemplate`, `AutoScalingGroup`, `ApplicationLoadBalancer`, `ALBTargetGroup`, `ALBListener` |
-| [The etcd tier](/deployment/etcd) | `DiscoveryTokenLambdaRole`, `DiscoveryTokenLambda`, `DiscoveryTokenCustomResource`, `EtcdLaunchTemplate`, `EtcdAutoScalingGroup` |
+| [The etcd tier](/deployment/etcd) | `Etcd1`, `Etcd2`, `Etcd3`, and the `Etcd` mapping their addresses live in |
 
 ## Before the first deploy
 
@@ -129,20 +129,6 @@ again.
 
 It is a small template, and it is worth being plain about where it stops.
 
-- **The database instances are not clustered.** The user data runs
-  `docker run -d -p 80:80 $IMAGE` and sets no environment, so neither
-  `ASYNCDB_ETCD` nor `ASYNCDB_NODE` is set, and
-  [set neither and nothing changes](/database/cluster#turning-it-on): each
-  instance registers nothing, owns the whole keyspace and knows about no other
-  node. The etcd tier stands there unused. Three instances behind the load
-  balancer are therefore three independent databases, and which one answers is
-  the load balancer's choice — a key written through the balancer is readable
-  only from the instance that took the write.
-- **The API port is not published or reachable anyway.** The container publishes
-  only 80, and `InstanceSecurityGroup` allows 80 from the load balancer and 22
-  from anywhere, and nothing on 8080. Clustering these instances means
-  publishing 8080 from the container, opening 8080 to the security group itself,
-  and setting both environment variables from instance metadata.
 - **There is nothing durable.** RocksDB lives in the container's filesystem, on
   the instance store of an instance the auto scaling group is free to replace.
   No volume, no snapshot, no backup: a replaced instance is an empty database.
@@ -156,6 +142,13 @@ It is a small template, and it is worth being plain about where it stops.
   API carries crosses the internet in the clear.
 - **Nothing scales anything.** The application group is `DesiredCapacity: 3`
   between 1 and 4 with no scaling policy, no alarm and no target tracking, and
-  the etcd group is pinned at 3. The bounds are there for a hand to move.
+  the etcd tier is three fixed instances. The bounds are there for a hand to
+  move — and growing the group is
+  [a thing to do deliberately](/database/cluster#what-this-is-not), because a
+  key that changes owner is a key the new owner does not have.
+- **Nothing replaces a dead etcd instance**, which is the price of fixing their
+  addresses. [What that costs](/deployment/etcd#what-a-failure-looks-like) is
+  one instance recreated by hand, against a tier whose data rewrites itself in
+  seconds.
 - **The description is stale.** It says "Minimal 2-AZ EC2 cluster"; the template
   builds three subnets in three availability zones.

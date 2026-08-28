@@ -1,134 +1,172 @@
 # The etcd tier
 
-Three instances running etcd, and a Lambda-backed custom resource that mints the
-discovery token they form a cluster with. Five resources, and — as the template
-stands — no reader: nothing sets `ASYNCDB_ETCD` on the
-[database tier](/deployment/database#the-launch-template), so this cluster comes
-up and waits.
+Three instances at three addresses the template already knows. There is no
+discovery service, no Lambda, no custom resource and no auto scaling group:
+`Etcd1`, `Etcd2` and `Etcd3` are three `AWS::EC2::Instance` resources with fixed
+private addresses, and the membership they bootstrap from is a literal string in
+`Mappings`.
 
-## The discovery token
+## Why there is nothing to discover
 
-etcd nodes launched by an auto scaling group do not know each other's addresses,
-and the template cannot tell them: the addresses do not exist until the
-instances do. etcd's answer is a **discovery URL** — a token registered with a
-rendezvous service, given to every node, which each node posts its own address
-to and reads the others' back from. The first three to arrive are the cluster.
+etcd holds one thing for asyncdb: a key per node,
+[`/asyncdb/node/{address}` on a ten second lease](/database/cluster#membership).
+Every asyncdb node renews its own every three seconds, and re-registers from
+scratch whenever a renewal fails, so an etcd cluster that comes back empty is
+fully repopulated within a lease. **There is no state here worth preserving, and
+no node whose identity has to survive.**
 
-Getting one is an HTTP request, and CloudFormation has no way to make an HTTP
-request, so the template carries a Lambda that does:
+That is what makes the discovery question small. A mechanism for nodes that must
+find each other without knowing where they are is solving a problem this stack
+does not have: it is three instances, in three subnets whose CIDRs the template
+fixes, and the addresses can be fixed too.
 
-| Resource | Is |
-| --- | --- |
-| `DiscoveryTokenLambdaRole` | Assumable by `lambda.amazonaws.com`, with `AWSLambdaBasicExecutionRole` and nothing else — the function touches no AWS API |
-| `DiscoveryTokenLambda` | Python 3.9, 30 second timeout, source inline as a `ZipFile` join |
-| `DiscoveryTokenCustomResource` | `Custom::EtcdDiscovery`, whose `ServiceToken` is the function's ARN |
+The stack used to mint a token from `discovery.etcd.io` in a Lambda-backed
+custom resource and pass it to an auto scaling group. That is gone, and it is
+worth recording why, because the shape is a common one:
 
-The function is nine lines:
+- **The service behind it is unmaintained.** It runs on the v2 storage engine
+  that v3 replaced, and etcd 3.6 removes v2 discovery outright. A stack whose
+  creation depends on a third party's deprecated endpoint answering is a stack
+  that rolls back the day it stops.
+- **There was no version to upgrade to.** v3 discovery — `--discovery-token`
+  with `--discovery-endpoints` — bootstraps from *another* etcd cluster, which
+  is no use to the only etcd cluster in the stack.
+- **A token is used up once.** `size=3` filled by the first three to arrive, so
+  a replacement instance booting with the same token joined nothing. The auto
+  scaling group that was supposed to make the tier self-healing could not heal
+  it.
+- **An update minted a new one.** Every `update-stack` reaching the custom
+  resource produced a fresh token, so the launch template's next instances would
+  have formed a *different* cluster from the ones still running.
 
-```python
-import urllib.request
-import cfnresponse
-def handler(event, context):
-    try:
-        if event['RequestType'] in ('Create','Update'):
-            url = "https://discovery.etcd.io/new?size=3"
-            token = urllib.request.urlopen(url).read().decode().strip()
-            cfnresponse.send(event, context, cfnresponse.SUCCESS,
-                             { 'DiscoveryURL': token })
-        else:
-            cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
-    except Exception as e:
-        print("Error:", e)
-        cfnresponse.send(event, context, cfnresponse.FAILED, {})
+## The addresses
+
+```json
+"Mappings": {
+  "Etcd": {
+    "Cluster": {
+      "InitialCluster": "etcd-1=http://10.0.0.10:2380,etcd-2=http://10.0.1.10:2380,etcd-3=http://10.0.2.10:2380",
+      "ClientEndpoints": "http://10.0.0.10:2379,http://10.0.1.10:2379,http://10.0.2.10:2379"
+    }
+  }
+}
 ```
 
-`cfnresponse` is not installed — it is a module AWS injects into inline function
-source, which is why the code is a `ZipFile` and not an S3 object. The `Delete`
-branch answers `SUCCESS` and does nothing, so a token is left registered when
-the stack goes; it is a token and it expires, and there is nothing to clean up.
+| Node | Subnet | CIDR | Address |
+| --- | --- | --- | --- |
+| `etcd-1` | `PublicSubnet1` | `10.0.0.0/24` | `10.0.0.10` |
+| `etcd-2` | `PublicSubnet2` | `10.0.1.0/24` | `10.0.1.10` |
+| `etcd-3` | `PublicSubnet3` | `10.0.2.0/24` | `10.0.2.10` |
 
-The `Update` branch mints a **new** token on every `update-stack` that reaches
-this resource. That does not re-form the running cluster — a token is only read
-at first boot — so the effect is a new launch template version whose instances,
-when they are eventually replaced, form a *different* cluster from the ones
-still running. Discovery is a first-boot mechanism, and this resource treats it
-as one only by accident.
+`.10` is arbitrary but not free: AWS reserves the first four addresses of a
+subnet and the last, so anything from `.4` up will do.
 
-Three caveats worth knowing before relying on this:
+The two strings are the whole of the wiring, and each is read once:
 
-- **`discovery.etcd.io` is a public service outside the stack**, unauthenticated
-  and not run by anyone here. If it does not answer, the function reports
-  `FAILED`, the custom resource fails and the stack rolls back — before any
-  instance has launched.
-- **The protocol is etcd's v2 discovery**, which is deprecated; etcd 3.5
-  replaced it with discovery over an existing etcd cluster
-  (`--discovery-endpoints`). A stack that has to keep working wants that, or
-  wants the addresses fixed some other way.
-- **`size=3` is hard-coded** and has to match `EtcdAutoScalingGroup`'s size. A
-  token is used up once: the nodes that fill it are the cluster, and a
-  replacement instance booting with the same token joins nothing, because the
-  token is full and the replacement is not a member.
+- **`InitialCluster`** is `--initial-cluster`, the same on all three nodes.
+- **`ClientEndpoints`** is `ASYNCDB_ETCD` on the
+  [database tier](/deployment/database#the-launch-template), which takes
+  [every member separated by commas](/database/cluster#turning-it-on) and stays
+  with whichever answered. That is why there is no load balancer and no DNS in
+  front of etcd: naming all three *is* the failover.
 
-## The launch template
+## The instances
 
-`EtcdLaunchTemplate` takes the same AMI and instance type, the `asyncdb` key
-pair, and `EtcdSecurityGroup`. There is no instance profile, and none is needed:
-the image comes from `quay.io` and the function of this instance touches no AWS
-API.
+Each one is fifteen lines of properties and a user data script, differing only
+in its number, its subnet and its address:
+
+```json
+"Etcd1": {
+  "Type": "AWS::EC2::Instance",
+  "DependsOn": [ "PublicRoute", "SubnetRouteTableAssociation1" ],
+  "Properties": {
+    "ImageId": { "Ref": "ECSAMI" },
+    "InstanceType": { "Ref": "InstanceType" },
+    "SubnetId": { "Ref": "PublicSubnet1" },
+    "PrivateIpAddress": "10.0.0.10",
+    "SecurityGroupIds": [ { "Ref": "EtcdSecurityGroup" } ],
+    "KeyName": "asyncdb",
+    "Tags": [ { "Key": "Name", "Value": "etcd-1" } ],
+    "UserData": { "...": "below" }
+  }
+}
+```
+
+The `DependsOn` is there because the user data pulls an image at first boot: an
+instance created before its subnet has a route to the internet gateway comes up
+with nothing on it and says nothing about why. An auto scaling group hid that by
+launching late; three instances do not.
 
 ```bash
 #! /bin/bash
-PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-INSTANCE=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-DISCOVERY_URL='...'                      # Fn::Sub of the custom resource
-docker run -d -v /usr/share/ca-certificates/:/etc/ssl/certs -p 4001:4001 -p 2380:2380 -p 2379:2379 \
-  --name etcd quay.io/coreos/etcd:v2.3.8 \
-  -name ${INSTANCE} \
-  -advertise-client-urls http://${PUBLIC_IP}:2379,http://${PUBLIC_IP}:4001 \
-  -listen-client-urls http://0.0.0.0:2379,http://0.0.0.0:4001 \
-  -initial-advertise-peer-urls http://${PUBLIC_IP}:2380 \
-  -listen-peer-urls http://0.0.0.0:2380 \
-  -discovery ${DISCOVERY_URL} \
+docker run -d --restart always --name etcd -p 2379:2379 -p 2380:2380 \
+  -v /var/lib/etcd:/etcd-data \
+  quay.io/coreos/etcd:v3.5.9 /usr/local/bin/etcd \
+  --name etcd-1 \
+  --data-dir /etcd-data \
+  --advertise-client-urls http://10.0.0.10:2379 \
+  --listen-client-urls http://0.0.0.0:2379 \
+  --initial-advertise-peer-urls http://10.0.0.10:2380 \
+  --listen-peer-urls http://0.0.0.0:2380 \
+  --initial-cluster etcd-1=http://10.0.0.10:2380,... \
+  --initial-cluster-state new \
+  --initial-cluster-token asyncdb
 ```
 
-The three metadata reads are IMDSv1 — a plain GET to `169.254.169.254` with no
-token — and they give the node its name and the addresses it advertises. Only
-the `DISCOVERY_URL` line is an `Fn::Sub`; every `${...}` in the rest is a shell
-variable, and stays one because the surrounding lines are plain strings in the
-`Fn::Join`.
+The `--initial-cluster` line is a `Fn::Join` of the literal and the mapping; the
+rest are plain strings. Four things about it:
 
-Four things in it are worth changing before it is depended on:
+- **It advertises private addresses.** Peers and clients are told to come in over
+  the VPC, which is what lets both ports be closed to everything but the two
+  security groups — see [the network](/deployment/network#the-security-groups).
+  The instances still have public addresses, because they are in public subnets
+  and have to reach `quay.io`, but nothing is invited in over them.
+- **`/usr/local/bin/etcd` is named explicitly**, as `docker-compose.yml` names
+  it: the image has no entrypoint of its own, and the flags are the v3 ones
+  (`--name`, not `-name`) on the v3.5.9 that serves the
+  [JSON gateway](/database/cluster#membership) asyncdb speaks.
+- **`--restart always`** matters more than it did: nothing replaces these
+  instances now, so a container that exits has to come back by itself. `-v
+  /var/lib/etcd` puts the data outside it so that it does.
+- **`--initial-cluster-state new` applies only to an empty data directory.** A
+  reboot, or a container restart, finds the data directory and rejoins as the
+  member it was; `new` is read at bootstrap and ignored afterwards. The
+  `--initial-cluster-token` is what keeps this cluster's members from ever
+  joining another one by accident.
 
-- **It advertises its public addresses.** Peers and clients are told to come in
-  over the internet, which is what makes the wide-open 2379–2380 rules on
-  [the security group](/deployment/network#the-security-groups) load-bearing
-  rather than merely careless. `PRIVATE_IP` is read and never used: advertising
-  it instead keeps the traffic inside the VPC and lets both ports be closed to
-  everything but the two security groups.
-- **The last line ends in a `\` with nothing after it.** A trailing continuation
-  at the end of the file is not what was meant, and one more argument appended
-  after it would land somewhere unintended.
-- **The data directory is not a volume.** etcd writes inside the container, on
-  an instance the group may replace, so a replaced node is a new empty node —
-  and, because the discovery token is full, not one that can join. Membership is
-  small and cheap to lose, but two of three lost at once is a cluster with no
-  quorum.
-- **It is etcd 2.** asyncdb speaks to etcd over its
-  [JSON gateway](/database/cluster#membership) — `POST /v3/kv/put`,
-  `/v3/lease/grant` — and v2.3.8 has no v3 API at all. `docker-compose.yml`
-  runs `quay.io/coreos/etcd:v3.5.9` for exactly that reason, and this template
-  needs to as well before anything can register against it. That is the second
-  half of turning the database tier into a cluster; the first half is passing
-  the environment.
+## What a failure looks like
 
-## The auto scaling group
+An availability zone takes one node. Two remain, they have quorum, and the
+database tier does not notice: it names all three endpoints, finds the dead one
+unreachable and stays with one that answers.
 
-`EtcdAutoScalingGroup` spans the same three subnets and is pinned:
-`MinSize`, `MaxSize` and `DesiredCapacity` are all 3, matching the `size=3` of
-the token. `HealthCheckType` is `EC2`, which is right here — there is no target
-group to check against, and etcd is not behind the load balancer.
+Getting the third one back is where fixed addresses cost something. `make
+update-stack` recreates the instance at the same address, but with an empty data
+directory and a new member id, and the two survivors still hold the old id for
+`etcd-1`. It will not simply rejoin. There are two ways out:
 
-It tags its instances `Name: etcd-node` with `PropagateAtLaunch`, which is what
-tells them apart from the database instances in the console. The database group
-sets no tags at all.
+- **Replace the tier.** The data is a few keys that rewrite themselves in
+  seconds, so deleting all three instances and letting `update-stack` recreate
+  them is a clean bootstrap and costs one lease of stale membership. This is
+  usually the right answer, and it is only the right answer *because* the data
+  is disposable.
+- **Do the member dance.** `etcdctl member remove <old id>` on a survivor,
+  `etcdctl member add etcd-1 --peer-urls=http://10.0.0.10:2380`, then start the
+  new node with `--initial-cluster-state existing` and the member list the add
+  printed. This is what an auto scaling group would have to automate, and the
+  reason it is not worth automating here.
+
+Losing two at once is a cluster with no quorum, and the remedy is the first one.
+
+## What is left to it
+
+- **Nothing replaces a dead instance.** That is the trade for determinism: an
+  auto scaling group heals an instance and cannot heal a *member*, which is the
+  thing that was actually broken.
+- **There is no TLS and no authentication.** 2379 is open to the database tier's
+  security group and 2380 to etcd's own, so anything on the database tier can
+  read and write the membership — including writing in a node that does not
+  exist, which the other nodes would then forward keys to.
+- **Three nodes is the minimum that tolerates one loss**, and the addresses,
+  the mapping and the `--initial-cluster` string all have to be edited together
+  to change that. Growing to five is a template change, not a capacity change.

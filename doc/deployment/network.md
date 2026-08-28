@@ -29,8 +29,8 @@ ordering from a `Ref` because the route names the gateway, not the attachment.
 ## Why everything is public
 
 Both tiers pull from the internet as they start — the database instances from
-ECR, the etcd instances from `quay.io` and from the discovery service — and a
-private subnet doing that needs a NAT gateway, which is the most expensive thing
+ECR, the etcd instances from `quay.io` — and a private subnet doing that needs a
+NAT gateway, which is the most expensive thing
 that would be in this template. Public subnets with `MapPublicIpOnLaunch` are
 the cheap way, and the security groups are then the only thing between the
 instances and the internet.
@@ -44,38 +44,43 @@ balancer and the console show.
 | --- | --- | --- |
 | `ALBSecurityGroup` | 80/tcp from `0.0.0.0/0` | everything |
 | `InstanceSecurityGroup` | 22/tcp from `0.0.0.0/0`, 80/tcp from `ALBSecurityGroup` | everything |
-| `EtcdSecurityGroup` | 22/tcp from `0.0.0.0/0`, 2379–2380/tcp from `0.0.0.0/0` | everything |
+| `EtcdSecurityGroup` | 22/tcp from `0.0.0.0/0`, 2379/tcp from `InstanceSecurityGroup` | everything |
 
-The one rule that is right is the middle one: the database instances take HTTP
-from the load balancer's security group and from nowhere else, by source group
-rather than by CIDR, so it keeps working as instances come and go.
+Two more rules cannot be written inline, because a group that names itself in
+its own `SecurityGroupIngress` is a circular reference. They are separate
+`AWS::EC2::SecurityGroupIngress` resources instead:
 
-The rest are as open as they can be, and worth saying out loud:
+| Rule | Opens |
+| --- | --- |
+| `InstanceApiIngress` | 8080/tcp on `InstanceSecurityGroup`, from `InstanceSecurityGroup` |
+| `EtcdPeerIngress` | 2380/tcp on `EtcdSecurityGroup`, from `EtcdSecurityGroup` |
 
-- **SSH from anywhere**, on both groups. There is no bastion and no restriction
-  to an office address; the key pair is the whole of the access control.
-- **etcd from anywhere.** Ports 2379 and 2380 — the client port and the peer
-  port — are open to `0.0.0.0/0`, and the etcd instances have public addresses
-  and [advertise them](/deployment/etcd#the-launch-template). etcd is started
-  with no TLS and no authentication, so this is an unauthenticated key-value
-  store on the public internet, and the keyspace it holds is the cluster's
-  membership: anyone can read who the nodes are, and anyone can write a node
-  that does not exist into it, or delete the ones that do.
+Everything but SSH is therefore addressed by source group rather than by CIDR,
+which is what keeps the rules right as instances come and go: the load balancer
+reaches port 80 on the database instances, the database instances reach port
+8080 on each other and 2379 on etcd, and the etcd instances reach 2380 on each
+other. Nothing else reaches any of it.
 
-Tightening it is the same shape as the middle rule. 2379 belongs to
-`InstanceSecurityGroup` as a source, 2380 belongs to `EtcdSecurityGroup` itself,
-and 22 belongs to one address or to Session Manager instead of a key pair. What
-the API port needs is on the [database tier](/deployment/database) page.
+Two things are still open, and are worth saying out loud:
+
+- **SSH from anywhere**, on both instance groups. There is no bastion and no
+  restriction to an office address; the key pair is the whole of the access
+  control. One address, or Session Manager instead of a key pair, is the fix.
+- **etcd has no TLS and no authentication.** The port is closed to the internet
+  now, but within the VPC anything holding `InstanceSecurityGroup` can read and
+  write the membership — see
+  [what is left to the etcd tier](/deployment/etcd#what-is-left-to-it).
 
 Egress is `IpProtocol: -1` to `0.0.0.0/0` on all three, written out rather than
-left to the default, which is the same thing. Both tiers need it: to ECR, to
-quay.io, to `discovery.etcd.io` and to SSM.
+left to the default, which is the same thing. Both tiers need it at boot: the
+database instances to ECR and to the AWS CLI download, the etcd instances to
+`quay.io`.
 
-## The port the cluster would need
+## The API port is not the load balancer's
 
-Nothing in any group allows 8080. That is the API port — the port nodes reach
-each other on, and not the nginx in front of it — so as the template stands the
-[forwarding](/database/cluster#which-node-owns-a-key) a cluster is made of has
-nowhere to go. It would be one rule on `InstanceSecurityGroup`, 8080/tcp with
-`SourceSecurityGroupId` naming the group itself, and `-p 8080:8080` on the
-`docker run`.
+8080 is open **between database instances and nowhere else**. It is the port
+nodes [forward to each other on](/database/cluster#which-node-owns-a-key), it
+is not behind the nginx that serves the `/asyncdb` prefix, and it honours
+`X-Asyncdb-Forwarded` from anyone who sends it. The load balancer's target group
+is port 80, deliberately: a request from outside arrives at nginx, and only
+asyncdb talks to asyncdb.

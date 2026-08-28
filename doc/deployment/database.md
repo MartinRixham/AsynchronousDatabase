@@ -30,7 +30,7 @@ shell lines, run once as root at first boot:
 
 ```bash
 #! /bin/bash
-sudo yum update
+sudo yum -y update
 sudo yum -y install unzip
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
@@ -40,29 +40,39 @@ VERSION=0.0.2
 IMAGE=$REGISTRY_URL/asyncdb:$VERSION
 aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL
 docker pull $IMAGE
-docker run -d -p 80:80 $IMAGE
+PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+ASYNCDB_ETCD=http://10.0.0.10:2379,http://10.0.1.10:2379,http://10.0.2.10:2379
+docker run -d -p 80:80 -p 8080:8080 \
+  -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
+  -e ASYNCDB_NODE=http://$PRIVATE_IP:8080 \
+  $IMAGE
 ```
 
 Docker is already there — that is what the AMI is for. The AWS CLI is installed
 because the version on Amazon Linux 2 is v1, and `get-login-password` is a v2
 command; installing v2 over it is the shortest way to a working `docker login`.
-Note that `sudo yum update` has no `-y` and nothing is reading its prompt, so
-that line does nothing but slow the boot down; the install below it does have
-one.
 
 The registry account and the region are literals, and so is the version. The
 consequences are on the [overview](/deployment/#before-the-first-deploy): the
 stack is really only deployable into one account's `eu-west-2`, and a new
 release is a change to this template.
 
-**No environment is passed to the container.** `ASYNCDB_ETCD` and
-`ASYNCDB_NODE` are what turn an instance into a member of a cluster, and without
-them the process owns the whole keyspace and talks to nothing. Setting them here
-means reading the instance's own address out of the metadata service, the way
-[the etcd tier](/deployment/etcd#the-launch-template) already does, and naming
-the etcd nodes — which is the harder half, because their addresses are not known
-to this template. A load-balanced address for the etcd tier, or a fixed set of
-private addresses, is what that wants.
+The last four lines are what make the instance a member of a cluster rather than
+a database of its own:
+
+- **`ASYNCDB_ETCD`** is `Fn::FindInMap` of the etcd tier's
+  [`ClientEndpoints`](/deployment/etcd#the-addresses) — all three, comma
+  separated, which is the form that survives one of them being down.
+- **`ASYNCDB_NODE`** is this instance's own private address on 8080, read from
+  the metadata service at boot. It is the **API port**, not the nginx in front
+  of it: nodes talk to each other directly and do not go through the `/asyncdb`
+  prefix a browser uses, which is why `-p 8080:8080` is published alongside 80
+  and why [8080 is open](/deployment/network#the-api-port-is-not-the-load-balancers)
+  within the security group.
+
+Set neither and the instance would be
+[what it was before](/database/cluster#turning-it-on): one process owning the
+whole keyspace, talking to nothing.
 
 There is no `docker run --restart`, so a container that stops does not come back
 until the instance is replaced, and the instance is not replaced for it because
@@ -123,8 +133,10 @@ database behind it is: nginx and the binary are started together by the image's
 and it goes through the proxy to the process itself, so it fails while the
 database is not answering.
 
-Sessions are not sticky, and with the instances not clustered that is the whole
-of the problem the [overview](/deployment/#what-this-stack-does-not-do)
-describes: consecutive requests from one client land on different databases.
-Stickiness would hide it and not fix it — the fix is the two environment
-variables.
+Sessions are not sticky, and do not need to be: every node
+[answers for every key](/database/cluster), asking the owner when it is not the
+owner, so it does not matter which instance the load balancer picks. The one
+exception is
+[paging through a scan](/database/scans#paging-and-what-a-cursor-promises),
+whose cursor belongs to the instance that issued it — a client paging through
+the load balancer should use `from` and `to`, which any node will take.
