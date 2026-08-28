@@ -170,4 +170,7 @@ it ends.
   run the request again.
 - **Nodes trust each other.** `X-Asyncdb-Forwarded` is honoured from anyone who
   sends it, so the API port belongs on a private network, exactly as it does
-  without a cluster.
+  without a cluster. The nginx in the image
+  [clears the header](/deployment/network#the-api-port-is-not-the-load-balancers)
+  from anything arriving on the `/asyncdb` prefix, so the port a browser reaches
+  cannot claim it; the API port itself has no such guard.

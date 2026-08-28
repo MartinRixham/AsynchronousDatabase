@@ -10,7 +10,7 @@ instances running etcd for them to find each other through.
                      internet
                          │
                     ┌────┴────┐  ClusterALB, HTTP/80, internet facing
-                    │   ALB   │  health check GET /
+                    │   ALB   │  health check GET /asyncdb/health
                     └────┬────┘
         ┌────────────────┼────────────────┐        one public subnet per AZ
         │                │                │
@@ -90,9 +90,10 @@ Three things the template needs and does not create:
   [the release](#the-image-the-instances-pull) pushes, and it is not part of
   this stack.
 - **The image tag itself.** The user data pins `VERSION=0.0.2`. An instance that
-  cannot pull simply has no container: `docker run` fails, the instance stays up
-  and healthy as far as the auto scaling group is concerned, and the load
-  balancer takes it out of service on the health check.
+  cannot pull simply has no container: `docker run` fails, the load balancer
+  takes the instance out of service on the health check, and the group, whose
+  health check is `ELB`, replaces it — with the same tag, so an instance that
+  cannot pull is replaced by another that cannot either.
 
 ## The image the instances pull
 

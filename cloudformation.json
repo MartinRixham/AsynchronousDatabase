@@ -283,7 +283,7 @@
         "Port": 80,
         "Protocol": "HTTP",
         "TargetType": "instance",
-        "HealthCheckPath": "/"
+        "HealthCheckPath": "/asyncdb/health"
       }
     },
     "ALBListener": {
@@ -315,6 +315,8 @@
         "DesiredCapacity": 3,
         "MinSize": "1",
         "MaxSize": "4",
+        "HealthCheckType": "ELB",
+        "HealthCheckGracePeriod": 600,
         "TargetGroupARNs":[{ "Ref":"ALBTargetGroup" } ]
       }
     },

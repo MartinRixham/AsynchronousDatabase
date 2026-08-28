@@ -75,8 +75,9 @@ Set neither and the instance would be
 whole keyspace, talking to nothing.
 
 There is no `docker run --restart`, so a container that stops does not come back
-until the instance is replaced, and the instance is not replaced for it because
-the group's health check is `EC2`.
+on its own. The instance is replaced for it, because the group's health check is
+`ELB` and the container is the only thing that answers the path the load balancer
+asks for.
 
 ## The auto scaling group
 
@@ -89,14 +90,16 @@ bounds allow a fourth for a replacement to come up before an old one goes, and
 allow the group to be taken down to one by hand, but nothing moves it on its
 own: there is no scaling policy and no alarm in the template.
 
-The health check type is left at its default, `EC2`, so the group replaces an
-instance whose *instance* has failed and not one whose *application* has. An
-instance whose pull failed, or whose container exited, stays in the group; the
-load balancer stops sending it traffic and the group never notices.
-`HealthCheckType: ELB` with a grace period long enough for the user data to
-finish is the fix, and the grace period matters — the user data installs the
-AWS CLI before it pulls, and an instance failing its health check before it has
-had time to start is a group that replaces instances forever.
+`HealthCheckType` is `ELB` rather than the default `EC2`, so the group replaces
+an instance whose *application* has failed and not only one whose *instance* has:
+an instance whose pull failed, or whose container exited, is one the load balancer
+has already stopped sending traffic to, and the group now takes it out too.
+
+`HealthCheckGracePeriod` is `600` seconds, and the number matters. The user data
+installs the AWS CLI before it logs in and pulls, and an instance marked unhealthy
+before it has had time to start is a group that replaces instances forever. Ten
+minutes is comfortably more than a cold pull takes and is measured from the
+launch, not from the first check.
 
 There is also no `UpdatePolicy`, so
 [a new version is not rolled out](/deployment/#rolling-out-a-new-version) by
@@ -107,7 +110,7 @@ There is also no `UpdatePolicy`, so
 | Resource | Is |
 | --- | --- |
 | `ApplicationLoadBalancer` | Named `ClusterALB`, `internet-facing`, in the three public subnets, in `ALBSecurityGroup` |
-| `ALBTargetGroup` | HTTP, port 80, `TargetType: instance`, health check `GET /` |
+| `ALBTargetGroup` | HTTP, port 80, `TargetType: instance`, health check `GET /asyncdb/health` |
 | `ALBListener` | HTTP on port 80, one default action forwarding to the target group |
 
 Port 80 on an instance is nginx, so the target group is the UI and the
@@ -124,14 +127,14 @@ aws elbv2 describe-load-balancers --names ClusterALB \
   --query 'LoadBalancers[0].DNSName' --output text
 ```
 
-The health check is `GET /`, which is nginx serving `index.html` out of
-`/usr/share/nginx/html`. That answers as soon as nginx is up, whether or not the
-database behind it is: nginx and the binary are started together by the image's
-`CMD nginx & ./asyncdb`, and nothing in the image makes one wait for the other.
-`GET /asyncdb/health` is the check that means what it says — it is
+The health check is `GET /asyncdb/health`, which goes through the proxy to the
+process itself — it is
 [the endpoint that names the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster)
-and it goes through the proxy to the process itself, so it fails while the
-database is not answering.
+— so it fails while the database is not answering. `GET /` would not: that is
+nginx serving `index.html` out of `/usr/share/nginx/html`, and it answers as soon
+as nginx is up whether or not there is a database behind it. The two are started
+together by the image's `CMD nginx & ./asyncdb` and nothing makes one wait for the
+other, so checking the static file would be checking the wrong process.
 
 Sessions are not sticky, and do not need to be: every node
 [answers for every key](/database/cluster), asking the owner when it is not the
