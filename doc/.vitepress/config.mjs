@@ -9,7 +9,8 @@ export default defineConfig({
 		nav: [
 			{ text: "Home", link: "/" },
 			{ text: "Database API", link: "/database/" },
-			{ text: "Deployment", link: "/deployment/" }
+			{ text: "Deployment", link: "/deployment/" },
+			{ text: "Pipeline", link: "/pipeline/" }
 		],
 		sidebar: [
 			{
@@ -36,6 +37,14 @@ export default defineConfig({
 					{ text: "The network", link: "/deployment/network" },
 					{ text: "The database tier", link: "/deployment/database" },
 					{ text: "The etcd tier", link: "/deployment/etcd" }
+				]
+			},
+			{
+				text: "Pipeline",
+				items: [
+					{ text: "Overview", link: "/pipeline/" },
+					{ text: "The image build", link: "/pipeline/image" },
+					{ text: "The release gate", link: "/pipeline/release" }
 				]
 			}
 		],

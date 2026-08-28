@@ -34,7 +34,8 @@ The project is in two halves:
   [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum).
 
 They are shipped together in one Docker image: nginx serves the built UI and reverse-proxies `/asyncdb/*`
-to the server binary.
+to the server binary. Building and running either half is in the
+[README](https://github.com/MartinRixham/AsynchronousDatabase#build).
 
 ### How a request travels
 
@@ -52,32 +53,6 @@ RocksDB implementation stores tables under `TABLE_<name>` keys.
 
 Validation failures are treated as values rather than exceptions: an invalid table carries an `error`
 object that the router turns into a `400`. Exceptions are reserved for genuine infrastructure failure.
-
-### Getting started
-
-The server is built with [Cheesemake](https://github.com/martinrixham/cheesemake), driven by
-`recipe.json`. Running a phase runs every phase before it.
-
-```bash
-cmk verify          # cppcheck, compile, run the tests, link build/bin/asyncdb
-cmk test            # stop after the tests
-cmk run             # build, then run the server
-```
-
-The UI is built with Vite:
-
-```bash
-cd ui
-npm test            # eslint and vitest
-npm start           # dev server
-npm run build       # emits ui/dist
-```
-
-Or run the whole thing with Docker, and open `localhost:8080`:
-
-```bash
-docker-compose up
-```
 
 ### These docs
 
