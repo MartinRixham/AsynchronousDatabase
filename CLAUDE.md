@@ -73,6 +73,19 @@ The eight folders are ordered and depend on each other — folder 0 drops what t
 a scan's second page carries the cursor its first page issued — so run whole folders, in order. The
 `clusterSize` variable is what makes folder 8 assert a three-node cluster or a lone instance.
 
+### Browser tests (`automation/`)
+
+Playwright, end to end over the UI in Chromium, and no part of `cmk`:
+
+```bash
+cd automation && npm install && npx playwright install chromium   # once
+npm test
+```
+
+The config starts `vite` in `ui/` on port 4173 itself, and `FakeDatabase` fulfils the
+`/asyncdb/table*` requests with `page.route`, so no server has to be up — the real `DatabaseClient`
+is still what sends them. Specs match `*Test.js`, as in `ui/test`.
+
 ### Load tests (`perf/`)
 
 `perf/read.sh` and `perf/write.sh` share `perf/harness.sh`, which forks `THREADS` curl workers over
