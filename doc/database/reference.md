@@ -46,6 +46,7 @@ status — is what a client should branch on.
 | `invalid_cursor` | 400 | A cursor this instance did not issue |
 | `write_stalled` | 503 | RocksDB is applying back pressure |
 | `storage_error` | 500 | RocksDB returned an error |
+| `unavailable` | 502, 504 | The database did not answer the nginx in front of it. This one is the proxy's, not the server's — it is what a client sees while an instance is starting, or once its container has stopped |
 
 ## Limits
 

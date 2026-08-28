@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "unavailable",
+    "message": "The database is not answering."
+  }
+}
