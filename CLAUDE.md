@@ -60,9 +60,9 @@ Vitest only picks up files matching `test/**/*Test.js`.
 ### Wiki (`doc/`) and API collection (`api/`)
 
 `doc/` is the VitePress site that *is* the API spec — `cd doc && npm run dev` to read it, `npm run
-build` to render it. Neither CI nor the image builds it. `api/` is a Postman collection whose
-assertions come from that spec, and it runs headless against a server that is already up (see
-`api/README.md`):
+build` to render it. `doc/database/` is the API; `doc/deployment/` is the AWS stack. Neither CI nor
+the image builds it. `api/` is a Postman collection whose assertions come from that spec, and it runs
+headless against a server that is already up (see `api/README.md`):
 
 ```bash
 cmk run   # serves on 8080 with no cluster; or docker-compose up -d and use the compose environment
@@ -252,4 +252,5 @@ exist in ECR**, tags it and git-tags the commit. Bump `version` to cut a release
 makes CI a no-op publish. Note that the `docker push` line in `.github/workflows/build.yaml` is currently
 commented out, so a release tags the commit but ships no image until it is put back. AWS infrastructure
 lives in `cloudformation.json`, driven by the `Makefile` (`make create-stack` / `update-stack` /
-`delete-stack`).
+`delete-stack`), and is documented in `doc/deployment/` — including the gaps, chief among them that the
+stack passes neither `ASYNCDB_ETCD` nor `ASYNCDB_NODE`, so its instances are not actually a cluster.

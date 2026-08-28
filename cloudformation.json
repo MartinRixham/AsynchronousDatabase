@@ -360,7 +360,7 @@
                   "INSTANCE=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)",
                   { "Fn::Sub": ["DISCOVERY_URL='${DiscoveryTokenCustomResource.DiscoveryURL}'", {}] },
                   "docker run -d -v /usr/share/ca-certificates/:/etc/ssl/certs -p 4001:4001 -p 2380:2380 -p 2379:2379 \\",
-                  "  --name etcd quay.io/coreos/etcd:v2.3.8 \\",
+                  "  --name etcd quay.io/coreos/etcd:v3.5.9 \\",
                   "  -name ${INSTANCE} \\",
                   "  -advertise-client-urls http://${PUBLIC_IP}:2379,http://${PUBLIC_IP}:4001 \\",
                   "  -listen-client-urls http://0.0.0.0:2379,http://0.0.0.0:4001 \\",
