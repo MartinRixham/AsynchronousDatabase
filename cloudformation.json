@@ -425,6 +425,14 @@
         }
       }
     }
+  },
+  "Outputs": {
+    "Url": {
+      "Description": "The public address of the cluster. Every node answers for every key, so this one URL is the whole API and the UI.",
+      "Value": {
+        "Fn::Join": [ "", [ "http://", { "Fn::GetAtt": [ "ApplicationLoadBalancer", "DNSName" ] } ] ]
+      }
+    }
   }
 }
 

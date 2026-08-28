@@ -48,6 +48,25 @@ the working tree is what is deployed — there is no bucket and no packaging ste
 `create-stack` and `update-stack` pass `--capabilities CAPABILITY_NAMED_IAM`
 because the template creates roles.
 
+## The address
+
+The stack has one output, `Url`: the load balancer's DNS name with `http://` in
+front of it. That single address is the whole deployment — the UI in a browser,
+and the API under `/asyncdb` — because every node
+[answers for every key](/database/cluster), so there is nothing to choose
+between the three instances behind it.
+
+```bash
+aws cloudformation describe-stacks --stack-name asyncdb \
+  --query 'Stacks[0].Outputs[?OutputKey==`Url`].OutputValue' --output text
+```
+
+It is an output and not an export: it is there to be read after a deploy, not to
+be `Fn::ImportValue`d by another stack. The value only exists once the
+`ApplicationLoadBalancer` is created, so `describe-stacks` gives it while the
+stack is still `CREATE_IN_PROGRESS` only after that resource is done — and the
+address answers later still, when the first instance passes its health check.
+
 The stack takes no region of its own: it goes wherever the CLI is pointed. Two
 things inside it do not, and are written out in the instances' user data —
 the ECR registry `332187735950.dkr.ecr.eu-west-2.amazonaws.com` and the
@@ -133,11 +152,10 @@ It is a small template, and it is worth being plain about where it stops.
 - **There is nothing durable.** RocksDB lives in the container's filesystem, on
   the instance store of an instance the auto scaling group is free to replace.
   No volume, no snapshot, no backup: a replaced instance is an empty database.
-- **There are no outputs.** The template exports nothing, so the address to
-  visit — the load balancer's DNS name — is found with
-  `aws elbv2 describe-load-balancers --names ClusterALB` or in the console.
-  `ClusterALB` is also a fixed name, so the stack cannot be deployed twice in
-  one region.
+- **The stack cannot be deployed twice in one region.** `ClusterALB` is a fixed
+  name, and so is the ECR repository the instances pull from. The
+  [`Url` output](#the-address) tells you where one stack is; a second one in the
+  same region fails to create the load balancer at all.
 - **There is no HTTPS.** The listener is HTTP on port 80, in and out. There is
   no certificate, no redirect and no `Scheme: internal` anywhere: everything the
   API carries crosses the internet in the clear.

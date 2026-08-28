@@ -119,12 +119,14 @@ Port 80 on an instance is nginx, so the target group is the UI and the
 should not be: it is the port nodes talk to each other on, and it has no
 authentication of its own.
 
-The name is fixed, so there can be one of these per region, and there are no
-outputs, so its DNS name is found afterwards rather than reported:
+The name is fixed, so there can be one of these per region. Its DNS name is what
+the stack's [`Url` output](/deployment/#the-address) is built from —
+`Fn::GetAtt` of `DNSName` with `http://` in front — so the public address of the
+deployment comes back from `describe-stacks` and does not have to be looked up:
 
 ```bash
-aws elbv2 describe-load-balancers --names ClusterALB \
-  --query 'LoadBalancers[0].DNSName' --output text
+aws cloudformation describe-stacks --stack-name asyncdb \
+  --query 'Stacks[0].Outputs[?OutputKey==`Url`].OutputValue' --output text
 ```
 
 The health check is `GET /asyncdb/health`, which goes through the proxy to the
