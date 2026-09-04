@@ -93,3 +93,55 @@ jobs:
       env:
         VERSION: ${{ env.VERSION }}
 
+    - name: Deploy the stack
+      id: deploy
+      run: |
+        make create-stack
+        echo "created=true" >> $GITHUB_OUTPUT
+        aws cloudformation wait stack-create-complete --stack-name asyncdb
+        URL=$(aws cloudformation describe-stacks \
+          --stack-name asyncdb \
+          --query "Stacks[0].Outputs[?OutputKey=='Url'].OutputValue" \
+          --output text)
+        echo "Stack is at $URL"
+        echo "URL=$URL" >> $GITHUB_ENV
+
+    - name: Wait for the cluster to come up
+      run: |
+        for attempt in $(seq 1 90); do
+          nodes=$(curl -fsS --max-time 10 "$URL/asyncdb/health" | jq '.nodes | length') || nodes=0
+          if [ "${nodes:-0}" = "3" ]; then
+            echo "Three nodes answering after $attempt attempts."
+            exit 0
+          fi
+          echo "Attempt $attempt: ${nodes:-0} of 3 nodes."
+          sleep 10
+        done
+        echo "The cluster did not reach three nodes."
+        exit 1
+      env:
+        URL: ${{ env.URL }}
+
+    - name: Install newman
+      run: npm install -g newman
+
+    - name: Run the API collection
+      run: |
+        newman run api/asyncdb.postman_collection.json \
+          -e api/asyncdb.aws.postman_environment.json \
+          --env-var baseUrl=$URL/asyncdb \
+          --env-var node1=$URL/asyncdb \
+          --env-var node2=$URL/asyncdb \
+          --env-var node3=$URL/asyncdb
+      env:
+        URL: ${{ env.URL }}
+
+    - name: Stack events
+      if: failure() && steps.deploy.outputs.created == 'true'
+      run: make describe-stack
+
+    - name: Tear down the stack
+      if: always() && steps.deploy.outputs.created == 'true'
+      run: |
+        make delete-stack
+        aws cloudformation wait stack-delete-complete --stack-name asyncdb

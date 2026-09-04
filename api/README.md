@@ -9,10 +9,11 @@ status codes, the documented error codes, and the behaviour those documents prom
 | `asyncdb.postman_collection.json` | The collection: eight folders, run in order |
 | `asyncdb.local.postman_environment.json` | One instance answering on the API port, `localhost:8080` |
 | `asyncdb.compose.postman_environment.json` | The three instances of `docker-compose`, through the nginx in front of each |
+| `asyncdb.aws.postman_environment.json` | The three instances of the AWS stack, behind the one load balancer in front of them all |
 
 ## Import
 
-In Postman, **Import** and select all three files, then pick an environment top right. Everything
+In Postman, **Import** and select all four files, then pick an environment top right. Everything
 else — the table names, the keys, the cursor a scan issues — is a collection variable, so nothing
 has to be edited to run it.
 
@@ -31,6 +32,22 @@ Against the whole thing, cluster and all:
 docker-compose up -d
 newman run api/asyncdb.postman_collection.json -e api/asyncdb.compose.postman_environment.json
 ```
+
+Against the deployed stack, whose address is the `Url` output of the CloudFormation stack. Every node
+answers for every key, so the one load balancer stands for all three, and the URL is the only thing
+the environment needs told:
+
+```bash
+URL=$(aws cloudformation describe-stacks --stack-name asyncdb \
+  --query "Stacks[0].Outputs[?OutputKey=='Url'].OutputValue" --output text)
+newman run api/asyncdb.postman_collection.json -e api/asyncdb.aws.postman_environment.json \
+  --env-var baseUrl=$URL/asyncdb --env-var node1=$URL/asyncdb \
+  --env-var node2=$URL/asyncdb --env-var node3=$URL/asyncdb
+```
+
+This is what the build does on a push to `master`: it creates the stack, waits for `/health` to name
+three nodes, runs the collection, and deletes the stack whether the collection passed or not — a
+failing assertion fails the build.
 
 The requests depend on the ones before them — a scan reads what the writes before it seeded, and
 page two of a scan carries the cursor page one issued — so run a folder whole, and run the folders
@@ -57,8 +74,8 @@ that is a create.
   it is running against. Set to 1 it asserts instead that `/health` names no membership at all,
   which is what standing alone looks like, and the rest of the folder runs as it stands: `node1`,
   `node2` and `node3` are then the one instance, and each request is answered where it lands rather
-  than forwarded. Nothing else in the collection is conditional, so both environments run the whole
-  thing and both come back green.
+  than forwarded. Nothing else in the collection is conditional, so every environment runs the whole
+  thing and every one of them comes back green.
 - **Table names are wider than `doc/database/reference.md` says.** The server takes letters of
   either case, digits, spaces, `_` and `-`, so the collection asserts `invalid_table_name` on a name
   holding a `.` rather than on a capital. The reference still says `[a-z0-9_-]`.

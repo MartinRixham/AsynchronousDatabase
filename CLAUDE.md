@@ -262,6 +262,11 @@ Built on [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum), not a m
 
 Pushing to `master` builds the Docker image and, **only if the tag in the `version` file does not already
 exist in ECR**, pushes it, writes that tag to the SSM parameter `/asyncdb/version` and git-tags the commit.
+It then `make create-stack`s the CloudFormation stack, waits for `/health` to name three nodes, runs the
+Postman collection against the stack's `Url` output with `newman`, and `make delete-stack`s it again —
+whether the collection passed or not, so a failing assertion fails the build and still leaves nothing
+running. The teardown deletes only a stack that same run created, so a stack standing by hand makes
+`create-stack` fail and is then left alone (`ClusterALB` is a fixed name, so there can only be one).
 Bump `version` to cut a release; leaving it unchanged makes CI a no-op publish. AWS infrastructure
 lives in `cloudformation.json`, driven by the `Makefile` (`make create-stack` / `update-stack` /
 `delete-stack`), and is documented in `doc/deployment/`.

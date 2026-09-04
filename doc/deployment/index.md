@@ -48,6 +48,15 @@ the working tree is what is deployed — there is no bucket and no packaging ste
 `create-stack` and `update-stack` pass `--capabilities CAPABILITY_NAMED_IAM`
 because the template creates roles.
 
+The same four lines are what the build drives on a push to `master`: it creates
+the stack, waits for `/health` to name three nodes, runs the
+[Postman collection](https://github.com/martinrixham/asyncdb/tree/master/api)
+against the `Url` output with `newman`, and then deletes the stack, whether the
+collection passed or not. A failing assertion fails the build. Because the stack
+[cannot be deployed twice in one region](#what-this-stack-does-not-do), a stack
+left standing by hand makes that `create-stack` fail — and the build then tears
+down nothing, because it deletes only a stack it created itself.
+
 ## The address
 
 The stack has one output, `Url`: the load balancer's DNS name with `http://` in
