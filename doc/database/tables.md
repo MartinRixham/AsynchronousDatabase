@@ -91,12 +91,6 @@ This is the only cheap way to delete a lot of data. Deleting the records of a
 table one by one, or over a range, leaves tombstones behind
 ([delete a range](#delete-a-range)).
 
-## Maintenance
-
-Both of these are operator actions. They are in the API because they are
-sometimes the answer to a performance problem, not because a client should call
-them in normal use.
-
 ### Delete a range
 
 ```http
@@ -106,7 +100,7 @@ DELETE /table/account/key?prefix=user:2019
 Deletes every record in the range in one operation, as a RocksDB range
 tombstone rather than a delete per key. `204 No Content`.
 
-Two things to know before using it:
+Two one to know before using it:
 
 - Range tombstones make reads that cross them slower, because every read in the
   range has to consult the tombstone. A table that accumulates many of them
