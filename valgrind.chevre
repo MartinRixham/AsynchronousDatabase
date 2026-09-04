@@ -5,13 +5,43 @@
 # but asyncdb is a server that serves until it is signalled, so verify would
 # never finish. Memcheck the test binary instead: it drives the same code, a real
 # server included, and it returns.
+#
+# It fails the build on a leak, but only on the two kinds that are ours to fix:
+# definitely lost and possibly lost. --error-exitcode=1 would be the obvious way
+# to do that and is deliberately not used, because it fails on every error
+# valgrind finds, still reachable included - and the release image builds on
+# musl, where a block still held at exit by libstdc++, RocksDB or curl would fail
+# the build untested. Hence the grep: the summary names the kinds separately, so
+# a count that is not zero in either of those two is what stops the build.
 
 options="$(echo "$@" | jq -r .options | not is_null)"
 args="$(echo "$@" | jq -r .args | not is_null)"
 
+# The summary counts thousands with commas, so a leak is a count that begins
+# with something other than a zero.
+leaked()
+{
+	grep -qE '(definitely|possibly) lost: [1-9]' "$1"
+}
+
 memcheck()
 {
-	verbose valgrind --leak-check=yes $options "$1" $args < /dev/null
+	local log="$1.valgrind"
+	local status=0
+
+	# --log-file keeps valgrind's own report out of the test binary's output, so
+	# that the report can be read on its own once the suite has finished. The
+	# binary still writes to the terminal as it runs.
+	verbose valgrind --leak-check=yes --log-file="$log" $options "$1" $args < /dev/null || status=$?
+
+	cat "$log"
+
+	if leaked "$log"; then
+		echo "$SCRIPT_NAME: $1 leaks memory, see the leak summary above" >&2
+		status=1
+	fi
+
+	return $status
 }
 
 get_sources test | map get_output | filter is_executable_object | map get_executable | map memcheck

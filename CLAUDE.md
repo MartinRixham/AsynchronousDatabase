@@ -34,9 +34,11 @@ Notes:
 - `-Wall -Werror` — any warning fails the build. `cppcheck --enable=style` runs in the `validate` phase.
 - The `verify` phase memchecks under valgrind, which is why `cmk verify` takes minutes rather than seconds.
   Cheesemake's own `valgrind.chevre` runs `build/bin/asyncdb`, and that serves until it is signalled, so the
-  root `valgrind.chevre` overrides it and runs `build/test/test_main` instead. The suite is clean of definite
-  and possible leaks, but the plugin only reports: `--error-exitcode=1` is deliberately not set, because the
-  release image builds on musl, where a leak of glibc's or RocksDB's own would fail the build untested.
+  root `valgrind.chevre` overrides it and runs `build/test/test_main` instead, keeping the report in
+  `build/test/test_main.valgrind`. **A definite or possible leak fails the build**, and the suite is clean of
+  both. It is the plugin's own grep of the leak summary that fails it, and not `--error-exitcode=1`: that
+  would fail on every error valgrind reports, still reachable included, and the release image builds on musl,
+  where a block libstdc++ or RocksDB still holds at exit would fail the build untested.
 - **A test that starts a server has to stop it.** `serve()` returns only when the acceptor is closed, and an
   always-pending accept holds a `shared_ptr` to the server, so a detached serving thread leaks the server,
   its thread pool and its RocksDB. `server_test` closes and joins in `TearDown`.
