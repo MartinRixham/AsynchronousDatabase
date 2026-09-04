@@ -9,6 +9,11 @@
     "ECSAMI": {
       "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
       "Default": "/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id"
+    },
+    "Version": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Default": "/asyncdb/version",
+      "Description": "The image tag to run, resolved at deploy time from the SSM parameter the build writes after it pushes to ECR. The repository's version file is what that build reads, so the tag deployed here is the one CI actually published rather than whatever happens to be checked out."
     }
   },
   "Mappings": {
@@ -246,7 +251,7 @@
                   "unzip awscliv2.zip",
                   "./aws/install",
                   "REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com",
-                  "VERSION=0.0.2",
+                  { "Fn::Join": [ "", [ "VERSION=", { "Ref": "Version" } ] ] },
                   "IMAGE=$REGISTRY_URL/asyncdb:$VERSION",
                   "aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL",
                   "docker pull $IMAGE",

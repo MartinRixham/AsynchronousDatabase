@@ -261,10 +261,21 @@ Built on [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum), not a m
 ## Release
 
 Pushing to `master` builds the Docker image and, **only if the tag in the `version` file does not already
-exist in ECR**, tags it and git-tags the commit. Bump `version` to cut a release; leaving it unchanged
-makes CI a no-op publish. Note that the `docker push` line in `.github/workflows/build.yaml` is currently
-commented out, so a release tags the commit but ships no image until it is put back. AWS infrastructure
+exist in ECR**, pushes it, writes that tag to the SSM parameter `/asyncdb/version` and git-tags the commit.
+Bump `version` to cut a release; leaving it unchanged makes CI a no-op publish. AWS infrastructure
 lives in `cloudformation.json`, driven by the `Makefile` (`make create-stack` / `update-stack` /
-`delete-stack`), and is documented in `doc/deployment/`. The etcd tier is three instances at addresses
-fixed in the template's `Etcd` mapping, not a discovery service: `ASYNCDB_ETCD` is `Fn::FindInMap` of
-that same mapping, which is what joins the database tier into a cluster.
+`delete-stack`), and is documented in `doc/deployment/`.
+
+`version` is the only place the tag is written by hand. The template's `Version` parameter is an
+`AWS::SSM::Parameter::Value<String>` defaulting to `/asyncdb/version`, so `make update-stack` resolves
+the tag at deploy time from what CI actually published rather than from the working tree — which is why
+the Makefile passes no parameter, and why passing one means passing the *parameter name* and never the
+tag. A `LaunchTemplate` change does not recycle running instances, so a release reaches an instance only
+when that instance is replaced. **The parameter has to exist before the first deploy**: CloudFormation
+cannot resolve it otherwise, and an instance that cannot pull its tag has no container at all, fails the
+ALB health check on `/asyncdb/health`, and is replaced by another that cannot pull either — the load
+balancer answers 502 throughout.
+
+The etcd tier is three instances at addresses fixed in the template's `Etcd` mapping, not a discovery
+service: `ASYNCDB_ETCD` is `Fn::FindInMap` of that same mapping, which is what joins the database tier
+into a cluster.

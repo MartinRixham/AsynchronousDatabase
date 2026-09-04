@@ -36,7 +36,7 @@ curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip
 unzip awscliv2.zip
 ./aws/install
 REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com
-VERSION=0.0.2
+VERSION=0.0.3          # { "Ref": "Version" }, resolved from SSM at deploy time
 IMAGE=$REGISTRY_URL/asyncdb:$VERSION
 aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL
 docker pull $IMAGE
@@ -52,10 +52,13 @@ Docker is already there — that is what the AMI is for. The AWS CLI is installe
 because the version on Amazon Linux 2 is v1, and `get-login-password` is a v2
 command; installing v2 over it is the shortest way to a working `docker login`.
 
-The registry account and the region are literals, and so is the version. The
-consequences are on the [overview](/deployment/#before-the-first-deploy): the
-stack is really only deployable into one account's `eu-west-2`, and a new
-release is a change to this template.
+The registry account and the region are literals; the version is not. That line
+is the template's `Version` parameter — an
+`AWS::SSM::Parameter::Value<String>` reading `/asyncdb/version`, which the build
+writes after it pushes — joined into the script, so the shell sees a tag and
+CloudFormation resolved it at deploy time. The consequence of the two that *are*
+literals is on the [overview](/deployment/#before-the-first-deploy): the stack is
+really only deployable into one account's `eu-west-2`.
 
 The last four lines are what make the instance a member of a cluster rather than
 a database of its own:

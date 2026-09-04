@@ -79,6 +79,7 @@ come up and pull nothing.**
 | --- | --- | --- |
 | `InstanceType` | `t3.micro` | Used for both groups — the database instances and the etcd instances |
 | `ECSAMI` | `/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id` | An SSM public parameter, resolved at deploy time to the current AMI id |
+| `Version` | `/asyncdb/version` | An SSM parameter of this account's, resolved at deploy time to the image tag the instances pull |
 
 The ECS-optimised AMI is used **for Docker, not for ECS**. There is no ECS
 cluster in the template, no task definition and no agent doing anything; the AMI
@@ -98,7 +99,7 @@ its neighbours.
 
 ## Before the first deploy
 
-Three things the template needs and does not create:
+Four things the template needs and does not create:
 
 - **A key pair named `asyncdb`.** Both launch templates set
   `KeyName: asyncdb`, and an instance launch with a key pair that does not exist
@@ -108,11 +109,22 @@ Three things the template needs and does not create:
   user data asks for. The repository is where
   [the release](#the-image-the-instances-pull) pushes, and it is not part of
   this stack.
-- **The image tag itself.** The user data pins `VERSION=0.0.2`. An instance that
-  cannot pull simply has no container: `docker run` fails, the load balancer
-  takes the instance out of service on the health check, and the group, whose
-  health check is `ELB`, replaces it — with the same tag, so an instance that
-  cannot pull is replaced by another that cannot either.
+- **An SSM parameter named `/asyncdb/version`**, in `eu-west-2`, holding that
+  tag. The `Version` parameter resolves it at deploy time, so a stack operation
+  fails outright if it does not exist. The release writes it; before the first
+  release there has been no write, so create it by hand:
+
+  ```bash
+  aws ssm put-parameter --name /asyncdb/version --type String \
+    --value "$(cat version)" --overwrite
+  ```
+
+- **The image tag itself**, pushed under that name. An instance that cannot pull
+  simply has no container: `docker run` fails, the load balancer takes the
+  instance out of service on the health check, and the group, whose health check
+  is `ELB`, replaces it — with the same tag, so an instance that cannot pull is
+  replaced by another that cannot either, and the load balancer answers 502 for
+  as long as that lasts.
 
 ## The image the instances pull
 
@@ -122,13 +134,20 @@ the built UI and reverse-proxying `/asyncdb/*` to the `asyncdb` binary on port
 
 The tag is the contents of the `version` file at the root of the repository.
 Pushing to `master` runs `.github/workflows/build.yaml`, which builds the image,
-asks ECR whether that tag exists, and only if it does not tags it and git-tags
-the commit. So a release is: change `version`, push, then bump `VERSION` in the
-user data of `LaunchTemplate` and `make update-stack`. **The version is in two
-places and nothing checks that they agree.**
+asks ECR whether that tag exists, and only if it does not pushes it, writes the
+tag to `/asyncdb/version` and git-tags the commit. So a release is: change
+`version`, push, then `make update-stack` and replace the instances.
 
-Note that the `docker push` line in that workflow is currently commented out, so
-CI tags the commit and ships no image.
+**`version` is the only place the tag is written by hand.** The template does not
+name it: the `Version` parameter reads `/asyncdb/version`, and the deploy
+therefore picks up what CI actually published rather than whatever the working
+tree happens to hold. Passing the parameter explicitly means passing the
+*parameter name*, never the tag — which is why the `Makefile` passes nothing at
+all.
+
+The workflow needs `ssm:PutParameter` on `arn:aws:ssm:eu-west-2:*:parameter/asyncdb/*`
+for that write. It runs before the git tag, so if the grant is missing the image
+is pushed and the commit is left untagged.
 
 ## Rolling out a new version
 
