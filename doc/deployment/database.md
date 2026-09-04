@@ -25,7 +25,8 @@ names it by `Ref` — the profile's generated name — which is why the stack ne
 
 `ImageId` and `InstanceType` come from the [parameters](/deployment/#parameters),
 the security group is `InstanceSecurityGroup`, the key pair is the `asyncdb` one
-that has to exist already, and the rest is user data — a base64 `Fn::Join` of
+that has to exist already, the root volume is [thirty gigabytes of
+gp3](#the-root-volume), and the rest is user data — a base64 `Fn::Join` of
 shell lines, run once as root at first boot:
 
 ```bash
@@ -82,6 +83,46 @@ on its own. The instance is replaced for it, because the group's health check is
 `ELB` and the container is the only thing that answers the path the load balancer
 asks for.
 
+## The root volume
+
+```json
+"BlockDeviceMappings": [
+  {
+    "DeviceName": "/dev/xvda",
+    "Ebs": {
+      "VolumeSize": 30,
+      "VolumeType": "gp3",
+      "DeleteOnTermination": true
+    }
+  }
+]
+```
+
+There was no `BlockDeviceMappings` here at all, and an instance took whatever the
+AMI's snapshot specified: thirty gigabytes of **gp2**. The size was never the
+problem — the IO credits were. gp2 earns three IOPS per gigabyte, so a thirty
+gigabyte volume has a baseline of a hundred, burstable to three thousand only
+while the bucket lasts. RocksDB is an LSM tree: a write is a write-ahead log
+append now and a compaction read-and-rewrite later, so a run of sustained writes
+spends credits faster than it earns them and then falls to the baseline —
+`write_stalled` on a volume that looked fast for the first few minutes of a load
+test.
+
+**gp3 has no credits.** Three thousand IOPS and 125 MB/s are the floor, not a
+burst, they are the same in the tenth minute as in the first, and at this size
+gp3 is slightly cheaper than the gp2 it replaces. Declaring the mapping also
+means the number is the template's rather than the AMI's, so a new ECS AMI cannot
+change it underneath the stack.
+
+`/dev/xvda` is the root device of the Amazon Linux 2 AMI, so this is the volume
+the whole instance runs on and not a second one: the OS, docker's image store,
+the logs and the database all share it. That is a thing to know rather than a
+thing this fixes — [nothing here is
+durable](/deployment/#what-this-stack-does-not-do), the container mounts no
+volume, and RocksDB is writing into the overlay filesystem at `/tmp/asyncdb`.
+gp3 makes that storage predictable. It does not make it persistent, and it is
+not the instance-local NVMe a write-heavy store would want.
+
 ## The auto scaling group
 
 `AutoScalingGroup` spans all three subnets, launches from the launch template at
@@ -98,11 +139,19 @@ an instance whose *application* has failed and not only one whose *instance* has
 an instance whose pull failed, or whose container exited, is one the load balancer
 has already stopped sending traffic to, and the group now takes it out too.
 
-`HealthCheckGracePeriod` is `600` seconds, and the number matters. The user data
-installs the AWS CLI before it logs in and pulls, and an instance marked unhealthy
-before it has had time to start is a group that replaces instances forever. Ten
-minutes is comfortably more than a cold pull takes and is measured from the
-launch, not from the first check.
+`HealthCheckGracePeriod` is `200` seconds, and the number matters. It is measured
+from the launch and not from the first check, and everything in the user data has
+to fit inside it: a `yum -y update`, a download and install of AWS CLI v2, a
+`docker login` and then a cold `docker pull` of the image. An instance marked
+unhealthy before it has finished that is replaced by another that starts the same
+work from the beginning, which is a group that replaces instances forever.
+
+**Three and a bit minutes is not a generous margin for that sequence.** It holds
+because the pull is from ECR in the same region, but a slow `yum` mirror or a
+larger image is enough to eat it, and the failure it produces looks like an
+instance that never comes up rather than like a timeout. There is room to raise
+it: nothing waits on the grace period except the first health check of a genuinely
+dead instance.
 
 There is also no `UpdatePolicy`, so
 [a new version is not rolled out](/deployment/#rolling-out-a-new-version) by

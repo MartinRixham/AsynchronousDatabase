@@ -178,8 +178,11 @@ again.
 It is a small template, and it is worth being plain about where it stops.
 
 - **There is nothing durable.** RocksDB lives in the container's filesystem, on
-  the instance store of an instance the auto scaling group is free to replace.
-  No volume, no snapshot, no backup: a replaced instance is an empty database.
+  the [root volume](/deployment/database#the-root-volume) of an instance the auto
+  scaling group is free to replace. The volume is EBS and is declared by the
+  launch template, but `DeleteOnTermination` is true and nothing mounts it into
+  the container: no volume, no snapshot, no backup, and a replaced instance is an
+  empty database.
 - **The stack cannot be deployed twice in one region.** `ClusterALB` is a fixed
   name, and so is the ECR repository the instances pull from. The
   [`Url` output](#the-address) tells you where one stack is; a second one in the
