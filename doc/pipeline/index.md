@@ -82,9 +82,11 @@ exactly what the `Dockerfile` covers:
 
 Everything else in the repository is a thing a person runs:
 
-- `api/` — the Postman collection needs a server already up, and no step starts
-  one.
-- `automation/` — the Playwright journeys are not installed, let alone run.
+- `api/` and `automation/` — both need a server already up, and on a push to
+  `master` the deploy step is what gives them one: the collection and then the
+  Playwright journeys run against the stack the build stood up, and it is deleted
+  again whether they passed or not. On a pull request nothing runs them, because
+  nothing is deployed.
 - `perf/` — the load harness likewise.
 - `doc/` — this wiki is never built, so a VitePress error or a broken link
   reaches `master` unnoticed.

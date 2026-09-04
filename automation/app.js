@@ -1,8 +1,7 @@
-// Loads the page with the fake database behind it, and finds a table in the graph the page draws.
+// Loads the page of the running instance, and finds a table in the graph it draws.
 
-export async function open(page, database) {
+export async function open(page) {
 
-	await database.serve(page);
 	await page.goto("/");
 
 	// The page fetches its own html at runtime, so a test starts once the tables page is there.

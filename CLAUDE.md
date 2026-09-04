@@ -78,13 +78,22 @@ a scan's second page carries the cursor its first page issued — so run whole f
 Playwright, end to end over the UI in Chromium, and no part of `cmk`:
 
 ```bash
+podman-compose up -d                                              # or docker-compose
 cd automation && npm install && npx playwright install chromium   # once
 npm test
 ```
 
-The config starts `vite` in `ui/` on port 4173 itself, and `FakeDatabase` fulfils the
-`/asyncdb/table*` requests with `page.route`, so no server has to be up — the real `DatabaseClient`
-is still what sends them. Specs match `*Test.js`, as in `ui/test`.
+**The tests start nothing.** They drive an instance that is already running, at `ASYNCDB_URL`
+(default `http://localhost:8080`, the first node of compose) — one address for the whole thing,
+because the nginx in front of each instance serves the UI and proxies `/asyncdb` to the database.
+The `Url` output of the CloudFormation stack is the other one, which is what `build.yaml` passes
+after the Postman collection and before it tears the stack down. `globalSetup.js` waits up to a
+minute for `/asyncdb/health` and stops the run with that address if nothing answers.
+
+There is no stub: `Database.js` seeds the tables a journey starts on over the real API and reads
+back what the page wrote. **Each test drops every table it finds, before and after** — the graph the
+page draws is every table the instance holds — which is why the suite runs `workers: 1` and why
+`ASYNCDB_URL` must name an instance whose tables can go. Specs match `*Test.js`, as in `ui/test`.
 
 ### Load tests (`perf/`)
 

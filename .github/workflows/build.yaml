@@ -114,6 +114,26 @@ jobs:
           --env-var node2=$URL/asyncdb \
           --env-var node3=$URL/asyncdb
 
+    - name: Install the browser tests
+      working-directory: automation
+      run: |
+        npm install
+        npx playwright install --with-deps chromium
+
+    # The UI in a real browser, against the same stack the collection just ran against. It drops
+    # the tables it finds before each journey, so it runs after the collection and not before it.
+    - name: Run the browser tests
+      working-directory: automation
+      run: ASYNCDB_URL=$URL npm test
+
+    - name: The report of a failed browser run
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-report
+        path: automation/playwright-report/
+        retention-days: 7
+
     - name: Stack events
       if: failure() && steps.deploy.outputs.created == 'true'
       run: make describe-stack
