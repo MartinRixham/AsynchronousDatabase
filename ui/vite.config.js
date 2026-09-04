@@ -20,8 +20,23 @@ const renameDatum = {
 	}
 };
 
+// `npm start` serves the UI on its own, without the nginx that fronts it in the
+// image, so `/asyncdb` is proxied to a server run by `cmk run` instead.  The
+// prefix is stripped the way `server/server.conf` strips it, off the raw target
+// rather than the decoded path, so a key holding a %2F stays one segment: Vite
+// hands `rewrite` the untouched `req.url`, query string and all.
+const proxy = {
+	"/asyncdb": {
+		target: process.env.ASYNCDB_URL || "http://localhost:8080",
+		changeOrigin: true,
+		rewrite: path => path.replace(/^\/asyncdb\/*/, "/")
+	}
+};
+
 export default defineConfig({
 	plugins: [renameDatum],
+	server: { proxy },
+	preview: { proxy },
 	resolve: {
 		alias: [
 			{ find: /^~/, replacement: root },
