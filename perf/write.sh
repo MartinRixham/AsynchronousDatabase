@@ -57,8 +57,12 @@ echo "PUT $base/table/$table/key, $value_bytes byte values, $threads threads," \
 	"$requests requests each." >&2
 
 measure
+verdict=$?
 
 echo
 echo "Table"
 curl --silent "$base/table/$table" | sed 's/^/ /'
 echo
+
+# The table is reported whether the run passed or failed, so the verdict is carried past it.
+exit $verdict

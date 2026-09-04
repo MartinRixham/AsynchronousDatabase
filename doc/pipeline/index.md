@@ -87,7 +87,10 @@ Everything else in the repository is a thing a person runs:
   Playwright journeys run against the stack the build stood up, and it is deleted
   again whether they passed or not. On a pull request nothing runs them, because
   nothing is deployed.
-- `perf/` — the load harness likewise.
+- `perf/` — the load harness likewise, and on `master` it is the last thing the
+  deploy step's stack sees: `perf/write.sh` and then `perf/read.sh` over the load
+  balancer, failing the build if the cluster answers any of that load with
+  anything but a 2xx.
 - `doc/` — this wiki is never built, so a VitePress error or a broken link
   reaches `master` unnoticed.
 

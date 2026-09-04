@@ -16,6 +16,7 @@ base=${BASE:-http://localhost:8080/asyncdb}
 work=$(mktemp -d)
 workers=()
 count=0
+failed=0
 
 stop()
 {
@@ -110,6 +111,12 @@ report()
 
 	count=$(wc -l < "$work/times")
 
+	# A transfer that never answered reports status 000, so anything but a 2xx is a request the
+	# server did not serve, and a missing line is a request that did not report at all.
+	local answered
+	answered=$(cut -d ' ' -f 1 "$work/all" | grep -c '^2') || answered=0
+	failed=$((threads * requests - answered))
+
 	printf '\n%s responses in %d.%02ds over %s connections\n\n' \
 		"$count" "$((elapsed / 1000))" "$((elapsed % 1000 / 10))" "$(connections)"
 
@@ -150,4 +157,13 @@ measure()
 
 	# Milliseconds, so that the report is integer arithmetic all the way down.
 	report "$((($(date +%s%N) - start) / 1000000))"
+
+	# The run is a test and not only a measurement: a load a server answers with errors, or does
+	# not answer at all, is a failure, and the exit status is what says so to whatever ran it.
+	if [ "$failed" -gt 0 ]; then
+		printf '\n %s of %s requests did not answer 2xx.\n' \
+			"$failed" "$((threads * requests))" >&2
+
+		return 1
+	fi
 }

@@ -134,6 +134,19 @@ jobs:
         path: automation/playwright-report/
         retention-days: 7
 
+    # The load harness against the same stack, over the load balancer. It is a test and not only a
+    # measurement: a request the cluster answers with anything but a 2xx, or does not answer at all,
+    # exits non-zero and fails the build. It runs last because it writes a table of its own and
+    # leaves it behind, which the browser tests, dropping every table they find, would not survive.
+    - name: Run the load tests
+      env:
+        THREADS: '8'
+        REQUESTS: '250'
+      run: |
+        export BASE=$URL/asyncdb
+        VALUE_BYTES=1024 perf/write.sh
+        URL=$BASE/table/perf_load/key/0 perf/read.sh
+
     - name: Stack events
       if: failure() && steps.deploy.outputs.created == 'true'
       run: make describe-stack
