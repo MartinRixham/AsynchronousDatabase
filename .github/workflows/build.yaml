@@ -47,27 +47,13 @@ jobs:
         else
           echo "publish=true" >> $GITHUB_OUTPUT
         fi
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_DEFAULT_REGION: eu-west-2
-        VERSION: ${{ env.VERSION }}
 
-    - name: Tag Docker image for ECR
+    - name: Tag and push Docker image to ECR
       if: steps.check_version.outputs.publish == 'true'
       run: |
         IMAGE_URI=${{ steps.ecr-login.outputs.registry }}/asyncdb:$VERSION
         docker tag asyncdb:latest $IMAGE_URI
-      env:
-        VERSION: ${{ env.VERSION }}
-
-    - name: Push Docker image to ECR
-      if: steps.check_version.outputs.publish == 'true'
-      run: |
-        IMAGE_URI=${{ steps.ecr-login.outputs.registry }}/asyncdb:$VERSION
         docker push $IMAGE_URI
-      env:
-        VERSION: ${{ env.VERSION }}
 
     - name: Record published version in SSM
       if: steps.check_version.outputs.publish == 'true'
@@ -77,8 +63,6 @@ jobs:
           --type String \
           --value "$VERSION" \
           --overwrite
-      env:
-        VERSION: ${{ env.VERSION }}
 
     - name: Tag Git repo with version
       if: steps.check_version.outputs.publish == 'true'
@@ -90,8 +74,6 @@ jobs:
           git tag "$VERSION"
           git push origin "$VERSION"
         fi
-      env:
-        VERSION: ${{ env.VERSION }}
 
     - name: Deploy the stack
       id: deploy
@@ -119,8 +101,6 @@ jobs:
         done
         echo "The cluster did not reach three nodes."
         exit 1
-      env:
-        URL: ${{ env.URL }}
 
     - name: Install newman
       run: npm install -g newman
@@ -133,8 +113,6 @@ jobs:
           --env-var node1=$URL/asyncdb \
           --env-var node2=$URL/asyncdb \
           --env-var node3=$URL/asyncdb
-      env:
-        URL: ${{ env.URL }}
 
     - name: Stack events
       if: failure() && steps.deploy.outputs.created == 'true'

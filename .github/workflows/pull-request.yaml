@@ -1,0 +1,36 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [ main, master ]
+
+# The two Dockerfile stages are independent, so they run as two jobs on two runners rather
+# than one after the other. Building the stages rather than compiling on the runner is what
+# keeps this identical to what `build.yaml` will do on master: same alpine, same musl, same
+# package versions.
+jobs:
+
+  server:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # cppcheck, compile, gtest, then the suite again under valgrind - the `verify` phase of
+    # recipe.json, which is why this takes minutes.
+    - name: Validate, compile, test and memcheck
+      run: docker build --target builder .
+
+  ui:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # eslint and vitest, then the production bundle.
+    - name: Lint, test and build the UI
+      run: docker build --target ui .
