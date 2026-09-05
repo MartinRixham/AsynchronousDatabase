@@ -197,8 +197,12 @@ cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 		return placement();
 	}
 
+	// The copies are the copies of the key's *partition*, so that every key in it is held by the
+	// same three nodes — which is what makes a partition a thing that can be led.
+	//
 	// The name of the namespace is hidden here by the name of the base class.
-	std::vector<member> owners = ::cluster::owners_of(key, registered);
+	std::vector<member> owners =
+		::cluster::owners_of(::cluster::partition_name(::cluster::partition_of(key)), registered);
 	placement where;
 
 	where.local = false;
@@ -238,6 +242,60 @@ std::vector<std::string> cluster::etcd_cluster::peers() const
 	}
 
 	return peers;
+}
+
+std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::string &key) const
+{
+	// One node, or none that etcd would name, races with nobody, so there is nothing to order.
+	if (members().size() < 2)
+	{
+		return std::nullopt;
+	}
+
+	size_t partition = ::cluster::partition_of(key);
+
+	std::shared_lock<std::shared_mutex> lock(leader_mutex);
+
+	std::map<size_t, leadership>::const_iterator found = leader_list.find(partition);
+
+	// A partition nothing is known to lead is a leadership that is not known, and not the absence
+	// of leadership: a write of it waits for an election rather than going around one.
+	return found == leader_list.end() ? leadership() : found->second;
+}
+
+size_t cluster::etcd_cluster::leads() const
+{
+	std::shared_lock<std::shared_mutex> lock(leader_mutex);
+
+	return std::count_if(
+		leader_list.begin(),
+		leader_list.end(),
+		[](const std::pair<size_t, leadership> &led) { return led.second.local; });
+}
+
+bool cluster::etcd_cluster::accept(const std::string &key, int64_t term)
+{
+	size_t partition = ::cluster::partition_of(key);
+
+	std::lock_guard<std::mutex> lock(term_mutex);
+
+	std::map<size_t, int64_t>::const_iterator seen = terms.find(partition);
+
+	// A write no leader ordered is a cluster that has no leadership, and it is applied as it always
+	// was. A cluster that does have one never sends a term of nothing.
+	if (term == 0)
+	{
+		return true;
+	}
+
+	if (seen != terms.end() && term < seen->second)
+	{
+		return false;
+	}
+
+	terms[partition] = term;
+
+	return true;
 }
 
 std::vector<std::vector<std::string>> cluster::etcd_cluster::zones() const
@@ -288,6 +346,7 @@ void cluster::etcd_cluster::refresh()
 	}
 
 	read_members();
+	read_leaders();
 }
 
 bool cluster::etcd_cluster::register_node()
@@ -312,6 +371,135 @@ bool cluster::etcd_cluster::register_node()
 
 	return etcd_client.put(
 		configuration.prefix + configuration.node, boost::json::serialize(registration), lease);
+}
+
+// Leadership is claimed rather than agreed: the first node to create the partition's key in etcd
+// leads it, and the transaction that creates it is what makes two claimants one leader. A node
+// claims only the partitions it holds a copy of, because a leader writes to itself first.
+void cluster::etcd_cluster::read_leaders()
+{
+	std::vector<member> registered = members();
+
+	if (registered.size() < 2)
+	{
+		return;
+	}
+
+	// A claim is written on this node's own lease, so a node that stops renewing stops leading. A
+	// node with no lease has nothing to claim on and would leave a leadership behind that nothing
+	// ever expires.
+	if (lease == 0)
+	{
+		return;
+	}
+
+	std::map<std::string, std::string> held = etcd_client.range(configuration.leader_prefix);
+	std::map<size_t, leadership> known;
+	size_t claims = 0;
+
+	// The partitions are walked from an offset of this node's own rather than from the first one,
+	// so that nodes claim different parts of the ring instead of racing each other for the same
+	// partitions on every pass — which spreads leadership by arithmetic rather than by luck, and
+	// spends fewer round trips losing.
+	size_t offset = ::cluster::score(configuration.node, "leader") % partition_count;
+
+	for (size_t i = 0; i < partition_count; i++)
+	{
+		size_t partition = (offset + i) % partition_count;
+		std::string key = configuration.leader_prefix + std::to_string(partition);
+		std::map<std::string, std::string>::const_iterator holder = held.find(key);
+
+		if (holder != held.end())
+		{
+			// The term is not in the value, so a leadership read back from the range is the node
+			// alone until this instance claims it or is told the revision another way. Reading it
+			// is what routes a write; leading it is what fences one.
+			leadership led;
+
+			led.known = true;
+			led.local = holder->second == configuration.node;
+			led.node = holder->second;
+			led.term = term_of(holder->second, partition);
+
+			known[partition] = led;
+
+			continue;
+		}
+
+		// Nothing leads it, so this node claims it if it is one of the copies — and if it has not
+		// already claimed as many as it takes on one pass. What is left over is claimed on the
+		// next one, by this node or by another copy of it, and until then a write of it is
+		// answered as having no leader.
+		if (claims >= configuration.claims_per_refresh || !holds(registered, partition))
+		{
+			continue;
+		}
+
+		claims++;
+
+		std::optional<etcd::claim> claimed = etcd_client.create(key, configuration.node, lease);
+
+		if (!claimed)
+		{
+			continue;
+		}
+
+		leadership led;
+
+		led.known = true;
+		led.local = claimed->holder == configuration.node;
+		led.node = claimed->holder;
+		led.term = claimed->revision;
+
+		known[partition] = led;
+
+		if (claimed->held)
+		{
+			remember_term(partition, claimed->revision);
+
+			DEBUG(
+				"Node " + configuration.node + " leads partition " + std::to_string(partition) +
+				" in term " + std::to_string(claimed->revision) + ".");
+		}
+	}
+
+	std::unique_lock<std::shared_mutex> lock(leader_mutex);
+
+	leader_list = known;
+}
+
+bool cluster::etcd_cluster::holds(const std::vector<member> &registered, size_t partition) const
+{
+	std::vector<member> owners = ::cluster::owners_of(::cluster::partition_name(partition), registered);
+
+	return std::any_of(
+		owners.begin(),
+		owners.end(),
+		[this](const member &owner) { return owner.node == configuration.node; });
+}
+
+int64_t cluster::etcd_cluster::term_of(const std::string &holder, size_t partition) const
+{
+	if (holder != configuration.node)
+	{
+		return 0;
+	}
+
+	std::lock_guard<std::mutex> lock(term_mutex);
+
+	std::map<size_t, int64_t>::const_iterator remembered = terms.find(partition);
+
+	return remembered == terms.end() ? 0 : remembered->second;
+}
+
+void cluster::etcd_cluster::remember_term(size_t partition, int64_t term)
+{
+	std::lock_guard<std::mutex> lock(term_mutex);
+
+	if (term > terms[partition])
+	{
+		terms[partition] = term;
+	}
 }
 
 void cluster::etcd_cluster::read_members()

@@ -13,6 +13,17 @@
 
 namespace etcd
 {
+	// The answer to a claim on a key: who holds it, and the revision it was created at. The claim
+	// was this caller's when it was the one that created it.
+	struct claim
+	{
+		bool held = false;
+
+		std::string holder;
+
+		int64_t revision = 0;
+	};
+
 	// etcd speaks gRPC, but every call it offers is also a POST of a JSON document to its gateway,
 	// where a key and a value travel base64 encoded. That is the whole reason there is no gRPC
 	// dependency here: libcurl and Boost.JSON are already in the build.
@@ -42,6 +53,14 @@ namespace etcd
 		bool keep_alive(int64_t lease) const;
 
 		bool put(const std::string &key, const std::string &value, int64_t lease) const;
+
+		// Writes the key only if nothing holds it, which is how a node is elected: the one whose
+		// write created the key leads, and the others are told who did. The revision the key was
+		// created at comes back with it, and it is the term — etcd's revisions only ever rise, so
+		// a later leader of the same partition always has a higher one than the leader before it.
+		//
+		// Nothing at all is a call that failed, which is neither a claim won nor one lost.
+		std::optional<claim> create(const std::string &key, const std::string &value, int64_t lease) const;
 
 		// Every key under the prefix, with its value, in etcd's key order.
 		std::map<std::string, std::string> range(const std::string &prefix) const;

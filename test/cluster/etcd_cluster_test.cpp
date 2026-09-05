@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,26 @@ namespace
 		return config;
 	}
 
+	// Which partitions a node claimed, read back out of what it sent to etcd.
+	std::set<std::string> claimed(const http::fake_client &http)
+	{
+		std::set<std::string> keys;
+		std::vector<http::request> sent = http.sent_to("/v3/kv/txn");
+
+		for (size_t i = 0; i < sent.size(); i++)
+		{
+			boost::json::object body = boost::json::parse(sent[i].body).as_object();
+			std::string key;
+
+			base64::decode(
+				std::string(body.at("compare").as_array()[0].as_object().at("key").as_string()), &key);
+
+			keys.insert(key);
+		}
+
+		return keys;
+	}
+
 	// The membership as etcd holds it: a node writes where it answers and which zone it is in.
 	std::string membership(const std::vector<cluster::member> &nodes)
 	{
@@ -69,6 +90,13 @@ namespace
 		return members;
 	}
 
+	// Where a key's copies are decided: by its partition, so that every key of a partition is held
+	// by the same nodes.
+	std::string owner_of(const std::string &key, const std::vector<std::string> &nodes)
+	{
+		return cluster::owner_of(cluster::partition_name(cluster::partition_of(key)), nodes);
+	}
+
 	// The addresses of the membership, which is what most of this is about.
 	std::vector<std::string> names(const std::vector<cluster::member> &members)
 	{
@@ -80,6 +108,17 @@ namespace
 		}
 
 		return names;
+	}
+
+	// Nothing leads any partition, and every claim is won.
+	void answer_elections(http::fake_client *http, int64_t revision)
+	{
+		http->answer(
+			"/v3/kv/txn",
+			http::answer(
+				200,
+				"application/json",
+				"{\"header\":{\"revision\":\"" + std::to_string(revision) + "\"},\"succeeded\":true}"));
 	}
 
 	void answer_etcd(http::fake_client *http, const std::vector<cluster::member> &nodes)
@@ -215,7 +254,7 @@ TEST(etcd_cluster_test, name_the_node_that_holds_a_key)
 
 		// A cluster of one zone keeps one copy, so a key is either this node's own or the other
 		// node's, and never both.
-		if (cluster::owner_of(key, { one, two }) == one)
+		if (owner_of(key, { one, two }) == one)
 		{
 			EXPECT_TRUE(where.local);
 			EXPECT_TRUE(where.nodes.empty());
@@ -343,10 +382,10 @@ TEST(etcd_cluster_test, keep_one_copy_of_a_key_in_each_zone)
 		std::string key = "account/" + std::to_string(i);
 		cluster::placement where = cluster.replicas(key);
 
-		if (cluster::owner_of(key, near) == one)
+		if (owner_of(key, near) == one)
 		{
 			EXPECT_TRUE(where.local);
-			EXPECT_EQ(where.nodes, std::vector<std::string>({ cluster::owner_of(key, far) }));
+			EXPECT_EQ(where.nodes, std::vector<std::string>({ owner_of(key, far) }));
 
 			held++;
 		}
@@ -354,7 +393,7 @@ TEST(etcd_cluster_test, keep_one_copy_of_a_key_in_each_zone)
 		{
 			// The copy in this node's own zone is the near one, so it is the one asked first.
 			EXPECT_FALSE(where.local);
-			EXPECT_EQ(where.nodes, std::vector<std::string>({ two, cluster::owner_of(key, far) }));
+			EXPECT_EQ(where.nodes, std::vector<std::string>({ two, owner_of(key, far) }));
 
 			asked++;
 		}
@@ -615,4 +654,199 @@ TEST(etcd_cluster_test, stand_alone_when_only_etcd_is_named)
 	environment.set("ASYNCDB_NODE", "");
 
 	EXPECT_FALSE(cluster::from_environment().is_clustered());
+}
+
+// A node claims the partitions it holds a copy of, and the one that created the key leads.
+TEST(etcd_cluster_test, claim_the_partitions_this_node_holds)
+{
+	http::fake_client http;
+
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+	answer_elections(&http, 41);
+
+	cluster::config config = configuration(one, "a");
+
+	config.claims_per_refresh = cluster::partition_count;
+
+	cluster::etcd_cluster cluster(config, http);
+
+	cluster.start();
+
+	// One node in each of two zones is both of them holding every partition, so this node claims
+	// all of them and leads all of them.
+	EXPECT_EQ(http.sent_to("/v3/kv/txn").size(), cluster::partition_count);
+
+	std::optional<cluster::leadership> led = cluster.leader("4821");
+
+	ASSERT_TRUE(led.has_value());
+	EXPECT_TRUE(led->known);
+	EXPECT_TRUE(led->local);
+	EXPECT_EQ(led->node, one);
+	EXPECT_EQ(led->term, 41);
+
+	cluster.stop();
+}
+
+// The claim was lost, so the partition is led by the node that won it and a write goes there.
+TEST(etcd_cluster_test, name_the_node_that_leads_a_partition)
+{
+	http::fake_client http;
+	boost::json::object lost {
+		{ "header", boost::json::object { { "revision", "60" } } },
+		{ "succeeded", false },
+		{ "responses", boost::json::array { boost::json::object {
+			{ "responseRange", boost::json::object {
+				{ "kvs", boost::json::array { boost::json::object {
+					{ "value", base64::encode(two) },
+					{ "create_revision", "41" }
+				} } }
+			} }
+		} } }
+	};
+
+	cluster::config config = configuration(one, "a");
+
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+	http.answer("/v3/kv/txn", http::answer(200, "application/json", boost::json::serialize(lost)));
+
+	// Every partition is claimed on this pass, so the one this key belongs to is among them
+	// whichever it is.
+	config.claims_per_refresh = cluster::partition_count;
+
+	cluster::etcd_cluster cluster(config, http);
+
+	cluster.start();
+
+	std::optional<cluster::leadership> led = cluster.leader("4821");
+
+	ASSERT_TRUE(led.has_value());
+	EXPECT_TRUE(led->known);
+	EXPECT_FALSE(led->local);
+	EXPECT_EQ(led->node, two);
+
+	cluster.stop();
+}
+
+// One instance races with nobody, so there is nothing to order and no leader to wait for.
+TEST(etcd_cluster_test, lead_nothing_when_the_instance_stands_alone)
+{
+	http::fake_client http;
+	cluster::config config;
+
+	config.node = one;
+
+	cluster::etcd_cluster cluster(config, http);
+
+	cluster.start();
+
+	EXPECT_FALSE(cluster.leader("4821").has_value());
+	EXPECT_TRUE(http.sent_to("/v3/kv/txn").empty());
+}
+
+// A cluster whose leaders cannot be read from etcd is a partition that is led by nobody, which is
+// a write with nowhere to be ordered rather than one that races.
+TEST(etcd_cluster_test, lead_nothing_that_etcd_does_not_answer_for)
+{
+	http::fake_client http;
+
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
+
+	cluster.start();
+
+	std::optional<cluster::leadership> led = cluster.leader("4821");
+
+	ASSERT_TRUE(led.has_value());
+	EXPECT_FALSE(led->known);
+
+	cluster.stop();
+}
+
+// The fence: a write ordered in a term older than one this node has already applied is a leader
+// that has been replaced and does not know it.
+TEST(etcd_cluster_test, refuse_a_write_ordered_in_a_term_that_has_passed)
+{
+	http::fake_client http;
+
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
+
+	EXPECT_TRUE(cluster.accept("4821", 41));
+	EXPECT_TRUE(cluster.accept("4821", 41));
+	EXPECT_TRUE(cluster.accept("4821", 60));
+	EXPECT_FALSE(cluster.accept("4821", 41));
+
+	// A write no leader ordered is a cluster with no leadership, and it is applied as it always
+	// was rather than refused.
+	EXPECT_TRUE(cluster.accept("4821", 0));
+
+	// Another partition is fenced on its own terms.
+	EXPECT_TRUE(cluster.accept("a key of another partition", 1));
+}
+
+// Claiming costs a round trip to etcd each, so a node takes a few partitions on each pass rather
+// than every one of them at once — which is what keeps a cold start from being 256 of them.
+TEST(etcd_cluster_test, claim_only_so_many_partitions_on_one_pass)
+{
+	http::fake_client http;
+	cluster::config config = configuration(one, "a");
+
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+	answer_elections(&http, 41);
+
+	config.claims_per_refresh = 4;
+
+	cluster::etcd_cluster cluster(config, http);
+
+	cluster.start();
+
+	EXPECT_EQ(http.sent_to("/v3/kv/txn").size(), 4u);
+
+	// What was claimed is led, and what was not is a partition with no leader — a write of which
+	// waits for the pass that claims it.
+	EXPECT_EQ(claimed(http).size(), 4u);
+
+	cluster.stop();
+}
+
+// Nodes walk the partitions from an offset of their own, so two of them claim different parts of
+// the ring rather than racing each other for the same one on every pass.
+TEST(etcd_cluster_test, claim_from_an_offset_of_this_node_s_own)
+{
+	http::fake_client first;
+	http::fake_client second;
+	cluster::config first_config = configuration(one, "a");
+	cluster::config second_config = configuration(two, "b");
+
+	answer_etcd(&first, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+	answer_elections(&first, 41);
+	answer_etcd(&second, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+	answer_elections(&second, 41);
+
+	first_config.claims_per_refresh = 8;
+	second_config.claims_per_refresh = 8;
+
+	cluster::etcd_cluster first_cluster(first_config, first);
+	cluster::etcd_cluster second_cluster(second_config, second);
+
+	first_cluster.start();
+	second_cluster.start();
+
+	std::set<std::string> both;
+	std::set<std::string> by_first = claimed(first);
+	std::set<std::string> by_second = claimed(second);
+
+	both.insert(by_first.begin(), by_first.end());
+	both.insert(by_second.begin(), by_second.end());
+
+	ASSERT_EQ(by_first.size(), 8u);
+	ASSERT_EQ(by_second.size(), 8u);
+
+	// Sixteen partitions between them, and not the same eight twice.
+	EXPECT_EQ(both.size(), 16u);
+
+	first_cluster.stop();
+	second_cluster.stop();
 }

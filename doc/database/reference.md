@@ -16,7 +16,7 @@ Every endpoint, status code, error code and limit in one place.
 | `DELETE` | `/table/{table}/key/{key}` | [Delete a record](/database/records#delete-a-record) |
 | `GET` | `/table/{table}/key` | [Scan a range](/database/scans) |
 | `DELETE` | `/table/{table}/key` | [Delete a range](/database/tables#delete-a-range) |
-| `GET` | `/health` | Liveness, whether writes are stalled, and [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) |
+| `GET` | `/health` | Liveness, whether writes are stalled, [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) and how many partitions this node leads |
 
 ## Errors
 
@@ -45,6 +45,8 @@ status — is what a client should branch on.
 | `invalid_range` | 400 | A range whose `from` is not below its `to`, or a range delete with no bounds |
 | `invalid_cursor` | 400 | A cursor this instance did not issue |
 | `write_stalled` | 503 | RocksDB is applying back pressure |
+| `no_leader` | 503 | No node is [leading this key's partition](/database/cluster#one-leader-for-each-partition) yet. Run the write again |
+| `stale_leader` | 409 | The write was ordered by a node that has since been replaced. Run it again |
 | `storage_error` | 500 | RocksDB returned an error |
 | `unavailable` | 502, 504 | The database did not answer the nginx in front of it. This one is the proxy's, not the server's — it is what a client sees while an instance is starting, or once its container has stopped |
 
@@ -73,6 +75,7 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 | Header | Means |
 | --- | --- |
 | `X-Asyncdb-Forwarded` | Another node sent this request here. It is served where it lands |
+| `X-Asyncdb-Term` | The [term](/database/cluster#the-term) the leader of the key's partition ordered this write in. A copy refuses anything older |
 
 See [the cluster](/database/cluster) for what each endpoint does when there is
 more than one instance, and for what partitioning and replication do not do.

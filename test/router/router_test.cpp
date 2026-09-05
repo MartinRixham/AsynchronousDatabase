@@ -955,6 +955,174 @@ TEST(router_cluster_test, fail_to_read_a_record_no_copy_of_which_answers)
 	EXPECT_EQ(nodes.sent().size(), 2u);
 }
 
+// Writes to a partition are ordered by the node that leads it, so a write that lands anywhere else
+// travels there whole rather than being fanned out from where it landed.
+TEST(router_cluster_test, write_a_record_through_the_node_that_leads_its_partition)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, partner, there });
+	nodes.led_by("4821", there, 41);
+
+	router::response response = router.route(put("/table/account/key/4821", "a value"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
+
+	// One hop to the leader, and no copy written from here: the leader decides the order and
+	// writes every copy itself.
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, there);
+	EXPECT_EQ(nodes.sent()[0].second.body, "a value");
+	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
+}
+
+// This node leads it, so this is where the order is decided — and every copy is told the term it
+// was decided in.
+TEST(router_cluster_test, order_a_write_of_a_partition_this_node_leads)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, partner });
+	nodes.led_by("4821", here, 41);
+
+	router::response response = router.route(put("/table/account/key/4821", "a value"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
+	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, partner);
+	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+}
+
+// A partition nothing leads has nowhere to order a write, and saying so is what makes the client
+// run it again once an election has happened.
+TEST(router_cluster_test, refuse_a_write_of_a_partition_nothing_leads)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.led_by_nobody("4821");
+
+	router::response response = router.route(put("/table/account/key/4821", "a value"));
+
+	EXPECT_EQ(error_code(response), "no_leader");
+	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
+	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
+}
+
+// The fence. A leader that has lost its lease and does not know it is a leader whose writes the
+// copies have already moved past.
+TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_that_has_passed)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.applied("4821", 60);
+
+	router::request forwarded = put("/table/account/key/4821", "a value");
+
+	forwarded.forwarded = true;
+	forwarded.term = 41;
+
+	router::response response = router.route(forwarded);
+
+	EXPECT_EQ(error_code(response), "stale_leader");
+	EXPECT_EQ(response.status, boost::beast::http::status::conflict);
+	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
+}
+
+// Two nodes disagreeing about who leads a partition must not bounce a write between them, so a
+// write sent here to be ordered, at a node that does not order it, is refused.
+TEST(router_cluster_test, refuse_a_write_sent_here_to_be_ordered_that_this_node_does_not_lead)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.led_by("4821", there, 41);
+
+	router::request forwarded = put("/table/account/key/4821", "a value");
+
+	forwarded.forwarded = true;
+
+	EXPECT_EQ(error_code(router.route(forwarded)), "no_leader");
+	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
+}
+
+TEST(router_cluster_test, apply_a_forwarded_write_ordered_in_the_term_that_stands)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.applied("4821", 60);
+
+	router::request forwarded = put("/table/account/key/4821", "a value");
+
+	forwarded.forwarded = true;
+	forwarded.term = 60;
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
+// A delete is a write like any other, and it is ordered by the same node.
+TEST(router_cluster_test, order_a_delete_through_the_leader)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, partner });
+	nodes.led_by("4821", there, 41);
+
+	EXPECT_EQ(router.route(del("/table/account/key/4821")).status, boost::beast::http::status::no_content);
+
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, there);
+	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
+}
+
+// A read is not ordered by anybody: it is answered by a copy, and the leader is not in its way.
+TEST(router_cluster_test, read_a_record_without_asking_the_leader)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "4821", "a value");
+	nodes.forget();
+	nodes.led_by("4821", there, 41);
+
+	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "a value");
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
 TEST(router_cluster_test, create_a_table_on_every_node)
 {
 	repository::fake_repository repository;
@@ -1355,6 +1523,21 @@ TEST(router_cluster_test, name_the_zones_of_the_cluster_in_the_health_of_the_ins
 	EXPECT_EQ(zones.at("a").as_array()[0].as_string(), here);
 	EXPECT_EQ(zones.at("b").as_array()[0].as_string(), there);
 	EXPECT_EQ(zones.at("c").as_array()[0].as_string(), elsewhere);
+}
+
+// An election that has not settled is a node leading nothing, and health is where that shows.
+TEST(router_cluster_test, count_the_partitions_this_node_leads_in_the_health_of_the_instance)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	EXPECT_EQ(router.route(get("/health")).json.at("leads").as_int64(), 0);
+
+	nodes.led_by("4821", here, 41);
+	nodes.led_by("4822", there, 41);
+
+	EXPECT_EQ(router.route(get("/health")).json.at("leads").as_int64(), 1);
 }
 
 TEST(router_cluster_test, name_no_zones_when_the_cluster_has_none)

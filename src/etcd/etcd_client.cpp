@@ -49,6 +49,62 @@ namespace
 
 		return number;
 	}
+
+	// Every answer from the gateway carries the revision the cluster was at when it answered, and
+	// for a write that is the revision the write happened at.
+	std::optional<int64_t> header_revision(const boost::json::object &response)
+	{
+		if (!response.contains("header") || !response.at("header").is_object())
+		{
+			return std::nullopt;
+		}
+
+		return read_number(response.at("header").as_object(), "revision");
+	}
+
+	// What a lost claim answers with: the key as it already stood, which names the node holding it
+	// and the revision it took it at.
+	std::optional<etcd::claim> read_claim(const boost::json::object &response)
+	{
+		if (!response.contains("responses") || !response.at("responses").is_array() ||
+			response.at("responses").as_array().empty())
+		{
+			return std::nullopt;
+		}
+
+		const boost::json::value &answered = response.at("responses").as_array()[0];
+
+		if (!answered.is_object() || !answered.as_object().contains("responseRange") ||
+			!answered.as_object().at("responseRange").is_object())
+		{
+			return std::nullopt;
+		}
+
+		const boost::json::object &ranged = answered.as_object().at("responseRange").as_object();
+
+		if (!ranged.contains("kvs") || !ranged.at("kvs").is_array() || ranged.at("kvs").as_array().empty() ||
+			!ranged.at("kvs").as_array()[0].is_object())
+		{
+			return std::nullopt;
+		}
+
+		const boost::json::object &pair = ranged.at("kvs").as_array()[0].as_object();
+		std::optional<int64_t> revision = read_number(pair, "create_revision");
+		std::string holder;
+
+		if (!revision || !pair.contains("value") || !pair.at("value").is_string() ||
+			!base64::decode(std::string(pair.at("value").as_string()), &holder))
+		{
+			return std::nullopt;
+		}
+
+		etcd::claim claimed;
+
+		claimed.holder = holder;
+		claimed.revision = *revision;
+
+		return claimed;
+	}
 }
 
 etcd::client::client(const http::client &http, const std::vector<std::string> &etcd_endpoints):
@@ -96,6 +152,65 @@ bool etcd::client::put(const std::string &key, const std::string &value, int64_t
 	};
 
 	return call("kv/put", request, true).has_value();
+}
+
+// One transaction rather than a read and then a write: "if nothing created this key, put it, and
+// otherwise tell me what is there". Two nodes claiming the same partition at the same moment is
+// therefore one winner and one that is told the winner's name, and never two leaders.
+std::optional<etcd::claim> etcd::client::create(
+	const std::string &key,
+	const std::string &value,
+	int64_t lease) const
+{
+	boost::json::object request {
+		{ "compare", boost::json::array { boost::json::object {
+			{ "key", base64::encode(key) },
+			{ "target", "CREATE" },
+			{ "result", "EQUAL" },
+			{ "create_revision", "0" }
+		} } },
+		{ "success", boost::json::array { boost::json::object {
+			{ "requestPut", boost::json::object {
+				{ "key", base64::encode(key) },
+				{ "value", base64::encode(value) },
+				{ "lease", std::to_string(lease) }
+			} }
+		} } },
+		{ "failure", boost::json::array { boost::json::object {
+			{ "requestRange", boost::json::object { { "key", base64::encode(key) } } }
+		} } }
+	};
+
+	std::optional<boost::json::object> response = call("kv/txn", request, true);
+
+	if (!response)
+	{
+		return std::nullopt;
+	}
+
+	claim claimed;
+
+	// The transaction succeeded, so this caller created the key. The revision it was created at is
+	// the revision of the write itself, which the header carries.
+	if (response->contains("succeeded") && response->at("succeeded").is_bool() &&
+		response->at("succeeded").as_bool())
+	{
+		std::optional<int64_t> revision = header_revision(*response);
+
+		if (!revision)
+		{
+			return std::nullopt;
+		}
+
+		claimed.held = true;
+		claimed.holder = value;
+		claimed.revision = *revision;
+
+		return claimed;
+	}
+
+	// It was lost, and what came back instead is the key as it stands.
+	return read_claim(*response);
 }
 
 std::map<std::string, std::string> etcd::client::range(const std::string &prefix) const

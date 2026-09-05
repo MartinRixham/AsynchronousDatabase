@@ -3,6 +3,7 @@
 #include <string>
 
 #include <boost/beast/version.hpp>
+#include <boost/lexical_cast/try_lexical_convert.hpp>
 
 #include "log.h"
 #include "url/url.h"
@@ -50,6 +51,20 @@ namespace
 			method == boost::beast::http::verb::head ||
 			method == boost::beast::http::verb::put ||
 			method == boost::beast::http::verb::delete_;
+	}
+
+	// A term that is not a number is no term at all, which is a write no leader ordered rather
+	// than a request to refuse: the copies fence on what they have applied, not on the header.
+	int64_t read_term(const boost::beast::string_view &header)
+	{
+		int64_t term = 0;
+
+		if (header.empty() || !boost::conversion::try_lexical_convert(std::string(header), term))
+		{
+			return 0;
+		}
+
+		return term;
 	}
 
 	// Only a segment that is entirely ".." is a traversal. A key that happens to contain dots is
@@ -176,7 +191,8 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 			url::split_path(target),
 			url::query_string(target),
 			request.body(),
-			!request[cluster::forwarded_header].empty()
+			!request[cluster::forwarded_header].empty(),
+			read_term(request[cluster::term_header])
 		};
 
 		try

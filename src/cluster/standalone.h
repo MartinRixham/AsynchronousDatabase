@@ -18,6 +18,12 @@ namespace cluster
 
 		std::vector<std::vector<std::string>> zones() const override;
 
+		std::optional<leadership> leader(const std::string &key) const override;
+
+		size_t leads() const override;
+
+		bool accept(const std::string &key, int64_t term) override;
+
 		router::response send(const std::string &node, const router::request &request) const override;
 	};
 }

@@ -134,8 +134,10 @@ the instance owns the whole keyspace, which is what every test that is not `clus
 Set the first two and the instance joins.
 
 `ASYNCDB_ZONE` is what turns partitioning into replication, and it is the only knob there is:
-**the membership is grouped by zone and the key is hashed once inside each group**, so every zone
-holds exactly one copy of every key. No zone named anywhere is one zone holding all the nodes, which
+**a key belongs to one of 256 partitions, the membership is grouped by zone, and the partition is
+hashed once inside each group**, so every zone holds exactly one copy of every partition — and the
+copies of a partition are the same three nodes for every key in it, which is what lets one of them
+lead it. No zone named anywhere is one zone holding all the nodes, which
 is the one copy this always kept. `docker-compose.yml` runs two zones (nodes 1 and 2 in `one`,
 node 3 in `two`) so the compose cluster both partitions and replicates; `cloudformation.json` reads
 the real AZ out of IMDS, which is three zones of one node each.
@@ -251,9 +253,10 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
 - `scan::range` is the parsed query of a scan or a range delete, and a cursor is base64 of
   `{ "k": last key, "s": instance }`; the instance is what makes a cursor this instance did not issue
   refusable.
-- **Partitioning is by key alone, never by table**, so the same key of two tables is on one node and
-  a record and the records derived from it are one hop. A write goes to the node holding the key in
-  *every* zone and every one of them has to take it; a read goes to one copy — this node when it
+- **Partitioning is by key alone, never by table**, so the same key of two tables is in one
+  partition and a record and the records derived from it are one hop. A write is ordered by the node
+  **leading** the key's partition, which writes the copy in every zone and every one of them has to
+  take it; a read goes to one copy — this node when it
   holds one, else the nearest zone's, passing over a node that does not answer, and asking the other
   copies when this node holds nothing for the key. A table create or delete goes to *every* node,
   because a record can only be written where its table is; a scan is asked of **one zone** — this
@@ -261,7 +264,17 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
   falling back to another zone when a node of that one does not answer. A forwarded request carries
   `X-Asyncdb-Forwarded` and is served where it lands, which is what stops two nodes bouncing it.
   `doc/database/cluster.md` is the spec, including what this deliberately does not do (no read
-  repair, no rebalancing, and a write is only as available as its least available zone).
+  repair, no rebalancing, no replication log, and a write that needs both a leader and every copy).
+- **A leader is claimed in etcd, not elected by votes.** `/asyncdb/leader/{partition}` is written
+  with a transaction that only succeeds if nothing created the key, on the node's own membership
+  lease — so a node that stops renewing stops leading. A node claims
+  `claims_per_refresh` (64) partitions per pass, from an offset of its own name, so a cold start is
+  a pass or two rather than 256 round trips. The **term** is the etcd revision that
+  created the claim; it travels in `X-Asyncdb-Term` on every write the leader orders, and a copy
+  refuses anything older than the newest term it has applied (`stale_leader`, 409). A partition
+  nothing leads yet answers `no_leader` (503) to a write and serves reads as normal. **The term is
+  what tells the two write hops apart**: a write *to* the leader carries none, a write *from* it
+  carries the term.
 - `DEBUG(...)` from `src/log.h` compiles to nothing unless the `LOG` define is `1`; `recipe.json` sets
   `"LOG": "echo 1"` (the define values are shell commands that Cheesemake evaluates).
 

@@ -28,7 +28,7 @@ throughputs. The short version, at 1 KiB records and 100 requests a second:
 | | Per million |
 | --- | --- |
 | Reads | **$0.731** |
-| Writes | **$0.680** |
+| Writes | **$0.691** |
 | Storage | **$0.94 / GB-month** of records at a realistic fill |
 
 Of which $0.631 is the rent, which every operation pays equally and which is
@@ -137,21 +137,23 @@ record.
 
 | Sustained load | Rent share | **Read of 1 KiB** | **Write of 1 KiB** |
 | --- | --- | --- | --- |
-| 1 / second | $63.06 | **$63.160** | **$63.109** |
-| 10 / second | $6.31 | **$6.406** | **$6.355** |
-| 100 / second | $0.631 | **$0.731** | **$0.680** |
-| 250 / second | $0.252 | **$0.352** | **$0.301** |
+| 1 / second | $63.06 | **$63.160** | **$63.120** |
+| 10 / second | $6.31 | **$6.406** | **$6.366** |
+| 100 / second | $0.631 | **$0.731** | **$0.691** |
+| 250 / second | $0.252 | **$0.352** | **$0.312** |
 
 All per million operations. The marginal part of that — the part that is
-genuinely the operation's own — is **$0.100 per million reads** and **$0.049 per
+genuinely the operation's own — is **$0.100 per million reads** and **$0.060 per
 million writes**, and it is the same at every row. Everything else in the table
 is the rent moving.
 
-**A read costs 2.0× what a write costs**, per byte. A read's bytes go out to the
+**A read costs 1.7× what a write costs**, per byte. A read's bytes go out to the
 internet at $0.09/GB and cross no zone: the node the load balancer picked either
 holds a copy of the key or asks the one node in its own zone that does, and
-traffic inside a zone is free. A write's bytes arrive for free and then cross
-into each of the other two zones at $0.02/GB apiece. Keeping a copy in every
+traffic inside a zone is free. A write's bytes arrive for free, travel to the
+node [leading the key's partition](/database/cluster#one-leader-for-each-partition)
+— five times in six, and across a zone five times in nine — and then cross into
+each of the other two zones at $0.02/GB apiece. Keeping a copy in every
 zone is what moved that charge from the read to the write — the cheaper end of
 the two to have taken it off, since a read is paying egress as well.
 
@@ -161,21 +163,25 @@ Marginal cost per million operations, excluding rent:
 
 | Record size | GB per million | Read | Write |
 | --- | --- | --- | --- |
-| 100 B | 0.10 | $0.010 | $0.005 |
-| 1 KiB | 1.02 | $0.100 | $0.049 |
-| 10 KiB | 10.2 | $1.00 | $0.49 |
-| 100 KiB | 102 | $10.00 | $4.90 |
-| 1 MiB | 1,049 | $102.80 | $50.35 |
-| 16 MiB | 16,777 | $1,644.15 | $805.30 |
+| 100 B | 0.10 | $0.010 | $0.006 |
+| 1 KiB | 1.02 | $0.100 | $0.060 |
+| 10 KiB | 10.2 | $1.00 | $0.60 |
+| 100 KiB | 102 | $10.00 | $6.02 |
+| 1 MiB | 1,049 | $102.80 | $61.89 |
+| 16 MiB | 16,777 | $1,644.15 | $989.85 |
 
 The rates behind every row:
 
 ```
-read  = $0.09 egress +      no hop + $0.008 ALB = $0.098 per GB
-write =        free  + $0.04 copies + $0.008 ALB = $0.048 per GB
+read  = $0.09 egress +       no hop + $0.008 ALB = $0.098 per GB
+write =        free  + $0.0111 to the leader
+                     +  $0.04 copies + $0.008 ALB = $0.059 per GB
 ```
 
-The copies are the two other zones, at $0.02 a gigabyte each.
+The copies are the two other zones, at $0.02 a gigabyte each. The hop to the
+leader is the same $0.02 for the five ninths of writes that cross a zone to reach
+it: the node the load balancer picked leads the partition one time in six, and
+the leader is in its own zone — and therefore free to reach — one time in three.
 
 **Below about 10 KiB the rent dominates and the record size barely registers;
 above about 100 KiB the bytes dominate and the rent barely registers.** At
@@ -264,11 +270,11 @@ services have:
 | Sustained load | Per million requests | Total monthly |
 | --- | --- | --- |
 | 1 / second | $63.15 | $165.96 |
-| 10 / second | $6.40 | $168.08 |
-| 100 / second | $0.721 | $189.32 |
-| 250 / second | $0.342 | $224.72 |
+| 10 / second | $6.40 | $168.14 |
+| 100 / second | $0.723 | $189.92 |
+| 250 / second | $0.344 | $226.12 |
 
-**Two and a half orders of magnitude more traffic costs 35% more money.** That
+**Two and a half orders of magnitude more traffic costs 36% more money.** That
 is the whole economics of this stack in one line: it is rent, and the API
 operations are nearly free until the records get large or the CPU runs out.
 
@@ -277,7 +283,7 @@ To price a workload that is not this one:
 ```
 monthly = 165.72                                   fixed
         + reads  × size_GB × 0.098                 egress + ALB
-        + writes × size_GB × 0.048                 copies into two zones + ALB
+        + writes × size_GB × 0.059                 to the leader + copies + ALB
         + (reads + writes) × cpu_ms × 1.39e-8      credits, if above baseline
         - 9.00                                     first 100 GB egress, if unspent
 ```
@@ -350,20 +356,27 @@ Traffic between instances in one availability zone is not charged, so that hop
 is a millisecond and not a cent.
 
 ```
-read  cross-AZ cost = 0                          while a zone is one node
-write cross-AZ cost = 2 × $0.02 = $0.04 per GB   of record payload
+read  cross-AZ cost = 0                             while a zone is one node
+write cross-AZ cost = (5/9 + 2) × $0.02 = $0.051    per GB of record payload
 ```
+
+The 2 is the copies in the other two zones. The five ninths is the hop to the
+partition's leader, which is a hop at all only when the node the load balancer
+picked is not the leader, and crosses a zone only when the leader is not in the
+node's own zone.
 
 A read that misses is the exception: a key the node holds nothing for is
 [asked of the other copies](/database/cluster#what-a-write-and-a-read-do), which
 is a few hundred bytes across a zone and nothing at all against a value.
 
-**A write pays for the copies, and it is the only marginal byte charge a write
-has.** Against $0.09 a gigabyte of egress, that is a write costing about four
-ninths of what a read of the same bytes costs — before replication a write paid
-$0.0133 and a read $0.1033, so what a copy in every zone actually cost is
-$0.027 a gigabyte written, and what it bought is a read that never leaves the
-zone it landed in and a record that outlives the loss of two of them.
+**A write pays for its ordering and its copies, and they are the only marginal
+byte charges a write has.** Against $0.09 a gigabyte of egress, that is a write
+costing a bit over half what a read of the same bytes costs — before any of this
+a write paid $0.0133 and a read $0.1033, so what a copy in every zone and a
+leader to order them actually cost is $0.038 a gigabyte written, and what it
+bought is a read that never leaves the zone it landed in, a record that outlives
+the loss of two zones, and two clients writing one key who cannot leave the
+copies disagreeing.
 
 Scans cross nothing either, and they are the reason to be glad of it.
 [One zone is asked for the range](/database/cluster#scans-across-a-cluster) —
@@ -427,8 +440,8 @@ scan, and "small" is a few hundred bytes of headers and JSON.
 | --- | --- | --- | --- | --- |
 | `GET /table/{t}/key/{k}` | nobody, unless the key is not here | none, or small on a miss | V | V × $0.09/GB |
 | `HEAD /table/{t}/key/{k}` | nobody, unless the key is not here | none, or small on a miss | small | LCU only |
-| `PUT /table/{t}/key/{k}` | the copy in **every** zone | 2 × V | small | V × $0.04/GB |
-| `DELETE /table/{t}/key/{k}` | the copy in **every** zone | 2 × small | small | LCU only |
+| `PUT /table/{t}/key/{k}` | the **leader**, then the copy in every zone | 2.6 × V | small | V × $0.051/GB |
+| `DELETE /table/{t}/key/{k}` | the **leader**, then the copy in every zone | 2.6 × small | small | LCU only |
 | `GET /table/{t}/key` | one **zone**, this node's own | none | P | P × $0.09/GB |
 | `DELETE /table/{t}/key` | **every** node | 4 × small | small | LCU only |
 | `PUT`/`DELETE` `/table/{t}` | **every** node | 4 × small | small | LCU only |
@@ -437,8 +450,8 @@ scan, and "small" is a few hundred bytes of headers and JSON.
 
 The $0.09 of a read is egress and nothing else, because the node that was asked
 holds the key; the $0.04 of a write is the value crossing into the two other
-zones; the $0.09 of a scan is egress alone, because the zone it asks is the one
-it is already in.
+zones and, five times in nine, into the one that leads its partition; the $0.09
+of a scan is egress alone, because the zone it asks is the one it is already in.
 
 Two readings of that table:
 
@@ -460,16 +473,17 @@ keep-alive connections:
 | --- | --- | --- |
 | Fixed cost | as above | $165.72 |
 | Egress | (538 GB − 100 free) × $0.09 | $39.44 |
-| Cross-AZ | 2 copies × 135 GB written × $0.02 | $5.38 |
+| Cross-AZ | (2 copies + 5/9 to the leader) × 135 GB written × $0.02 | $6.88 |
 | Load balancer LCU | 0.92 GB/hour → 1 LCU × 730 | $5.84 |
 | CPU credits | assumed within baseline | $0.00 |
-| | | **$216.38** |
+| | | **$217.88** |
 
 250 requests a second is 657 million requests a month, so that is **$0.33 per
-million requests**, of which $0.25 is the rent. Only the 131 million writes
-cross a zone, and they cross it twice each; the 526 million reads are answered
-inside the zone they landed in. The same traffic without keep-alive is $269, and
-the same traffic hot enough to saturate six `t3.micro`s is $610 — the load
+million requests**, of which $0.25 is the rent. Only the 131 million writes cross
+a zone — twice each to the copies, and a further five ninths of the time to reach
+the leader — while the 526 million reads are answered inside the zone they landed
+in. The same traffic without keep-alive is $270, and the same traffic hot enough
+to saturate six `t3.micro`s is $612 — the load
 pattern moves the bill by more than the load does.
 
 ## What a gigabyte does not buy

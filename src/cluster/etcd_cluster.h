@@ -2,7 +2,9 @@
 #define CLUSTER_ETCD_CLUSTER_H
 
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <shared_mutex>
 #include <thread>
@@ -39,6 +41,14 @@ namespace cluster
 
 		std::string prefix = "/asyncdb/node/";
 
+		std::string leader_prefix = "/asyncdb/leader/";
+
+		// How many partitions a node claims on one pass. Claiming costs a round trip to etcd
+		// each, and there are 256 of them, so a node takes a few at a time rather than all of
+		// them at once — several nodes claiming from their own offsets settle a cold cluster in
+		// a pass or two between them.
+		size_t claims_per_refresh = 64;
+
 		long timeout_seconds = 30;
 
 		bool is_clustered() const;
@@ -68,6 +78,18 @@ namespace cluster
 		std::vector<member> member_list;
 
 		int64_t lease = 0;
+
+		// Who leads each partition, as this node last read it from etcd. Read by every write and
+		// written only by the membership thread.
+		mutable std::shared_mutex leader_mutex;
+
+		std::map<size_t, leadership> leader_list;
+
+		// The highest term this node has applied a write of each partition in. A write ordered in
+		// an older term is a leader that has been replaced and does not know it.
+		mutable std::mutex term_mutex;
+
+		std::map<size_t, int64_t> terms;
 
 		std::thread thread;
 
@@ -102,6 +124,12 @@ namespace cluster
 
 		std::vector<std::vector<std::string>> zones() const override;
 
+		std::optional<leadership> leader(const std::string &key) const override;
+
+		size_t leads() const override;
+
+		bool accept(const std::string &key, int64_t term) override;
+
 		router::response send(const std::string &node, const router::request &request) const override;
 
 	private:
@@ -112,6 +140,20 @@ namespace cluster
 		bool register_node();
 
 		void read_members();
+
+		// Claims every partition this node holds a copy of and nothing leads yet, and reads back
+		// who leads the rest. A node leads on the same lease its membership is on, so a node that
+		// stops renewing stops leading.
+		void read_leaders();
+
+		// Whether this node holds a copy of the partition, which is what it claims leadership of.
+		bool holds(const std::vector<member> &registered, size_t partition) const;
+
+		// The term this node leads a partition in. Only the node that claimed a partition knows
+		// it — the term is the revision of that claim — so another node's is nothing here.
+		int64_t term_of(const std::string &holder, size_t partition) const;
+
+		void remember_term(size_t partition, int64_t term);
 	};
 }
 

@@ -1,6 +1,7 @@
 #ifndef CLUSTER_PARTITION_H
 #define CLUSTER_PARTITION_H
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -9,6 +10,18 @@
 
 namespace cluster
 {
+	// A key belongs to a partition, and a partition is what a node holds, leads and moves. There
+	// are enough of them that a zone's nodes get an even share and few enough that etcd holds a key
+	// for each: the number is fixed for the life of a cluster, because changing it moves every key.
+	constexpr size_t partition_count = 256;
+
+	// The partition a key belongs to. The key alone decides, so the same key of two tables is in
+	// one partition and is led, held and moved as one thing.
+	size_t partition_of(const std::string &key);
+
+	// The name a partition is hashed and registered under.
+	std::string partition_name(size_t partition);
+
 	// Rendezvous hashing: every node scores the key and the highest score owns it. A ring of
 	// tokens would do as well, but this needs no ring to agree on — every node computes the same
 	// answer from the membership alone — and adding or removing a node moves only the keys that

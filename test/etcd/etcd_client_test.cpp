@@ -333,3 +333,81 @@ TEST(etcd_client_test, revoke_a_lease_at_the_member_that_has_been_answering)
 	ASSERT_EQ(http.sent_to("/v3/lease/revoke").size(), 1u);
 	EXPECT_EQ(http.sent_to("/v3/lease/revoke")[0].url.find(second), 0u);
 }
+
+TEST(etcd_client_test, create_a_key_nothing_holds)
+{
+	http::fake_client http;
+
+	http.answer(
+		"/v3/kv/txn",
+		http::answer(200, "application/json", "{\"header\":{\"revision\":\"41\"},\"succeeded\":true}"));
+
+	etcd::client client(http, { "http://etcd-1:2379" });
+	std::optional<etcd::claim> claimed = client.create("/asyncdb/leader/7", "http://asyncdb-1:8080", 12);
+
+	ASSERT_TRUE(claimed.has_value());
+	EXPECT_TRUE(claimed->held);
+	EXPECT_EQ(claimed->holder, "http://asyncdb-1:8080");
+
+	// The term is the revision the claim was created at, which only ever rises.
+	EXPECT_EQ(claimed->revision, 41);
+
+	ASSERT_EQ(http.sent_to("/v3/kv/txn").size(), 1u);
+
+	boost::json::object sent = boost::json::parse(http.sent_to("/v3/kv/txn")[0].body).as_object();
+	const boost::json::object &compared = sent.at("compare").as_array()[0].as_object();
+	std::string key;
+
+	base64::decode(std::string(compared.at("key").as_string()), &key);
+
+	// "Only if nothing has created this key", which is what makes two claimants one leader.
+	EXPECT_EQ(key, "/asyncdb/leader/7");
+	EXPECT_EQ(compared.at("target").as_string(), "CREATE");
+	EXPECT_EQ(compared.at("create_revision").as_string(), "0");
+
+	const boost::json::object &put =
+		sent.at("success").as_array()[0].as_object().at("requestPut").as_object();
+	std::string value;
+
+	base64::decode(std::string(put.at("value").as_string()), &value);
+
+	EXPECT_EQ(value, "http://asyncdb-1:8080");
+	EXPECT_EQ(put.at("lease").as_string(), "12");
+}
+
+// The claim was lost, and what comes back is the node that holds it and the term it holds it in.
+TEST(etcd_client_test, name_the_holder_of_a_key_that_is_already_there)
+{
+	http::fake_client http;
+	boost::json::object answered {
+		{ "header", boost::json::object { { "revision", "60" } } },
+		{ "succeeded", false },
+		{ "responses", boost::json::array { boost::json::object {
+			{ "responseRange", boost::json::object {
+				{ "kvs", boost::json::array { boost::json::object {
+					{ "key", base64::encode("/asyncdb/leader/7") },
+					{ "value", base64::encode("http://asyncdb-2:8080") },
+					{ "create_revision", "41" }
+				} } }
+			} }
+		} } }
+	};
+
+	http.answer("/v3/kv/txn", http::answer(200, "application/json", boost::json::serialize(answered)));
+
+	etcd::client client(http, { "http://etcd-1:2379" });
+	std::optional<etcd::claim> claimed = client.create("/asyncdb/leader/7", "http://asyncdb-1:8080", 12);
+
+	ASSERT_TRUE(claimed.has_value());
+	EXPECT_FALSE(claimed->held);
+	EXPECT_EQ(claimed->holder, "http://asyncdb-2:8080");
+	EXPECT_EQ(claimed->revision, 41);
+}
+
+TEST(etcd_client_test, fail_to_create_a_key_when_etcd_is_not_there)
+{
+	http::fake_client http;
+	etcd::client client(http, { "http://etcd-1:2379" });
+
+	EXPECT_FALSE(client.create("/asyncdb/leader/7", "http://asyncdb-1:8080", 12).has_value());
+}

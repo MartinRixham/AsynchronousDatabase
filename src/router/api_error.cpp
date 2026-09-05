@@ -16,6 +16,8 @@ namespace
 		{ "invalid_range", boost::beast::http::status::bad_request },
 		{ "invalid_cursor", boost::beast::http::status::bad_request },
 		{ "write_stalled", boost::beast::http::status::service_unavailable },
+		{ "no_leader", boost::beast::http::status::service_unavailable },
+		{ "stale_leader", boost::beast::http::status::conflict },
 		{ "storage_error", boost::beast::http::status::internal_server_error },
 		{ "not_found", boost::beast::http::status::not_found },
 		{ "invalid_path", boost::beast::http::status::bad_request },

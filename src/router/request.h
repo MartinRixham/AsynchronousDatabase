@@ -1,6 +1,7 @@
 #ifndef ROUTER_REQUEST_H
 #define ROUTER_REQUEST_H
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,10 @@ namespace router
 		// True when another node sent this request here because this node owns the key. It is
 		// served where it stands: it is neither forwarded again nor broadcast.
 		bool forwarded = false;
+
+		// The term the leader of the key's partition ordered this write in, and nothing at all
+		// when no leader ordered it.
+		int64_t term = 0;
 	};
 }
 

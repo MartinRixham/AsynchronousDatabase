@@ -82,12 +82,16 @@ router::response cluster::forward(
 	const std::string &node,
 	const router::request &request)
 {
-	http::request forwarded {
-		method_of(request),
-		target(node, request),
-		request.body,
-		{ std::string(forwarded_header) + ": true" }
-	};
+	std::vector<std::string> headers { std::string(forwarded_header) + ": true" };
+
+	// A write the leader ordered carries the term it ordered it in, and a request no leader
+	// ordered carries none at all.
+	if (request.term != 0)
+	{
+		headers.push_back(std::string(term_header) + ": " + std::to_string(request.term));
+	}
+
+	http::request forwarded { method_of(request), target(node, request), request.body, headers };
 
 	DEBUG("Forwarding " + forwarded.method + " " + forwarded.url + ".");
 

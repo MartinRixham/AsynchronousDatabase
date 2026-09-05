@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "cluster/partition.h"
 #include "fake_cluster.h"
 
@@ -79,6 +81,52 @@ std::vector<std::string> cluster::fake_cluster::peers() const
 	}
 
 	return peers;
+}
+
+void cluster::fake_cluster::led_by(const std::string &key, const std::string &node, int64_t term)
+{
+	leadership led;
+
+	led.known = true;
+	led.local = node == self;
+	led.node = node;
+	led.term = term;
+
+	leaders[key] = led;
+}
+
+void cluster::fake_cluster::led_by_nobody(const std::string &key)
+{
+	leaders[key] = leadership();
+}
+
+void cluster::fake_cluster::applied(const std::string &key, int64_t term)
+{
+	refused[key] = term;
+}
+
+// A key nothing was said about is a cluster with no leadership at all, which is how every test
+// that is not about leadership goes on writing the way it always did.
+std::optional<cluster::leadership> cluster::fake_cluster::leader(const std::string &key) const
+{
+	std::map<std::string, leadership>::const_iterator led = leaders.find(key);
+
+	return led == leaders.end() ? std::optional<leadership>() : led->second;
+}
+
+size_t cluster::fake_cluster::leads() const
+{
+	return std::count_if(
+		leaders.begin(),
+		leaders.end(),
+		[](const std::pair<std::string, leadership> &led) { return led.second.local; });
+}
+
+bool cluster::fake_cluster::accept(const std::string &key, int64_t term)
+{
+	std::map<std::string, int64_t>::const_iterator seen = refused.find(key);
+
+	return term == 0 || seen == refused.end() || term >= seen->second;
 }
 
 std::vector<std::vector<std::string>> cluster::fake_cluster::zones() const

@@ -36,6 +36,16 @@ namespace
 	}
 }
 
+size_t cluster::partition_of(const std::string &key)
+{
+	return mix(hash(key, fnv_offset)) % partition_count;
+}
+
+std::string cluster::partition_name(size_t partition)
+{
+	return "partition/" + std::to_string(partition);
+}
+
 // The node is hashed into the seed of the key's hash rather than concatenated with it, so that a
 // node named for the start of a key cannot collide with a key that begins with the node's name.
 uint64_t cluster::score(const std::string &node, const std::string &key)

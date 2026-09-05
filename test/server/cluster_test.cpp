@@ -32,6 +32,10 @@ namespace
 
 		std::string zone;
 
+		std::string leader_node;
+
+		int64_t term = 0;
+
 		std::vector<::cluster::member> member_list;
 
 		http::curl_client curl;
@@ -98,6 +102,41 @@ namespace
 		std::vector<std::vector<std::string>> zones() const override
 		{
 			return ::cluster::zones_of(member_list, self, zone);
+		}
+
+		// The leader is told to the cluster rather than claimed in etcd, the same way the
+		// membership is: what is under test here is what a leader does, not how it is chosen.
+		void led_by(const std::string &node, int64_t node_term)
+		{
+			leader_node = node;
+			term = node_term;
+		}
+
+		std::optional<::cluster::leadership> leader(const std::string &) const override
+		{
+			if (leader_node.empty())
+			{
+				return std::nullopt;
+			}
+
+			::cluster::leadership led;
+
+			led.known = true;
+			led.local = leader_node == self;
+			led.node = leader_node;
+			led.term = term;
+
+			return led;
+		}
+
+		size_t leads() const override
+		{
+			return leader_node == self ? ::cluster::partition_count : 0;
+		}
+
+		bool accept(const std::string &, int64_t sent) override
+		{
+			return sent == 0 || sent >= term;
 		}
 
 		router::response send(const std::string &node, const router::request &request) const override
@@ -171,13 +210,21 @@ protected:
 		const std::string &method,
 		const std::string &path,
 		const std::string &body,
-		bool forwarded = false)
+		bool forwarded = false,
+		int64_t term = 0)
 	{
 		CURL *curl = curl_easy_init();
 		answer answer;
 		struct curl_slist *headers = NULL;
 
 		headers = curl_slist_append(headers, "Connection: close");
+
+		// The term a leader ordered a write in, which the node it reaches fences on.
+		if (term != 0)
+		{
+			headers = curl_slist_append(
+				headers, ("X-Asyncdb-Term: " + std::to_string(term)).c_str());
+		}
 
 		// A request that says it was forwarded is served where it lands, which is how a test asks
 		// one node what it holds itself rather than what the cluster holds.
@@ -221,6 +268,13 @@ protected:
 	answer get(const std::shared_ptr<server::server> &server, const std::string &path)
 	{
 		return request(server, "GET", path, "");
+	}
+
+	// The same two servers, with one of them ordering the writes of every partition.
+	void led_by(const std::shared_ptr<server::server> &leader, int64_t term)
+	{
+		first_cluster.led_by(node(leader), term);
+		second_cluster.led_by(node(leader), term);
 	}
 
 	// The same two servers, one in each of two zones, which is a cluster keeping a copy of every
@@ -530,4 +584,53 @@ TEST_F(cluster_test, a_scan_answers_every_record_when_the_other_zone_is_gone)
 
 	// The test stops the servers it starts, and this one has stopped already.
 	second_thread = std::thread([]() {});
+}
+
+// A write that lands on a node which does not lead the partition travels to the one that does, and
+// the leader writes every copy from there.
+TEST_F(cluster_test, a_write_is_ordered_by_the_node_that_leads_the_partition)
+{
+	zone_the_cluster();
+	led_by(second, 7);
+
+	request(first, "PUT", "/table/account", "{}");
+
+	EXPECT_EQ(request(first, "PUT", "/table/account/key/4821", "a value").code, 204);
+
+	// Both nodes hold it, and the one that ordered it is the second.
+	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
+	EXPECT_EQ(request(second, "GET", "/table/account/key/4821", "", true).body, "a value");
+}
+
+// The fence, over a real socket: the term travels in a header, and a write ordered in a term the
+// node has moved past is refused rather than applied behind the leader that replaced it.
+TEST_F(cluster_test, a_write_ordered_in_a_term_that_has_passed_is_refused)
+{
+	zone_the_cluster();
+	led_by(second, 7);
+
+	request(first, "PUT", "/table/account", "{}");
+
+	answer stale = request(first, "PUT", "/table/account/key/4821", "a value", true, 1);
+
+	EXPECT_EQ(stale.code, 409);
+	EXPECT_NE(stale.body.find("stale_leader"), std::string::npos);
+	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).code, 404);
+
+	// The term that stands is applied.
+	EXPECT_EQ(request(first, "PUT", "/table/account/key/4821", "a value", true, 7).code, 204);
+	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
+}
+
+// A cluster with no leadership at all — no zones, or no etcd to elect through — writes the way it
+// always did, from wherever the write landed to every copy.
+TEST_F(cluster_test, a_write_is_unordered_when_no_node_leads_anything)
+{
+	zone_the_cluster();
+
+	request(first, "PUT", "/table/account", "{}");
+
+	EXPECT_EQ(request(first, "PUT", "/table/account/key/4821", "a value").code, 204);
+	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
+	EXPECT_EQ(request(second, "GET", "/table/account/key/4821", "", true).body, "a value");
 }

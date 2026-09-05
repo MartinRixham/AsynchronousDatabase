@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -193,6 +194,10 @@ router::response router::router::route(const request &request)
 
 			health["nodes"] = names;
 
+			// The partitions this node orders the writes of. An election that has not settled is
+			// a node leading none of them, and a write of those is refused until it has.
+			health["leads"] = static_cast<int64_t>(nodes.leads());
+
 			// The zones are what say how many copies of a record there are, so a cluster that has
 			// them names them. One that has none says nothing rather than naming a zone of "".
 			if (!zones.empty())
@@ -327,9 +332,9 @@ router::response router::router::route_record(
 		return table_not_found(name);
 	}
 
-	// A record lives on the one node the hash of its key names in each zone, and a node holding no
-	// copy of it answers by asking one that does. The key alone decides which nodes those are, so
-	// the same key of two tables is on the same nodes and is one hop.
+	// A record lives on the one node the hash of its partition names in each zone, and a node
+	// holding no copy of it answers by asking one that does. The key alone decides which nodes
+	// those are, so the same key of two tables is on the same nodes and is one hop.
 	//
 	// A request that arrived forwarded is served here whatever this node makes of the membership:
 	// the node that sent it has already decided who holds the key.
@@ -337,7 +342,63 @@ router::response router::router::route_record(
 
 	if (request.method == boost::beast::http::verb::put || request.method == boost::beast::http::verb::delete_)
 	{
-		return write_record(request, name, record, where);
+		// A write travels in two hops, and the term is what tells them apart: a write *to* the
+		// leader carries none, because the node sending it is only asking for it to be ordered,
+		// and a write *from* the leader carries the term it was ordered in.
+		//
+		// This one was ordered, so it is applied here — unless this node has already applied a
+		// write of a later term, which is a leader that has been replaced and does not know it.
+		if (request.term != 0)
+		{
+			if (!nodes.accept(record.key, request.term))
+			{
+				return error_response(
+					"stale_leader", "This key is led in a later term than the one that ordered this write.");
+			}
+
+			return write_record(request, name, record, where);
+		}
+
+		std::optional<cluster::leadership> lead = nodes.leader(record.key);
+
+		// No leadership at all is a cluster that orders nothing — one instance standing alone, or
+		// one that has no zones — and a write is written the way it always was.
+		if (!lead)
+		{
+			return write_record(request, name, record, where);
+		}
+
+		// A partition nothing leads is a partition whose writes have nowhere to be ordered. Saying
+		// so is what makes the client run the write again once one is elected, which takes as long
+		// as the lease of the leader that went away.
+		if (!lead->known)
+		{
+			return error_response("no_leader", "No node is leading this key's partition yet.");
+		}
+
+		if (!lead->local)
+		{
+			// A write that arrived here to be ordered, at a node that does not order it, is two
+			// nodes disagreeing about the leader. It is refused rather than passed on again, so
+			// that a disagreement cannot bounce a write between them.
+			if (request.forwarded)
+			{
+				return error_response("no_leader", "This node does not lead this key's partition.");
+			}
+
+			return nodes.send(lead->node, request);
+		}
+
+		// This node leads it, so this is where the order is decided, whether the write arrived
+		// here from a client or from a node that knew who to ask. Every copy is told the term.
+		//
+		// The namespace is hidden here by the name of the class, and the name of the type by the
+		// name of the parameter.
+		::router::request ordered = request;
+
+		ordered.term = lead->term;
+
+		return write_record(ordered, name, record, nodes.replicas(record.key));
 	}
 
 	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)

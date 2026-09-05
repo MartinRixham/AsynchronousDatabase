@@ -1,6 +1,7 @@
 #ifndef CLUSTER_CLUSTER_H
 #define CLUSTER_CLUSTER_H
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
@@ -16,6 +17,10 @@ namespace cluster
 	// bounce a request between them for ever.
 	constexpr char forwarded_header[] = "X-Asyncdb-Forwarded";
 
+	// The term the leader of a partition ordered a write in. A copy refuses anything older than
+	// the newest term it has applied, which is what stops a leader that has been replaced.
+	constexpr char term_header[] = "X-Asyncdb-Term";
+
 	// Where the copies of a key are: whether this node holds one itself, and the other nodes that
 	// hold one, in the order this node should ask them — its own zone first, because the copy in
 	// this node's zone is the near one.
@@ -26,6 +31,28 @@ namespace cluster
 		bool local = true;
 
 		std::vector<std::string> nodes;
+	};
+
+	// Who orders the writes to a partition, and in which term. One node leads a partition at a
+	// time: it applies a write itself and sends it to the copies, so that two clients writing one
+	// key are ordered by one node rather than racing at each copy.
+	//
+	// The term is etcd's revision of the claim, so a later leader of a partition always has a
+	// higher term than the leader before it, and a write carrying an older one is refused by the
+	// copies. That is what stops a leader that has lost its lease, and does not know it yet, from
+	// writing behind the leader that replaced it.
+	struct leadership
+	{
+		// False when no node holds the partition — nothing has claimed it yet, or etcd cannot be
+		// read. Writes wait for a leader rather than going around one.
+		bool known = false;
+
+		// True when this node is the leader, which is where the order is actually decided.
+		bool local = false;
+
+		std::string node;
+
+		int64_t term = 0;
 	};
 
 	// The seam over the other instances, in the way that repository::repository is the seam over
@@ -48,6 +75,19 @@ namespace cluster
 		// scan whole, and the rest are what to fall back on when a node of it does not answer.
 		// Empty when this instance stands alone.
 		virtual std::vector<std::vector<std::string>> zones() const = 0;
+
+		// The node that orders writes to this key's partition. Nothing at all when there is nothing
+		// to order — one instance standing alone owns every key and races with nobody.
+		virtual std::optional<leadership> leader(const std::string &key) const = 0;
+
+		// How many partitions this node leads, which is what says an election has settled. Nothing
+		// at all when there is no leadership to have.
+		virtual size_t leads() const = 0;
+
+		// Whether a write of this key, ordered in that term, may be applied here — and remembers
+		// the term, so that anything older is refused from then on. A term of nothing is a write
+		// that no leader ordered, which is a cluster with no leadership at all.
+		virtual bool accept(const std::string &key, int64_t term) = 0;
 
 		// Sends the request to the node named and returns its answer as this node's own. The node
 		// serves it where it stands rather than forwarding it again.
