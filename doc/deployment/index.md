@@ -105,6 +105,7 @@ its neighbours.
 | [The network](/deployment/network) | `VPC`, `InternetGateway`, `AttachGateway`, `PublicSubnet1`–`3`, `PublicRouteTable`, `PublicRoute`, `SubnetRouteTableAssociation1`–`3`, `ALBSecurityGroup`, `InstanceSecurityGroup`, `EtcdSecurityGroup`, `InstanceApiIngress`, `EtcdPeerIngress` |
 | [The database tier](/deployment/database) | `InstanceRole`, `InstanceProfile`, `LaunchTemplate`, `AutoScalingGroup`, `ApplicationLoadBalancer`, `ALBTargetGroup`, `ALBListener` |
 | [The etcd tier](/deployment/etcd) | `Etcd1`, `Etcd2`, `Etcd3`, and the `Etcd` mapping their addresses live in |
+| [What it costs](/deployment/cost) | All of the above, priced — and what a read, a write and a scan add to it |
 
 ## Before the first deploy
 
@@ -200,5 +201,10 @@ It is a small template, and it is worth being plain about where it stops.
   addresses. [What that costs](/deployment/etcd#what-a-failure-looks-like) is
   one instance recreated by hand, against a tier whose data rewrites itself in
   seconds.
+- **Nothing caps the CPU bill.** `t3.micro` is burstable and the template sets no
+  `CreditSpecification`, so both tiers take the T3 default of `unlimited`: an
+  instance that runs out of credits keeps running at full speed and charges for
+  the surplus. Three saturated database instances cost more in credits than
+  [the whole stack costs standing still](/deployment/cost#cpu-credits).
 - **The description is stale.** It says "Minimal 2-AZ EC2 cluster"; the template
   builds three subnets in three availability zones.

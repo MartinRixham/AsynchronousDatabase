@@ -36,7 +36,8 @@ export default defineConfig({
 					{ text: "Overview", link: "/deployment/" },
 					{ text: "The network", link: "/deployment/network" },
 					{ text: "The database tier", link: "/deployment/database" },
-					{ text: "The etcd tier", link: "/deployment/etcd" }
+					{ text: "The etcd tier", link: "/deployment/etcd" },
+					{ text: "What it costs", link: "/deployment/cost" }
 				]
 			},
 			{
