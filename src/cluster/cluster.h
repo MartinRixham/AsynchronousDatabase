@@ -40,8 +40,14 @@ namespace cluster
 		// Every node holding a copy of the key.
 		virtual placement replicas(const std::string &key) const = 0;
 
-		// Every node but this one.
+		// Every node but this one, which is what an operation on every node is carried out over.
 		virtual std::vector<std::string> peers() const = 0;
+
+		// The zones a scan is asked of, as the nodes of each and without this node, in the order
+		// to ask them: a zone holds a copy of the whole keyspace, so the first of them answers a
+		// scan whole, and the rest are what to fall back on when a node of it does not answer.
+		// Empty when this instance stands alone.
+		virtual std::vector<std::vector<std::string>> zones() const = 0;
 
 		// Sends the request to the node named and returns its answer as this node's own. The node
 		// serves it where it stands rather than forwarding it again.

@@ -186,7 +186,7 @@ stays missing until the record is written again.
 | `GET`/`HEAD` `/table/{table}/key/{key}` | Answered by one copy: this node when it holds one, else the nearest that answers. A key this node holds nothing for is asked of the other copies |
 | `PUT`/`DELETE` `/table/{table}` | Carried out on **every** node: a record can only be written where its table is |
 | `GET` `/table`, `GET /table/{table}` | Answered where they are asked. Every node holds every table |
-| `GET` `/table/{table}/key` | Asked of every node, and the pages merged back into key order. A key two zones hold is answered once |
+| `GET` `/table/{table}/key` | Asked of **one zone** — this node's own — and the pages merged back into key order |
 | `DELETE` `/table/{table}/key` | Carried out on every node, because every node holds a share of the range |
 | `GET /health` | Answered where it is asked, and names the nodes and zones it can see |
 
@@ -223,12 +223,29 @@ zones is the number of copies.
 
 ## Scans across a cluster
 
-A scan is the one operation that cannot be answered by one node. Every node is
-asked for the same range, and the answers are merged into key order and cut to
-the `limit`. A key that several zones hold comes back from each of them and is
-answered once. What is over the limit is dropped rather than held: the next page
-asks every node again from where this one ended, so the dropped keys are the keys
-the next page begins with.
+A scan is the one operation that cannot be answered by one node — but it can be
+answered by one **zone**, and that is what it asks. A zone holds a copy of the
+whole keyspace, so the nodes of one zone between them hold every key in the
+range; the answers are merged into key order and cut to the `limit`.
+
+The zone asked is **this node's own**, which is the cheap one: those nodes are in
+the same availability zone as the node that was asked, so the pages cross no zone
+boundary. A node that is alone in its zone holds every key itself and asks nobody
+at all.
+
+Asking every node instead would return the same records once per zone, and cost
+three pages of bytes for every page of answer.
+
+A node of that zone that does not answer is a **zone to give up on, not a scan to
+fail**: another zone holds the same keys, so the whole range is asked of the next
+one instead. Only when no zone has a complete set of nodes answering does the
+scan fail. A node that *refuses* — a cursor this instance did not issue, a range
+that is not below its end — is a different thing: every zone would refuse alike,
+so the refusal is the answer and the next zone is not asked.
+
+What is over the limit is dropped rather than held: the next page asks the zone
+again from where this one ended, so the dropped keys are the keys the next page
+begins with.
 
 The cursor is issued by the node that answered, and names a position in the
 merged order. It is still
@@ -250,7 +267,8 @@ it ends.
   answered as a failure, and the copies that took it keep it. There is no read
   repair, no anti-entropy and no hinted handoff, so until the client runs the
   write again the zones disagree, and a read may be answered by either of them. A
-  scan that finds a key in two zones answers the copy it saw first.
+  scan is answered by one zone, so it answers what *that* zone holds — a record
+  another zone has and this one does not is a record the scan does not return.
 - **A write is only as available as its least available zone.** Every copy has to
   take a write, so a zone that is down stops writes to the keys it holds while
   reads carry on from the zones that are up. Replication here is for reading

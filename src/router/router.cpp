@@ -508,36 +508,55 @@ router::response router::router::scan_records(const request &request, const std:
 	scan::page page = repository.scan_records(name, range);
 	std::vector<record::record> records = page.records;
 	bool has_more = page.has_more;
-	std::vector<std::string> peers = request.forwarded
-		? std::vector<std::string>()
-		: nodes.peers();
 
-	// The keys of a table are spread across the cluster, so a scan is the same range asked of
-	// every node and the answers put back into key order.
-	for (size_t i = 0; i < peers.size(); i++)
+	// The keys of a table are spread across the cluster, but every zone holds a copy of all of
+	// them, so a scan is this node's own share and *one* zone's answer for the rest, put back into
+	// key order — not every node's, which would be the same keys once per zone. This node's own
+	// zone is asked first, because a page from it crosses no zone boundary.
+	std::vector<std::vector<std::string>> zones = request.forwarded
+		? std::vector<std::vector<std::string>>()
+		: nodes.zones();
+	std::optional<response> failure;
+
+	for (size_t i = 0; i < zones.size(); i++)
 	{
-		response answer = nodes.send(peers[i], forwarded_range(request, range));
+		std::vector<record::record> answered = page.records;
+		bool more = page.has_more;
 
-		if (answer.status != boost::beast::http::status::ok)
+		failure = scan_zone(request, range, zones[i], &answered, &more);
+
+		// A zone that answered with something other than a page, and not because a node of it was
+		// unreachable, is every zone's answer: a cursor this instance did not issue is refused by
+		// all of them, so asking the next one would only be slower.
+		if (failure && failure->status < boost::beast::http::status::internal_server_error)
 		{
-			return answer;
+			return *failure;
 		}
 
-		has_more = read_page(answer, &records) || has_more;
+		if (!failure)
+		{
+			records = answered;
+			has_more = more;
+
+			merge(&records, range.reverse);
+
+			// What is over the limit is dropped rather than held: the next page asks again from
+			// where this one ended, and the keys dropped here are the keys it starts with.
+			if (records.size() > range.limit)
+			{
+				records.resize(range.limit);
+
+				has_more = true;
+			}
+
+			break;
+		}
 	}
 
-	if (!peers.empty())
+	// Every zone had a node that did not answer, so there is no zone left that holds the range.
+	if (failure)
 	{
-		merge(&records, range.reverse);
-
-		// What is over the limit is dropped rather than held: the next page asks every node again
-		// from where this one ended, and the keys dropped here are the keys it starts with.
-		if (records.size() > range.limit)
-		{
-			records.resize(range.limit);
-
-			has_more = true;
-		}
+		return *failure;
 	}
 
 	boost::json::array records_json;
@@ -556,6 +575,28 @@ router::response router::router::scan_records(const request &request, const std:
 	}
 
 	return json_response(boost::beast::http::status::ok, body);
+}
+
+std::optional<router::response> router::router::scan_zone(
+	const request &request,
+	const scan::range &range,
+	const std::vector<std::string> &zone,
+	std::vector<record::record> *records,
+	bool *has_more)
+{
+	for (size_t i = 0; i < zone.size(); i++)
+	{
+		response answer = nodes.send(zone[i], forwarded_range(request, range));
+
+		if (answer.status != boost::beast::http::status::ok)
+		{
+			return answer;
+		}
+
+		*has_more = read_page(answer, records) || *has_more;
+	}
+
+	return std::nullopt;
 }
 
 router::response router::router::delete_records(const request &request, const std::string &name)

@@ -1,3 +1,4 @@
+#include "cluster/partition.h"
 #include "fake_cluster.h"
 
 cluster::fake_cluster::fake_cluster(const std::string &node, const std::vector<std::string> &members):
@@ -78,6 +79,21 @@ std::vector<std::string> cluster::fake_cluster::peers() const
 	}
 
 	return peers;
+}
+
+std::vector<std::vector<std::string>> cluster::fake_cluster::zones() const
+{
+	std::string zone;
+
+	for (size_t i = 0; i < member_list.size(); i++)
+	{
+		if (member_list[i].node == self)
+		{
+			zone = member_list[i].zone;
+		}
+	}
+
+	return zones_of(member_list, self, zone);
 }
 
 router::response cluster::fake_cluster::send(const std::string &node, const router::request &request) const

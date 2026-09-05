@@ -25,6 +25,19 @@ namespace cluster
 	// Members that name no zone are one zone between them, so a cluster that was never told about
 	// zones answers with the one owner it always did.
 	std::vector<member> owners_of(const std::string &key, const std::vector<member> &members);
+
+	// The zones a scan can be asked of, as the nodes of each and without the node doing the
+	// asking, which scans its own store rather than asking itself. A zone holds a copy of the
+	// whole keyspace, so the first of these answers a scan whole and the rest are what to fall
+	// back on when a node of it does not answer.
+	//
+	// This node's own zone comes first, because those nodes are the near ones. It is a group even
+	// when it is empty, which is a node that is alone in its zone and therefore holds every key
+	// itself.
+	std::vector<std::vector<std::string>> zones_of(
+		const std::vector<member> &members,
+		const std::string &node,
+		const std::string &zone);
 }
 
 #endif

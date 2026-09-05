@@ -100,6 +100,8 @@ namespace cluster
 
 		std::vector<std::string> peers() const override;
 
+		std::vector<std::vector<std::string>> zones() const override;
+
 		router::response send(const std::string &node, const router::request &request) const override;
 
 	private:

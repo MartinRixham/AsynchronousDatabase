@@ -84,3 +84,38 @@ std::vector<cluster::member> cluster::owners_of(const std::string &key, const st
 
 	return owners;
 }
+
+std::vector<std::vector<std::string>> cluster::zones_of(
+	const std::vector<member> &members,
+	const std::string &node,
+	const std::string &zone)
+{
+	std::map<std::string, std::vector<std::string>> grouped;
+
+	// This node's own zone is a group whether or not another node shares it.
+	grouped[zone];
+
+	for (size_t i = 0; i < members.size(); i++)
+	{
+		if (members[i].node != node)
+		{
+			grouped[members[i].zone].push_back(members[i].node);
+		}
+	}
+
+	std::vector<std::vector<std::string>> zones;
+
+	zones.push_back(grouped[zone]);
+
+	for (std::map<std::string, std::vector<std::string>>::const_iterator it = grouped.begin();
+		it != grouped.end();
+		++it)
+	{
+		if (it->first != zone)
+		{
+			zones.push_back(it->second);
+		}
+	}
+
+	return zones;
+}

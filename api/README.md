@@ -66,7 +66,7 @@ that is a create.
 | 5 · Scans | Prefix, `values=false`, `from` inclusive against `to` exclusive, `reverse`, two pages and the cursor between them, a foreign cursor (400), an inverted range (400), the whole table |
 | 6 · Delete a range | A range delete with no range (400), a prefix deleted whole, and a key outside it that survived |
 | 7 · Drop the tables | `204`, then `404`, then created again and empty — the data went with the column family |
-| 8 · The cluster | More than one instance: the membership, a table created on one node and present on all, a record written to one node and read from the others, a scan merged across all of them, and a range delete and a table delete that reach every node |
+| 8 · The cluster | More than one instance: the membership, a table created on one node and present on all, a record written to one node and read from the others, a scan merged across the zone that answers it, and a range delete and a table delete that reach every node |
 
 ## Three things worth knowing before a red test is believed
 

@@ -604,6 +604,20 @@ namespace
 		return cluster::fake_cluster(here, { here, there });
 	}
 
+	const std::string partner = "http://asyncdb-4:8080";
+
+	// Two zones of two nodes: this node and its partner split the copy their zone holds, and the
+	// other two split the copy theirs holds.
+	cluster::fake_cluster paired_zones()
+	{
+		return cluster::fake_cluster(here, std::vector<cluster::member> {
+			cluster::member { here, "a" },
+			cluster::member { partner, "a" },
+			cluster::member { there, "b" },
+			cluster::member { elsewhere, "b" }
+		});
+	}
+
 	// Three nodes, one in each zone, which is a cluster holding a copy of every record on every
 	// one of them.
 	cluster::fake_cluster three_zones()
@@ -1181,6 +1195,106 @@ TEST(router_cluster_test, fail_to_scan_when_a_node_does_not_answer)
 	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/key"))), "storage_error");
+}
+
+// A zone holds a copy of every key, so a scan is answered by one zone and not by every node: what
+// the other zones hold is the same records again.
+TEST(router_cluster_test, scan_this_node_s_own_zone_and_no_other)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	write_record(router, "account", "c", "3");
+	nodes.forget();
+	nodes.answer(partner, page(boost::json::array { record_json("b", "2") }, false));
+
+	router::response response = router.route(get("/table/account/key"));
+
+	EXPECT_EQ(keys(response), (std::vector<std::string> { "a", "b", "c" }));
+
+	// The partner shares this node's zone, so the page it answers with crosses no zone boundary,
+	// and the two zones behind it are not asked at all.
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, partner);
+}
+
+// A node that is the only one in its zone holds every key itself, so a scan asks nobody.
+TEST(router_cluster_test, scan_nobody_when_this_node_is_a_zone_of_its_own)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	write_record(router, "account", "b", "2");
+	nodes.forget();
+
+	EXPECT_EQ(keys(router.route(get("/table/account/key"))), (std::vector<std::string> { "a", "b" }));
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
+// The zone behind it holds the same keys, so a node that does not answer is a zone to give up on
+// rather than a scan to fail.
+TEST(router_cluster_test, scan_the_next_zone_when_a_node_of_the_first_does_not_answer)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "a", "1");
+	nodes.forget();
+	nodes.answer(partner, router::error_response("storage_error", "Node \"" + partner + "\" did not answer."));
+	nodes.answer(there, page(boost::json::array { record_json("b", "2") }, false));
+	nodes.answer(elsewhere, page(boost::json::array { record_json("c", "3") }, false));
+
+	router::response response = router.route(get("/table/account/key"));
+
+	EXPECT_EQ(keys(response), (std::vector<std::string> { "a", "b", "c" }));
+
+	ASSERT_EQ(nodes.sent().size(), 3u);
+	EXPECT_EQ(nodes.sent()[0].first, partner);
+	EXPECT_EQ(nodes.sent()[1].first, there);
+	EXPECT_EQ(nodes.sent()[2].first, elsewhere);
+}
+
+// A refusal is not a node that is missing: a cursor this instance did not issue is refused by every
+// zone alike, so the first one to say so is the answer.
+TEST(router_cluster_test, take_a_refusal_of_a_scan_from_the_zone_that_gave_it)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.answer(partner, router::error_response("invalid_cursor", "That cursor is not this instance's."));
+
+	EXPECT_EQ(error_code(router.route(get("/table/account/key"))), "invalid_cursor");
+	EXPECT_EQ(nodes.sent().size(), 1u);
+}
+
+TEST(router_cluster_test, fail_to_scan_when_no_zone_answers)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.answer(partner, router::error_response("storage_error", "Node \"" + partner + "\" did not answer."));
+	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
+	nodes.answer(elsewhere, router::error_response("storage_error", "Node \"" + elsewhere + "\" did not answer."));
+
+	EXPECT_EQ(error_code(router.route(get("/table/account/key"))), "storage_error");
+
+	// Two, not three: a zone is given up on at the first node of it that does not answer, because
+	// what the rest of that zone holds is no longer a whole copy of the range.
+	EXPECT_EQ(nodes.sent().size(), 2u);
 }
 
 TEST(router_cluster_test, delete_a_range_on_every_node)

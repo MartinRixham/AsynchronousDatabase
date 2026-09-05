@@ -30,6 +30,8 @@ namespace
 	{
 		std::string self;
 
+		std::string zone;
+
 		std::vector<::cluster::member> member_list;
 
 		http::curl_client curl;
@@ -40,9 +42,13 @@ namespace
 		{
 		}
 
-		void join(const std::string &node, const std::vector<::cluster::member> &members)
+		void join(
+			const std::string &node,
+			const std::string &node_zone,
+			const std::vector<::cluster::member> &members)
 		{
 			self = node;
+			zone = node_zone;
 			member_list = members;
 		}
 
@@ -89,6 +95,11 @@ namespace
 			return peers;
 		}
 
+		std::vector<std::vector<std::string>> zones() const override
+		{
+			return ::cluster::zones_of(member_list, self, zone);
+		}
+
 		router::response send(const std::string &node, const router::request &request) const override
 		{
 			return ::cluster::forward(curl, node, request);
@@ -132,8 +143,8 @@ protected:
 			cluster::member { node(second), "" }
 		};
 
-		first_cluster.join(node(first), members);
-		second_cluster.join(node(second), members);
+		first_cluster.join(node(first), "", members);
+		second_cluster.join(node(second), "", members);
 
 		first_thread = std::thread([server = first]() { server->serve(); });
 		second_thread = std::thread([server = second]() { server->serve(); });
@@ -221,8 +232,8 @@ protected:
 			cluster::member { node(second), "two" }
 		};
 
-		first_cluster.join(node(first), members);
-		second_cluster.join(node(second), members);
+		first_cluster.join(node(first), "one", members);
+		second_cluster.join(node(second), "two", members);
 	}
 
 	std::shared_ptr<server::server> &owner(const std::string &key)
@@ -491,7 +502,7 @@ TEST_F(cluster_test, a_record_is_read_from_the_next_zone_when_a_node_does_not_an
 
 	// A membership naming a zone whose node is not there and not naming this node at all: the
 	// first node holds no copy of its own, and the copy it asks for first answers nothing.
-	first_cluster.join(node(first), {
+	first_cluster.join(node(first), "one", {
 		cluster::member { "http://localhost:1", "one" },
 		cluster::member { node(second), "two" }
 	});
@@ -500,4 +511,23 @@ TEST_F(cluster_test, a_record_is_read_from_the_next_zone_when_a_node_does_not_an
 
 	EXPECT_EQ(answered.code, 200);
 	EXPECT_EQ(answered.body, "a value");
+}
+
+// The whole of what a scan across zones is for: this node's zone holds every key, so the scan is
+// answered out of it alone and the zone that is gone is never asked.
+TEST_F(cluster_test, a_scan_answers_every_record_when_the_other_zone_is_gone)
+{
+	zone_the_cluster();
+
+	request(first, "PUT", "/table/account", "{}");
+	request(first, "PUT", "/table/account/key/4821", "a value");
+	request(first, "PUT", "/table/account/key/4822", "another value");
+
+	second->close();
+	second_thread.join();
+
+	EXPECT_EQ(keys(get(first, "/table/account/key")), (std::vector<std::string> { "4821", "4822" }));
+
+	// The test stops the servers it starts, and this one has stopped already.
+	second_thread = std::thread([]() {});
 }

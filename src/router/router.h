@@ -7,6 +7,7 @@
 
 #include "api_error.h"
 #include "record/record.h"
+#include "scan/scan.h"
 #include "request.h"
 #include "response.h"
 #include "cluster/cluster.h"
@@ -57,6 +58,16 @@ namespace router
 		response delete_table(const request &request, const std::string &name);
 
 		response scan_records(const request &request, const std::string &name);
+
+		// Asks one zone for the same range and adds what it answers to the records this node holds
+		// itself. Answers the failure when a node of that zone did not answer, which is a zone to
+		// give up on rather than a scan to fail.
+		std::optional<response> scan_zone(
+			const request &request,
+			const scan::range &range,
+			const std::vector<std::string> &zone,
+			std::vector<record::record> *records,
+			bool *has_more);
 
 		response delete_records(const request &request, const std::string &name);
 

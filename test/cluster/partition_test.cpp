@@ -305,3 +305,63 @@ TEST(partition_test, every_node_of_a_zone_holds_a_share_of_its_copies)
 
 	EXPECT_EQ(owners, (std::set<std::string> { "http://asyncdb-1:8080", "http://asyncdb-2:8080" }));
 }
+
+// A scan asks one zone, because one zone holds every key, and it asks its own first: those nodes
+// are in the same availability zone, and a page from them crosses no boundary.
+TEST(partition_test, the_zones_of_a_scan_begin_with_this_node_s_own)
+{
+	std::vector<std::vector<std::string>> zones =
+		cluster::zones_of(zoned, "http://asyncdb-1:8080", "a");
+
+	ASSERT_EQ(zones.size(), 3u);
+	EXPECT_EQ(zones[0], std::vector<std::string>({ "http://asyncdb-2:8080" }));
+	EXPECT_EQ(zones[1], (std::vector<std::string> { "http://asyncdb-3:8080", "http://asyncdb-4:8080" }));
+	EXPECT_EQ(zones[2], (std::vector<std::string> { "http://asyncdb-5:8080", "http://asyncdb-6:8080" }));
+}
+
+// A node that is the only one in its zone holds every key itself, so the zone it asks first is no
+// node at all.
+TEST(partition_test, a_node_alone_in_its_zone_asks_nobody_for_a_scan)
+{
+	std::vector<cluster::member> one_each {
+		cluster::member { "http://asyncdb-1:8080", "a" },
+		cluster::member { "http://asyncdb-2:8080", "b" },
+		cluster::member { "http://asyncdb-3:8080", "c" }
+	};
+
+	std::vector<std::vector<std::string>> zones =
+		cluster::zones_of(one_each, "http://asyncdb-1:8080", "a");
+
+	ASSERT_EQ(zones.size(), 3u);
+	EXPECT_TRUE(zones[0].empty());
+	EXPECT_EQ(zones[1], std::vector<std::string>({ "http://asyncdb-2:8080" }));
+	EXPECT_EQ(zones[2], std::vector<std::string>({ "http://asyncdb-3:8080" }));
+}
+
+// A cluster that was never told about zones is one zone of every node, so a scan asks all of them,
+// which is what it did before there were zones at all.
+TEST(partition_test, members_in_no_zone_are_one_zone_of_every_other_node)
+{
+	std::vector<std::vector<std::string>> zones = cluster::zones_of(zoneless(three), three[0], "");
+
+	ASSERT_EQ(zones.size(), 1u);
+	EXPECT_EQ(zones[0], (std::vector<std::string> { three[1], three[2] }));
+}
+
+TEST(partition_test, the_zones_of_a_scan_hold_every_node_but_this_one)
+{
+	std::vector<std::vector<std::string>> zones =
+		cluster::zones_of(zoned, "http://asyncdb-3:8080", "b");
+	std::set<std::string> asked;
+
+	for (size_t i = 0; i < zones.size(); i++)
+	{
+		for (size_t j = 0; j < zones[i].size(); j++)
+		{
+			asked.insert(zones[i][j]);
+		}
+	}
+
+	EXPECT_EQ(asked.size(), zoned.size() - 1);
+	EXPECT_EQ(asked.count("http://asyncdb-3:8080"), 0u);
+}

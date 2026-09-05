@@ -240,6 +240,21 @@ std::vector<std::string> cluster::etcd_cluster::peers() const
 	return peers;
 }
 
+std::vector<std::vector<std::string>> cluster::etcd_cluster::zones() const
+{
+	std::vector<member> registered = members();
+
+	// One node, or none that etcd would name, answers a scan out of its own store, the same way it
+	// answers for every key.
+	if (registered.size() < 2)
+	{
+		return std::vector<std::vector<std::string>>();
+	}
+
+	// The name of the namespace is hidden here by the name of the base class.
+	return ::cluster::zones_of(registered, configuration.node, configuration.zone);
+}
+
 router::response cluster::etcd_cluster::send(const std::string &node, const router::request &request) const
 {
 	return forward(http_client, node, request);

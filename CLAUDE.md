@@ -217,12 +217,14 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
 - **`cluster::cluster`** is the second pure-virtual seam the router routes against, over "which
   nodes hold this key" and "ask that node". `cluster::replicas` answers a `cluster::placement` —
   whether this node holds a copy, and the other nodes that do, this node's own zone first.
-  `cluster::standalone` holds everything and is what a router built without a cluster gets;
+  `cluster::zones` groups the membership for a scan: the nodes of each zone, this node's own first,
+  which is why a scan asks one zone rather than every node. `cluster::standalone` holds everything
+  and is what a router built without a cluster gets;
   `cluster::etcd_cluster` registers `/asyncdb/node/{address}` in etcd on a lease with
   `{"node":...,"zone":...}` as its value (a bare address is still read, as a node in no zone),
   renews it on a thread of its own, and reads the membership back. `cluster::owner_of` is rendezvous
-  hashing over a set of nodes, `cluster::owners_of` runs it once per zone, and `cluster::forward` is
-  how a request travels.
+  hashing over a set of nodes, `cluster::owners_of` runs it once per zone, `cluster::zones_of` is the
+  grouping behind `zones()`, and `cluster::forward` is how a request travels.
 - **`repository::repository`** is the pure-virtual seam, over tables, records, scans and range deletes.
   `rocksdb_repository` makes each table a **column family** and keeps its document in the default one
   under `"TABLE_<name>"`; dropping a table drops the column family, so the data goes with it. The
@@ -254,8 +256,9 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
   *every* zone and every one of them has to take it; a read goes to one copy — this node when it
   holds one, else the nearest zone's, passing over a node that does not answer, and asking the other
   copies when this node holds nothing for the key. A table create or delete goes to *every* node,
-  because a record can only be written where its table is; a scan is asked of every node and merged
-  back into key order, where a key two zones hold is answered once. A forwarded request carries
+  because a record can only be written where its table is; a scan is asked of **one zone** — this
+  node's own, since a zone holds a copy of the whole keyspace — and merged back into key order,
+  falling back to another zone when a node of that one does not answer. A forwarded request carries
   `X-Asyncdb-Forwarded` and is served where it lands, which is what stops two nodes bouncing it.
   `doc/database/cluster.md` is the spec, including what this deliberately does not do (no read
   repair, no rebalancing, and a write is only as available as its least available zone).

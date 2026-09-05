@@ -365,15 +365,20 @@ $0.0133 and a read $0.1033, so what a copy in every zone actually cost is
 $0.027 a gigabyte written, and what it bought is a read that never leaves the
 zone it landed in and a record that outlives the loss of two of them.
 
-Scans are the exception, and they are worth pricing separately.
-[Every node is asked for the same range](/database/cluster#scans-across-a-cluster),
-each returns up to the full `limit`, and the merge cuts what is over it — and
-with a copy in every zone, what the six of them return between them is the same
-records three times over. A thousand-record page can therefore move **six
-thousand records' worth of bytes, four thousand of them across zone boundaries,
-to return one thousand.**
-Per byte delivered, a paged scan is the most expensive read in the API, and
-narrowing it with `from` and `to` costs less than raising the `limit`.
+Scans cross nothing either, and they are the reason to be glad of it.
+[One zone is asked for the range](/database/cluster#scans-across-a-cluster) —
+this node's own — because a zone holds a copy of every key, so the two nodes of
+one availability zone answer the whole of it. A thousand-record page moves **two
+thousand records' worth of bytes, none of them across a zone boundary, to return
+one thousand**: this node's own share, its partner's, and the merge cutting what
+is over the `limit`.
+
+Asking all six, which is what a scan did before a zone was a copy, would have
+moved six thousand records' worth and four thousand of them across a boundary for
+the same thousand back. Per byte delivered a paged scan is still the least
+efficient read in the API — half of what it moves is thrown away — but it is no
+longer the most expensive one, and narrowing it with `from` and `to` still costs
+less than raising the `limit`.
 
 Between the tiers, the traffic is nothing: each node
 [renews its lease and re-reads the membership](/database/cluster#membership)
@@ -424,7 +429,7 @@ scan, and "small" is a few hundred bytes of headers and JSON.
 | `HEAD /table/{t}/key/{k}` | nobody, unless the key is not here | none, or small on a miss | small | LCU only |
 | `PUT /table/{t}/key/{k}` | the copy in **every** zone | 2 × V | small | V × $0.04/GB |
 | `DELETE /table/{t}/key/{k}` | the copy in **every** zone | 2 × small | small | LCU only |
-| `GET /table/{t}/key` | **every** node | up to 4 × P | P | P × $0.17/GB |
+| `GET /table/{t}/key` | one **zone**, this node's own | none | P | P × $0.09/GB |
 | `DELETE /table/{t}/key` | **every** node | 4 × small | small | LCU only |
 | `PUT`/`DELETE` `/table/{t}` | **every** node | 4 × small | small | LCU only |
 | `GET /table`, `GET /table/{t}` | nobody | none | small | LCU only |
@@ -432,9 +437,8 @@ scan, and "small" is a few hundred bytes of headers and JSON.
 
 The $0.09 of a read is egress and nothing else, because the node that was asked
 holds the key; the $0.04 of a write is the value crossing into the two other
-zones; the $0.17 of a scan is $0.09 plus the four full pages that cross a zone
-to be thrown away — the fifth crosses nothing, because it comes from the node's own
-zone.
+zones; the $0.09 of a scan is egress alone, because the zone it asks is the one
+it is already in.
 
 Two readings of that table:
 
