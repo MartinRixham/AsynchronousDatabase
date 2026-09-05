@@ -89,6 +89,7 @@ them is reached — see [the deployment](/runbook/deployment#asking-one-instance
 | `health` names too few nodes | Membership has not settled, or etcd is unreachable | [Membership](/runbook/membership#the-membership-is-wrong) |
 | Instances replaced over and over | The image cannot be pulled, or the grace period is too short | [The deployment](/runbook/deployment#instances-are-replaced-in-a-loop) |
 | Everything gone after a deploy | An instance was replaced, which is an empty database | [The store](/runbook/storage#a-node-came-back-empty) |
+| A node is in the cluster but holds nothing | It was replaced, and its rebuild found no zone to read | [Rebuilding a node](/runbook/rebuild) |
 
 ## What recovers by itself
 
@@ -102,11 +103,13 @@ windows usually makes it longer:
 | A cold cluster leading nothing | a pass or two, seconds | 64 claims per node per pass |
 | A node that could not reach etcd | the next pass, ~3 seconds | Re-registering from scratch |
 | A container that exited | at once | `docker run --restart always` |
+| A replaced node's records | its start-up | [It rebuilds from another zone before joining](/runbook/rebuild) |
 | RocksDB back pressure | seconds to minutes | Compaction catching up |
 
-And what does not, ever, without a hand: **a copy that missed a write**, **a
-node that came back empty**, **a table that a new node does not have**, and
-**an etcd member recreated at an address the survivors already know**.
+And what does not, ever, without a hand: **a copy that missed a write on a node
+that is otherwise whole**, **anything at all when there is only one zone**, and
+**an etcd member recreated at an address the survivors already know**. The
+rebuild covers an *empty* node, not a thin one.
 
 ## The pages
 
@@ -117,3 +120,4 @@ node that came back empty**, **a table that a new node does not have**, and
 | [Membership and leadership](/runbook/membership) | etcd, the node list, leases, terms and elections |
 | [The store](/runbook/storage) | RocksDB: stalls, errors, disks, and data that is not there |
 | [The deployment](/runbook/deployment) | The stack, the image, the load balancer and the release |
+| [Rebuilding a node](/runbook/rebuild) | How a replaced node fills itself in before it joins, and when it does not |

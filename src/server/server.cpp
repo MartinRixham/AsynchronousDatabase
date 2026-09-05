@@ -10,6 +10,7 @@
 
 #include "error.h"
 #include "log.h"
+#include "rebuild/rebuild.h"
 #include "server.h"
 #include "session.h"
 
@@ -118,6 +119,21 @@ server::server::server(
 
 void server::server::serve()
 {
+	// A node that came back empty is filled from a zone that still holds its records, and it is
+	// filled *before* it registers. A node that is not in the membership is nobody's copy, so this
+	// costs no read and holds up no write however long it takes; registering first would make every
+	// write to this node's partitions wait for it, because every copy has to take a write.
+	//
+	// The membership it reads is one it read from etcd itself, and only that: a node that has not
+	// registered is not in it, so a cluster starting together has nothing to rebuild from and
+	// nobody waits for anybody. A membership handed in rather than discovered says nothing about
+	// which of its nodes are listening yet, and waiting on one that is not is how two nodes coming
+	// up together would each hold the other's start-up open.
+	if (own_nodes.discover())
+	{
+		rebuild::rebuild(repository, nodes);
+	}
+
 	// Joining is what makes this instance one of several, and it is nothing at all when no etcd
 	// is configured, which is how a single instance keeps the whole keyspace to itself.
 	own_nodes.start();

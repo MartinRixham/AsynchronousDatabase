@@ -33,6 +33,13 @@ void cluster::fake_cluster::answer(const std::string &node, const router::respon
 	answers[node] = response;
 }
 
+void cluster::fake_cluster::answer_in_turn(
+	const std::string &node,
+	const std::vector<router::response> &responses)
+{
+	answer_list[node] = responses;
+}
+
 std::vector<cluster::member> cluster::fake_cluster::members() const
 {
 	return member_list;
@@ -148,14 +155,25 @@ router::response cluster::fake_cluster::send(const std::string &node, const rout
 {
 	requests.push_back(std::pair<std::string, router::request>(node, request));
 
-	std::map<std::string, router::response>::const_iterator answered = answers.find(node);
+	std::map<std::string, std::vector<router::response>>::const_iterator in_turn = answer_list.find(node);
 
-	if (answered == answers.end())
+	if (in_turn != answer_list.end() && !in_turn->second.empty())
+	{
+		size_t given = answered[node];
+
+		answered[node] = given + 1;
+
+		return in_turn->second[std::min(given, in_turn->second.size() - 1)];
+	}
+
+	std::map<std::string, router::response>::const_iterator answered_once = answers.find(node);
+
+	if (answered_once == answers.end())
 	{
 		return router::empty_response(boost::beast::http::status::no_content);
 	}
 
-	return answered->second;
+	return answered_once->second;
 }
 
 const std::vector<std::pair<std::string, router::request>> &cluster::fake_cluster::sent() const

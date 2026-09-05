@@ -22,6 +22,11 @@ namespace cluster
 
 		std::map<std::string, router::response> answers;
 
+		// The answers a node gives one after another, and how many of them it has given.
+		std::map<std::string, std::vector<router::response>> answer_list;
+
+		mutable std::map<std::string, size_t> answered;
+
 		std::map<std::string, leadership> leaders;
 
 		std::map<std::string, int64_t> refused;
@@ -40,6 +45,11 @@ namespace cluster
 		void copies(const std::string &key, const std::vector<std::string> &nodes);
 
 		void answer(const std::string &node, const router::response &response);
+
+		// The answers a node gives in turn rather than one answer to everything, so that a caller
+		// paging through a scan is answered a page at a time. The last of them answers everything
+		// after it, which is a range that stays exhausted.
+		void answer_in_turn(const std::string &node, const std::vector<router::response> &responses);
 
 		// The node ordering writes to this key, and the term it orders them in.
 		void led_by(const std::string &key, const std::string &node, int64_t term);

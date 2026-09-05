@@ -144,6 +144,18 @@ void cluster::etcd_cluster::start()
 	DEBUG("Node " + configuration.node + " joined the cluster at " + etcd_client.endpoint() + ".");
 }
 
+bool cluster::etcd_cluster::discover()
+{
+	if (!configuration.is_clustered())
+	{
+		return false;
+	}
+
+	read_members();
+
+	return true;
+}
+
 void cluster::etcd_cluster::stop()
 {
 	{

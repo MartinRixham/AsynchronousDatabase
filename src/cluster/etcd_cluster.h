@@ -114,6 +114,17 @@ namespace cluster
 		// are nothing at all.
 		void start();
 
+		// Reads the membership without joining it, so that a node can see what it is about to hold
+		// before anything is routed to it. It is what a rebuild runs on: a node that has not
+		// registered is nobody's copy, so it can take as long as it needs without a read being
+		// answered from it or a write waiting on it.
+		//
+		// False when there was no etcd to read one from, which is an instance standing alone and a
+		// cluster a test handed in rather than one this node discovered. Nothing that was not read
+		// here is a membership a rebuild should act on: the nodes in it were never asked whether
+		// they are serving yet.
+		bool discover();
+
 		void stop();
 
 		std::vector<member> members() const override;

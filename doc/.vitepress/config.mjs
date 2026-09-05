@@ -57,6 +57,7 @@ export default defineConfig({
 					{ text: "A node has failed", link: "/runbook/nodes" },
 					{ text: "Membership and leadership", link: "/runbook/membership" },
 					{ text: "The store", link: "/runbook/storage" },
+					{ text: "Rebuilding a node", link: "/runbook/rebuild" },
 					{ text: "The deployment", link: "/runbook/deployment" }
 				]
 			}

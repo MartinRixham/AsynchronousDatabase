@@ -165,13 +165,20 @@ holding none of what was written before. What that looks like:
   again — because the tables went with the volume too.
 - **Writes land on it** and are ordered normally, so new data is fine.
 
-**Recovery, in order:**
+**It usually recovers itself.** A node that comes up with an empty store
+[rebuilds before it registers](/runbook/rebuild): it reads a zone that still
+holds its records and writes back the tables and the records it owns. It is not
+in the membership while it does that, so nothing waits on it, and by the time it
+appears in `/health` it is whole.
+
+**When it does not** — an instance that is not clustered, a cluster with only one
+zone, or a start-up where no other zone answered — the recovery is by hand:
 
 1. Declare every table again. `PUT /table/{table}` is idempotent and goes to
    every node, so one call per table repairs the schema across the cluster.
 2. Write the records again. There is nothing else that puts them back — no read
    repair, no anti-entropy, no hinted handoff and no log to catch the copy up
-   with. The other zones hold them; nothing copies them across.
+   with.
 
 The scale of this is worth being plain about: on the six-instance stack each
 node holds half of one zone's copy, so one replacement is **one sixth of the

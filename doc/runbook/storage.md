@@ -127,7 +127,7 @@ tables were declared.
 | Compose volume removed (`down -v`) | **Gone** | |
 | Node joined the cluster later | Never had it | Tables go to the members at the time |
 
-**Recovery:**
+**Recovery**, when the node did not rebuild itself:
 
 1. **Declare every table again.** It is idempotent and goes to every node, so
    one pass over the schema fixes every node at once:
@@ -143,9 +143,18 @@ tables were declared.
    table that does not exist is `dependency_not_found` — which is what keeps the
    graph free of dangling edges.
 
-2. **Write the records again.** Nothing else puts them back. The other zones hold
-   their copies, and no mechanism here copies one zone's records into another:
-   no read repair, no anti-entropy, no hinted handoff, no replication log.
+2. **Usually nothing.** A node whose store is empty
+   [rebuilds itself on the way up](/runbook/rebuild), before it registers: it
+   reads a zone that still holds its records and writes back the ones it owns,
+   tables included. Step 1 is what to do when that did not happen — because the
+   instance is not clustered, because there is only one zone, or because no other
+   zone answered while it was starting.
+
+   Check the log before doing anything by hand:
+
+   ```bash
+   docker logs asyncdb-3 2>&1 | grep -i rebuil
+   ```
 
 Until step 2 is done, the cluster is not broken but it is thinner than it looks:
 reads are answered by the zones that still hold the record, and a **scan of the
