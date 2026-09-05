@@ -27,9 +27,9 @@ throughputs. The short version, at 1 KiB records and 100 requests a second:
 
 | | Per million |
 | --- | --- |
-| Reads | **$0.573** |
-| Writes | **$0.481** |
-| Storage | **$0.42 / GB-month** at a realistic fill |
+| Reads | **$0.559** |
+| Writes | **$0.508** |
+| Storage | **$1.26 / GB-month** of records at a realistic fill |
 
 Of which $0.459 is the rent, which every operation pays equally and which is
 [the only term that moves much](#putting-it-together).
@@ -126,7 +126,7 @@ from are derived in [what a request adds](#what-a-request-adds).
 | Record size | 1 KiB | [Scale the marginal column](#by-record-size) — it is linear in bytes |
 | Connections | keep-alive | Without it, add ~$0.09 per million requests of [LCU](#load-balancer-capacity-units) |
 | CPU | within baseline | Above it, add [$0.0139 per million per millisecond](#the-cpu-term) of CPU |
-| Cluster | 3 nodes, 1 per AZ | The ⅔ forwarding probability is (n−1)/n |
+| Cluster | 3 nodes, 1 per AZ, [one copy per zone](/database/cluster#one-copy-in-every-zone) | Every node holds every key, so a read is local and a write is copied to the other two |
 | Egress allowance | already spent | The first 100 GB a month is free, worth $9 |
 
 ### What a read and a write cost
@@ -137,20 +137,22 @@ record.
 
 | Sustained load | Rent share | **Read of 1 KiB** | **Write of 1 KiB** |
 | --- | --- | --- | --- |
-| 1 / second | $45.88 | **$45.997** | **$45.905** |
-| 10 / second | $4.59 | **$4.702** | **$4.610** |
-| 100 / second | $0.459 | **$0.573** | **$0.481** |
-| 250 / second | $0.184 | **$0.298** | **$0.205** |
+| 1 / second | $45.88 | **$45.980** | **$45.929** |
+| 10 / second | $4.59 | **$4.690** | **$4.639** |
+| 100 / second | $0.459 | **$0.559** | **$0.508** |
+| 250 / second | $0.184 | **$0.284** | **$0.233** |
 
 All per million operations. The marginal part of that — the part that is
-genuinely the operation's own — is **$0.114 per million reads** and **$0.022 per
+genuinely the operation's own — is **$0.100 per million reads** and **$0.049 per
 million writes**, and it is the same at every row. Everything else in the table
 is the rent moving.
 
-**A read costs 5.2× what a write costs**, per byte, and the reason is entirely
-that a read's bytes go out to the internet at $0.09/GB while a write's arrive
-for free. This is backwards from a managed key-value store, where a write is
-typically four to five times a read.
+**A read costs 2.0× what a write costs**, per byte. A read's bytes go out to the
+internet at $0.09/GB and cross no zone, because the node the load balancer
+picked holds a copy of the key; a write's bytes arrive for free and then cross
+into each of the other two zones at $0.02/GB apiece. Keeping a copy in every
+zone is what moved that charge from the read to the write — the cheaper end of
+the two to have taken it off, since a read is paying egress as well.
 
 ### By record size
 
@@ -158,25 +160,27 @@ Marginal cost per million operations, excluding rent:
 
 | Record size | GB per million | Read | Write |
 | --- | --- | --- | --- |
-| 100 B | 0.10 | $0.011 | $0.002 |
-| 1 KiB | 1.02 | $0.114 | $0.022 |
-| 10 KiB | 10.2 | $1.14 | $0.219 |
-| 100 KiB | 102 | $11.40 | $2.18 |
-| 1 MiB | 1,049 | $116.74 | $22.37 |
-| 16 MiB | 16,777 | $1,867.86 | $357.91 |
+| 100 B | 0.10 | $0.010 | $0.005 |
+| 1 KiB | 1.02 | $0.100 | $0.049 |
+| 10 KiB | 10.2 | $1.00 | $0.49 |
+| 100 KiB | 102 | $10.00 | $4.90 |
+| 1 MiB | 1,049 | $102.80 | $50.35 |
+| 16 MiB | 16,777 | $1,644.15 | $805.30 |
 
 The rates behind every row:
 
 ```
-read  = $0.09 egress + $0.0133 forwarding + $0.008 ALB = $0.1113 per GB
-write =        free  + $0.0133 forwarding + $0.008 ALB = $0.0213 per GB
+read  = $0.09 egress +      no hop + $0.008 ALB = $0.098 per GB
+write =        free  + $0.04 copies + $0.008 ALB = $0.048 per GB
 ```
+
+The copies are the two other zones, at $0.02 a gigabyte each.
 
 **Below about 10 KiB the rent dominates and the record size barely registers;
 above about 100 KiB the bytes dominate and the rent barely registers.** At
-100 req/s a 1 KiB read is $0.57 per million and a 1 MiB read is $117 per
-million — a thousandfold in size, a two-hundredfold in price, because the rent
-stops mattering.
+100 req/s a 1 KiB read is $0.56 per million and a 1 MiB read is $103 per
+million — a thousandfold in size, a hundred-and-eightyfold in price, because the
+rent stops mattering.
 
 ### The CPU term
 
@@ -224,6 +228,12 @@ as the disks fill:
 | 40 GB | $0.42 / GB-month | $3.01 / GB-month |
 | 60 GB | $0.28 / GB-month | $2.01 / GB-month |
 
+**Every record is on three disks**, one in each zone, so a gigabyte of records
+is three gigabytes of the "live data" column. Read the table as disk and then
+divide the answer by three to price what was actually stored: 40 GB of disk is
+about 13 GB of records at $1.26 a gigabyte-month of them, or $9.03 counting the
+whole stack against them.
+
 The two columns answer different questions, and **they must not be added to the
 per-request prices above** — that would charge the fixed cost twice. Use the
 left column when the stack is serving an API and the rent is already amortised
@@ -232,12 +242,14 @@ nothing else to charge it to. On the right, at a realistic fill,
 [a gigabyte here costs](#what-a-gigabyte-does-not-buy) more than a hundred
 times what S3 charges — and S3's is durable.
 
-Practical capacity is well under 180 GB. Only the three database instances hold
-records, their volumes are *root* volumes shared with the OS, the docker image
-and the logs, and RocksDB needs compaction headroom rather than a full disk — so
-**40 GB of live data across the cluster is a realistic working figure**, and the
-$0.42 row is the one to quote. RocksDB compresses, so that is 40 GB after
-compression, not 40 GB of values as written.
+Practical capacity is well under 180 GB, and a third of what fits is what can be
+held: only the three database instances hold records, their volumes are *root*
+volumes shared with the OS, the docker image and the logs, RocksDB needs
+compaction headroom rather than a full disk, and every record is on all three —
+so **40 GB of live data across the cluster is a realistic working figure**, and
+that is about 13 GB of records. The $0.42 row is the one to quote per gigabyte
+of disk, and three times it per gigabyte of records. RocksDB compresses, so that
+is 40 GB after compression, not 40 GB of values as written.
 
 Filling it produces no bill at all. It produces
 [`storage_error` or `write_stalled`](/database/reference#errors).
@@ -249,12 +261,12 @@ services have:
 
 | Sustained load | Per million requests | Total monthly |
 | --- | --- | --- |
-| 1 / second | $45.98 | $120.83 |
-| 10 / second | $4.68 | $123.09 |
-| 100 / second | $0.554 | $145.70 |
-| 250 / second | $0.279 | $183.37 |
+| 1 / second | $45.97 | $120.82 |
+| 10 / second | $4.68 | $122.91 |
+| 100 / second | $0.549 | $144.20 |
+| 250 / second | $0.274 | $179.58 |
 
-**Two and a half orders of magnitude more traffic costs 52% more money.** That
+**Two and a half orders of magnitude more traffic costs 49% more money.** That
 is the whole economics of this stack in one line: it is rent, and the API
 operations are nearly free until the records get large or the CPU runs out.
 
@@ -262,8 +274,8 @@ To price a workload that is not this one:
 
 ```
 monthly = 120.58                                   fixed
-        + reads  × size_GB × 0.1113                egress + forwarding + ALB
-        + writes × size_GB × 0.0213                forwarding + ALB
+        + reads  × size_GB × 0.098                 egress + ALB
+        + writes × size_GB × 0.048                 copies into two zones + ALB
         + (reads + writes) × cpu_ms × 1.39e-8      credits, if above baseline
         - 9.00                                     first 100 GB egress, if unspent
 ```
@@ -325,25 +337,35 @@ instances across three subnets, which is one per availability zone. Anything
 one node sends another therefore crosses a zone boundary and is charged
 **$0.01 leaving and $0.01 arriving — $0.02 a gigabyte.**
 
-The load balancer picks a node without knowing which one owns the key, and
-[the owner is one of three](/database/cluster#which-node-owns-a-key), so a
-record request is served where it lands one time in three and forwarded the
-other two:
+Reads cross nothing. Three instances in three zones is
+[one copy of every key in each of them](/database/cluster#one-copy-in-every-zone),
+so whichever node the load balancer picks holds the key and answers it where it
+lands. That holds only while a zone has one node in it: a fourth instance puts
+two in a zone, and half that zone's reads are then answered by its neighbour.
 
 ```
-expected cross-AZ cost = 2/3 × $0.02 per GB = $0.0133 per GB of record payload
+read  cross-AZ cost = 0                          while a zone is one node
+write cross-AZ cost = 2 × $0.02 = $0.04 per GB   of record payload
 ```
 
-Against $0.09 a gigabyte of egress, **forwarding adds about a seventh to the
-cost of serving a read**, and it is the only marginal byte charge a write pays
-at all. It is not the reason to think about partitioning, and it is not close to
-the reason to think about CPU credits.
+A read that misses is the exception: a key the node holds nothing for is
+[asked of the other copies](/database/cluster#what-a-write-and-a-read-do), which
+is a few hundred bytes across a zone and nothing at all against a value.
+
+**A write pays for the copies, and it is the only marginal byte charge a write
+has.** Against $0.09 a gigabyte of egress, that is a write costing about four
+ninths of what a read of the same bytes costs — before replication a write paid
+$0.0133 and a read $0.1033, so what a copy in every zone actually cost is
+$0.027 a gigabyte written, and what it bought is a read that never leaves the
+zone it landed in and a record that outlives the loss of two of them.
 
 Scans are the exception, and they are worth pricing separately.
 [Every node is asked for the same range](/database/cluster#scans-across-a-cluster),
-each returns up to the full `limit`, and the merge cuts what is over it. A
-thousand-record page can therefore move **three thousand records' worth of
-bytes, two thousand of them across zone boundaries, to return one thousand.**
+each returns up to the full `limit`, and the merge cuts what is over it — and
+with a copy in every zone, what the three of them return is largely the same
+records three times over. A thousand-record page can therefore move **three
+thousand records' worth of bytes, two thousand of them across zone boundaries,
+to return one thousand.**
 Per byte delivered, a paged scan is the most expensive read in the API, and
 narrowing it with `from` and `to` costs less than raising the `limit`.
 
@@ -392,18 +414,20 @@ scan, and "small" is a few hundred bytes of headers and JSON.
 
 | Endpoint | Forwarded to | Cross-AZ bytes | Egress bytes | Marginal cost |
 | --- | --- | --- | --- | --- |
-| `GET /table/{t}/key/{k}` | the owner | ⅔ × V | V | V × $0.103/GB |
-| `HEAD /table/{t}/key/{k}` | the owner | ⅔ × small | small | LCU only |
-| `PUT /table/{t}/key/{k}` | the owner | ⅔ × V | small | V × $0.0133/GB |
-| `DELETE /table/{t}/key/{k}` | the owner | ⅔ × small | small | LCU only |
+| `GET /table/{t}/key/{k}` | nobody, unless the key is not here | none, or small on a miss | V | V × $0.09/GB |
+| `HEAD /table/{t}/key/{k}` | nobody, unless the key is not here | none, or small on a miss | small | LCU only |
+| `PUT /table/{t}/key/{k}` | the copy in **every** zone | 2 × V | small | V × $0.04/GB |
+| `DELETE /table/{t}/key/{k}` | the copy in **every** zone | 2 × small | small | LCU only |
 | `GET /table/{t}/key` | **every** node | up to 2 × P | P | P × $0.13/GB |
 | `DELETE /table/{t}/key` | **every** node | 2 × small | small | LCU only |
 | `PUT`/`DELETE` `/table/{t}` | **every** node | 2 × small | small | LCU only |
 | `GET /table`, `GET /table/{t}` | nobody | none | small | LCU only |
 | `GET /health` | nobody | none | small | LCU only |
 
-The $0.103 is $0.09 of egress plus $0.0133 of expected forwarding; the $0.13 of
-a scan is $0.09 plus the two full pages that cross a zone to be thrown away.
+The $0.09 of a read is egress and nothing else, because the node that was asked
+holds the key; the $0.04 of a write is the value crossing into the two other
+zones; the $0.13 of a scan is $0.09 plus the two full pages that cross a zone to
+be thrown away.
 
 Two readings of that table:
 
@@ -411,10 +435,10 @@ Two readings of that table:
   checks, table operations and health checks move a few hundred bytes. They cost
   their share of the rent, some CPU, and nothing else — including the table
   fan-out, which touches every node and still moves nothing.
-- **A write's only marginal charge is the forwarding hop**, at $0.0133 a
-  gigabyte, because ingress is free. Writes are roughly seven times cheaper than
-  reads of the same bytes here, which is the opposite of how a managed
-  key-value store prices them.
+- **A write's only marginal charge is its copies**, at $0.04 a gigabyte, because
+  ingress is free. Writes are still cheaper than reads of the same bytes — by a
+  bit over two, rather than the seven it was before every zone kept a copy —
+  which is the opposite of how a managed key-value store prices them.
 
 ## A worked example
 
@@ -425,27 +449,32 @@ keep-alive connections:
 | --- | --- | --- |
 | Fixed cost | as above | $120.58 |
 | Egress | (538 GB − 100 free) × $0.09 | $39.44 |
-| Cross-AZ | ⅔ × 673 GB × $0.02 | $8.97 |
+| Cross-AZ | 2 copies × 135 GB written × $0.02 | $5.38 |
 | Load balancer LCU | 0.92 GB/hour → 1 LCU × 730 | $5.84 |
 | CPU credits | assumed within baseline | $0.00 |
-| | | **$174.83** |
+| | | **$171.24** |
 
-250 requests a second is 657 million requests a month, so that is **$0.27 per
-million requests**, of which $0.18 is the rent. The same traffic without
-keep-alive is $227, and the same traffic hot enough to saturate three
-`t3.micro`s is $372 — the load pattern moves the bill by more than the load does.
+250 requests a second is 657 million requests a month, so that is **$0.26 per
+million requests**, of which $0.18 is the rent. Only the 131 million writes
+cross a zone, and they cross it twice each; the 526 million reads are answered
+where they land. The same traffic without keep-alive is $223, and the same
+traffic hot enough to saturate three `t3.micro`s is $368 — the load pattern moves the bill by more than the load does.
 
 ## What a gigabyte does not buy
 
 The [$0.42 a gigabyte-month](#storage) above is a real number and a poor
 comparison, because it is not buying what a storage price usually buys.
 
-There is nothing to pay for beyond the volumes — and nothing to *have*. No
-snapshots, no backup vault, no replication, no cross-region copy, and
-[one copy of every record](/database/cluster#what-this-is-not) held on one
-instance's root volume. [Nothing here is
-durable](/deployment/#what-this-stack-does-not-do): an instance the auto scaling
-group replaces takes its share of the keyspace with it. That is a very cheap way
+There is nothing to pay for beyond the volumes — and little to *have*. No
+snapshots, no backup vault, no cross-region copy, and no log to recover from:
+what there is is
+[a copy of every record in each zone](/database/cluster#one-copy-in-every-zone),
+on three instances' root volumes, which is three thirty gigabyte disks holding
+one keyspace. That survives an instance the auto scaling group replaces — the
+other two zones still hold every record — and it does not make the stack
+[durable](/deployment/#what-this-stack-does-not-do): the copies are written
+together and lost together when the stack is, and a record written to a zone
+whose disk is then gone was never anywhere else. That is a very cheap way
 to store a gigabyte and a very poor way to keep one, and any comparison against
 S3 at $0.024 or DynamoDB at $0.28 is comparing against a durable gigabyte.
 
@@ -485,8 +514,9 @@ Nothing scales on its own — `DesiredCapacity` is 3 with
 capacity is a hand on `MinSize` and `MaxSize`, and
 [growing the cluster is a thing to do deliberately](/database/cluster#what-this-is-not)
 because a key that changes owner is a key the new owner does not have. Adding a
-fourth node adds $0.0118 an hour and a public address, and moves the forwarding
-probability from ⅔ to ¾.
+fourth node adds $0.0118 an hour and a public address, and puts two nodes in one
+availability zone — which is where a node stops holding every key and half that
+zone's reads start being answered by its neighbour instead.
 
 ## What the pipeline costs
 

@@ -27,28 +27,73 @@ namespace
 		return config;
 	}
 
-	std::string membership(const std::vector<std::string> &nodes)
+	cluster::config configuration(const std::string &node, const std::string &zone)
+	{
+		cluster::config config = configuration(node);
+
+		config.zone = zone;
+
+		return config;
+	}
+
+	// The membership as etcd holds it: a node writes where it answers and which zone it is in.
+	std::string membership(const std::vector<cluster::member> &nodes)
 	{
 		boost::json::array kvs;
 
 		for (size_t i = 0; i < nodes.size(); i++)
 		{
+			boost::json::object registration {
+				{ "node", nodes[i].node },
+				{ "zone", nodes[i].zone }
+			};
+
 			kvs.push_back(boost::json::object {
-				{ "key", base64::encode("/asyncdb/node/" + nodes[i]) },
-				{ "value", base64::encode(nodes[i]) }
+				{ "key", base64::encode("/asyncdb/node/" + nodes[i].node) },
+				{ "value", base64::encode(boost::json::serialize(registration)) }
 			});
 		}
 
 		return boost::json::serialize(boost::json::object { { "kvs", kvs } });
 	}
 
-	void answer_etcd(http::fake_client *http, const std::vector<std::string> &nodes)
+	std::vector<cluster::member> zoneless(const std::vector<std::string> &nodes)
+	{
+		std::vector<cluster::member> members;
+
+		for (size_t i = 0; i < nodes.size(); i++)
+		{
+			members.push_back(cluster::member { nodes[i], "" });
+		}
+
+		return members;
+	}
+
+	// The addresses of the membership, which is what most of this is about.
+	std::vector<std::string> names(const std::vector<cluster::member> &members)
+	{
+		std::vector<std::string> names;
+
+		for (size_t i = 0; i < members.size(); i++)
+		{
+			names.push_back(members[i].node);
+		}
+
+		return names;
+	}
+
+	void answer_etcd(http::fake_client *http, const std::vector<cluster::member> &nodes)
 	{
 		http->answer("/v3/lease/grant", http::answer(200, "application/json", "{\"ID\":\"12\",\"TTL\":\"10\"}"));
 		http->answer("/v3/lease/keepalive", http::answer(200, "application/json", "{\"result\":{\"TTL\":\"10\"}}"));
 		http->answer("/v3/lease/revoke", http::answer(200, "application/json", "{}"));
 		http->answer("/v3/kv/put", http::answer(200, "application/json", "{}"));
 		http->answer("/v3/kv/range", http::answer(200, "application/json", membership(nodes)));
+	}
+
+	void answer_etcd(http::fake_client *http, const std::vector<std::string> &nodes)
+	{
+		answer_etcd(http, zoneless(nodes));
 	}
 
 	router::request request(boost::beast::http::verb method, const std::vector<std::string> &path)
@@ -71,7 +116,8 @@ TEST(etcd_cluster_test, stand_alone_when_no_etcd_is_configured)
 	EXPECT_TRUE(http.sent().empty());
 	EXPECT_TRUE(cluster.members().empty());
 	EXPECT_TRUE(cluster.peers().empty());
-	EXPECT_FALSE(cluster.owner("key").has_value());
+	EXPECT_TRUE(cluster.replicas("key").local);
+	EXPECT_TRUE(cluster.replicas("key").nodes.empty());
 }
 
 TEST(etcd_cluster_test, stand_alone_when_no_node_is_configured)
@@ -108,7 +154,7 @@ TEST(etcd_cluster_test, register_the_node_and_read_the_membership)
 
 	EXPECT_EQ(key, "/asyncdb/node/" + one);
 	EXPECT_EQ(put.at("lease").as_string(), "12");
-	EXPECT_EQ(cluster.members(), std::vector<std::string>({ one, two }));
+	EXPECT_EQ(names(cluster.members()), std::vector<std::string>({ one, two }));
 	EXPECT_EQ(cluster.peers(), std::vector<std::string>({ two }));
 
 	cluster.stop();
@@ -125,14 +171,14 @@ TEST(etcd_cluster_test, be_a_member_of_its_own_cluster_when_etcd_is_not_there)
 
 	cluster.start();
 
-	EXPECT_EQ(cluster.members(), std::vector<std::string>({ one }));
+	EXPECT_EQ(names(cluster.members()), std::vector<std::string>({ one }));
 	EXPECT_TRUE(cluster.peers().empty());
-	EXPECT_FALSE(cluster.owner("key").has_value());
+	EXPECT_TRUE(cluster.replicas("key").local);
 
 	cluster.stop();
 }
 
-TEST(etcd_cluster_test, own_every_key_when_no_other_node_is_registered)
+TEST(etcd_cluster_test, hold_every_key_when_no_other_node_is_registered)
 {
 	http::fake_client http;
 
@@ -144,13 +190,13 @@ TEST(etcd_cluster_test, own_every_key_when_no_other_node_is_registered)
 
 	for (size_t i = 0; i < 100; i++)
 	{
-		EXPECT_FALSE(cluster.owner("account/" + std::to_string(i)).has_value());
+		EXPECT_TRUE(cluster.replicas("account/" + std::to_string(i)).local);
 	}
 
 	cluster.stop();
 }
 
-TEST(etcd_cluster_test, name_the_node_that_owns_a_key)
+TEST(etcd_cluster_test, name_the_node_that_holds_a_key)
 {
 	http::fake_client http;
 
@@ -165,23 +211,157 @@ TEST(etcd_cluster_test, name_the_node_that_owns_a_key)
 	for (size_t i = 0; i < 100; i++)
 	{
 		std::string key = "account/" + std::to_string(i);
-		std::optional<std::string> owner = cluster.owner(key);
+		cluster::placement where = cluster.replicas(key);
 
-		// Nothing at all is this node's own key, and every other key names the node that has it.
+		// A cluster of one zone keeps one copy, so a key is either this node's own or the other
+		// node's, and never both.
 		if (cluster::owner_of(key, { one, two }) == one)
 		{
-			EXPECT_FALSE(owner.has_value());
+			EXPECT_TRUE(where.local);
+			EXPECT_TRUE(where.nodes.empty());
 		}
 		else
 		{
-			ASSERT_TRUE(owner.has_value());
-			EXPECT_EQ(*owner, two);
+			EXPECT_FALSE(where.local);
+			EXPECT_EQ(where.nodes, std::vector<std::string>({ two }));
 
 			forwarded++;
 		}
 	}
 
 	EXPECT_GT(forwarded, 0u);
+
+	cluster.stop();
+}
+
+// A node knows which zone it is in and no other node does, so it registers the two together.
+TEST(etcd_cluster_test, register_the_zone_the_node_is_in)
+{
+	http::fake_client http;
+
+	answer_etcd(&http, { cluster::member { one, "a" } });
+
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
+
+	cluster.start();
+
+	ASSERT_EQ(http.sent_to("/v3/kv/put").size(), 1u);
+
+	boost::json::object put = boost::json::parse(http.sent_to("/v3/kv/put")[0].body).as_object();
+	std::string value;
+
+	base64::decode(std::string(put.at("value").as_string()), &value);
+
+	boost::json::object registered = boost::json::parse(value).as_object();
+
+	EXPECT_EQ(registered.at("node").as_string(), one);
+	EXPECT_EQ(registered.at("zone").as_string(), "a");
+
+	cluster.stop();
+}
+
+// A node registered by a version that had never heard of zones is a node in no zone rather than a
+// node the membership does not have, so a cluster half way through an upgrade still partitions.
+TEST(etcd_cluster_test, read_a_node_that_registered_nothing_but_its_address)
+{
+	http::fake_client http;
+
+	answer_etcd(&http, { one, two });
+
+	cluster::etcd_cluster cluster(configuration(one), http);
+
+	cluster.start();
+
+	std::string legacy = boost::json::serialize(boost::json::object {
+		{ "kvs", boost::json::array {
+			boost::json::object {
+				{ "key", base64::encode("/asyncdb/node/" + two) },
+				{ "value", base64::encode(two) }
+			}
+		} }
+	});
+
+	http.answer("/v3/kv/range", http::answer(200, "application/json", legacy));
+
+	EXPECT_EQ(names(cluster.members()), std::vector<std::string>({ one, two }));
+
+	cluster.stop();
+}
+
+// Every zone holds a copy, so a cluster of three zones of one node holds every key on every node.
+TEST(etcd_cluster_test, keep_a_copy_of_every_key_in_every_zone)
+{
+	http::fake_client http;
+	const std::string three = "http://asyncdb-3:8080";
+
+	answer_etcd(&http, {
+		cluster::member { one, "a" },
+		cluster::member { two, "b" },
+		cluster::member { three, "c" }
+	});
+
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
+
+	cluster.start();
+
+	for (size_t i = 0; i < 100; i++)
+	{
+		cluster::placement where = cluster.replicas("account/" + std::to_string(i));
+
+		EXPECT_TRUE(where.local);
+		EXPECT_EQ(where.nodes, std::vector<std::string>({ two, three }));
+	}
+
+	cluster.stop();
+}
+
+// Two zones of two nodes: the key is partitioned inside each zone, and one copy of it is in each.
+TEST(etcd_cluster_test, keep_one_copy_of_a_key_in_each_zone)
+{
+	http::fake_client http;
+	const std::string three = "http://asyncdb-3:8080";
+	const std::string four = "http://asyncdb-4:8080";
+	std::vector<std::string> near { one, two };
+	std::vector<std::string> far { three, four };
+
+	answer_etcd(&http, {
+		cluster::member { one, "a" },
+		cluster::member { two, "a" },
+		cluster::member { three, "b" },
+		cluster::member { four, "b" }
+	});
+
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
+
+	cluster.start();
+
+	size_t held = 0;
+	size_t asked = 0;
+
+	for (size_t i = 0; i < 100; i++)
+	{
+		std::string key = "account/" + std::to_string(i);
+		cluster::placement where = cluster.replicas(key);
+
+		if (cluster::owner_of(key, near) == one)
+		{
+			EXPECT_TRUE(where.local);
+			EXPECT_EQ(where.nodes, std::vector<std::string>({ cluster::owner_of(key, far) }));
+
+			held++;
+		}
+		else
+		{
+			// The copy in this node's own zone is the near one, so it is the one asked first.
+			EXPECT_FALSE(where.local);
+			EXPECT_EQ(where.nodes, std::vector<std::string>({ two, cluster::owner_of(key, far) }));
+
+			asked++;
+		}
+	}
+
+	EXPECT_GT(held, 0u);
+	EXPECT_GT(asked, 0u);
 
 	cluster.stop();
 }

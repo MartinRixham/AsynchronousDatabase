@@ -29,7 +29,9 @@ instances running etcd for them to find each other through.
 The shape is the one [the cluster](/database/cluster) describes — several
 instances, one etcd, no leader — with the load balancer in front so that a
 client can ask any of them, which is exactly what the cluster is for: every node
-answers for every key.
+answers for every key. One instance per availability zone, and
+[one copy of every record in each zone](/database/cluster#one-copy-in-every-zone),
+so the node the load balancer picked is a node that holds the key.
 
 ## Driving it
 
@@ -174,9 +176,11 @@ replaced. Either start an instance refresh by hand, or terminate the instances
 one at a time and let the group replace them.
 
 Because [records do not move](/database/cluster#what-this-is-not), rolling
-instances is not free once there is more than one node: a node that goes away
-takes its share of the keys with it until its replacement has them written
-again.
+instances is not free once there is more than one node: a replacement is an
+empty database, and its zone's copy of the keys it owns is gone until they are
+written again. The other zones still hold theirs, so reads are answered and the
+window is a lost copy rather than lost data — but roll one instance at a time
+and let each come back before the next goes.
 
 ## What this stack does not do
 
@@ -187,7 +191,10 @@ It is a small template, and it is worth being plain about where it stops.
   scaling group is free to replace. The volume is EBS and is declared by the
   launch template, but `DeleteOnTermination` is true and nothing mounts it into
   the container: no volume, no snapshot, no backup, and a replaced instance is an
-  empty database.
+  empty database. What survives an instance is the
+  [copy each other zone holds](/database/cluster#one-copy-in-every-zone), and
+  nothing rebuilds the one that went with it; what survives the stack is
+  nothing.
 - **The stack cannot be deployed twice in one region.** `ClusterALB` is a fixed
   name, and so is the ECR repository the instances pull from. The
   [`Url` output](#the-address) tells you where one stack is; a second one in the

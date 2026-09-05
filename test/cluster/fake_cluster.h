@@ -10,15 +10,15 @@
 
 namespace cluster
 {
-	// A cluster of nodes that are not there: a key belongs to whichever node the test says, and a
+	// A cluster of nodes that are not there: a key is held by whichever nodes the test says, and a
 	// node answers what the test told it to answer.
 	class fake_cluster : public cluster
 	{
 		std::string self;
 
-		std::vector<std::string> member_list;
+		std::vector<member> member_list;
 
-		std::map<std::string, std::string> owners;
+		std::map<std::string, std::vector<std::string>> owners;
 
 		std::map<std::string, router::response> answers;
 
@@ -27,13 +27,19 @@ namespace cluster
 	public:
 		fake_cluster(const std::string &node, const std::vector<std::string> &members);
 
+		fake_cluster(const std::string &node, const std::vector<member> &members);
+
+		// The one node holding the key, which is a cluster keeping one copy.
 		void owns(const std::string &key, const std::string &node);
+
+		// Every node holding a copy of the key, in the order this node would ask them.
+		void copies(const std::string &key, const std::vector<std::string> &nodes);
 
 		void answer(const std::string &node, const router::response &response);
 
-		std::vector<std::string> members() const override;
+		std::vector<member> members() const override;
 
-		std::optional<std::string> owner(const std::string &key) const override;
+		placement replicas(const std::string &key) const override;
 
 		std::vector<std::string> peers() const override;
 

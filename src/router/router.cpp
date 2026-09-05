@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -126,8 +127,8 @@ namespace
 	}
 
 	// The pages of every node in one order, which is the order a single node would have answered
-	// in. Two nodes holding the same key is a key whose owner changed, and the copy left behind is
-	// passed over rather than returned twice.
+	// in. Two nodes holding the same key is the copy every zone keeps, or a key whose owner
+	// changed, and either way it is returned once rather than twice.
 	void merge(std::vector<record::record> *records, bool reverse)
 	{
 		std::sort(
@@ -171,20 +172,42 @@ router::response router::router::route(const request &request)
 		}
 
 		boost::json::object health { { "status", "ok" }, { "write_stalled", repository.is_write_stalled() } };
-		std::vector<std::string> members = nodes.members();
+		std::vector<cluster::member> members = nodes.members();
 
 		// An instance standing alone names no nodes at all, rather than naming itself and looking
 		// like a cluster of one.
 		if (!members.empty())
 		{
 			boost::json::array names;
+			std::map<std::string, boost::json::array> zones;
 
 			for (size_t i = 0; i < members.size(); i++)
 			{
-				names.push_back(boost::json::string(members[i]));
+				names.push_back(boost::json::string(members[i].node));
+
+				if (!members[i].zone.empty())
+				{
+					zones[members[i].zone].push_back(boost::json::string(members[i].node));
+				}
 			}
 
 			health["nodes"] = names;
+
+			// The zones are what say how many copies of a record there are, so a cluster that has
+			// them names them. One that has none says nothing rather than naming a zone of "".
+			if (!zones.empty())
+			{
+				boost::json::object named;
+
+				for (std::map<std::string, boost::json::array>::const_iterator it = zones.begin();
+					it != zones.end();
+					++it)
+				{
+					named[it->first] = it->second;
+				}
+
+				health["zones"] = named;
+			}
 		}
 
 		return json_response(boost::beast::http::status::ok, health);
@@ -304,32 +327,17 @@ router::response router::router::route_record(
 		return table_not_found(name);
 	}
 
-	// A record lives on the one node the hash of its key names, and every other node answers for
-	// it by asking that one. The key alone decides, so the same key of two tables is one hop.
-	if (!request.forwarded)
+	// A record lives on the one node the hash of its key names in each zone, and a node holding no
+	// copy of it answers by asking one that does. The key alone decides which nodes those are, so
+	// the same key of two tables is on the same nodes and is one hop.
+	//
+	// A request that arrived forwarded is served here whatever this node makes of the membership:
+	// the node that sent it has already decided who holds the key.
+	cluster::placement where = request.forwarded ? cluster::placement() : nodes.replicas(record.key);
+
+	if (request.method == boost::beast::http::verb::put || request.method == boost::beast::http::verb::delete_)
 	{
-		std::optional<std::string> owner = nodes.owner(record.key);
-
-		if (owner)
-		{
-			return nodes.send(*owner, request);
-		}
-	}
-
-	if (request.method == boost::beast::http::verb::put)
-	{
-		repository.write_record(name, record);
-
-		return empty_response(boost::beast::http::status::no_content);
-	}
-
-	// Deleting a key that is not there is a no op in RocksDB, and reporting 404 would mean a read
-	// before every delete.
-	if (request.method == boost::beast::http::verb::delete_)
-	{
-		repository.delete_record(name, key);
-
-		return empty_response(boost::beast::http::status::no_content);
+		return write_record(request, name, record, where);
 	}
 
 	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
@@ -337,14 +345,85 @@ router::response router::router::route_record(
 		return method_not_allowed(request.method);
 	}
 
-	std::optional<std::string> value = repository.read_record(name, key);
-
-	if (!value)
+	if (!where.local)
 	{
-		return empty_response(boost::beast::http::status::not_found);
+		return read_record(request, where.nodes);
 	}
 
-	return text_response(boost::beast::http::status::ok, *value);
+	std::optional<std::string> value = repository.read_record(name, key);
+
+	if (value)
+	{
+		return text_response(boost::beast::http::status::ok, *value);
+	}
+
+	// A key this node holds nothing for may still be in another zone. A node that was replaced, or
+	// a zone that came back, holds none of what was written while it was away, and it is the owner
+	// of those keys in its own zone all the same — so a miss here is asked of the copies elsewhere
+	// rather than answered as though the record had never been written.
+	if (!where.nodes.empty())
+	{
+		return read_record(request, where.nodes);
+	}
+
+	return empty_response(boost::beast::http::status::not_found);
+}
+
+// Every copy of a record is written before the write is answered, so a record is in every zone by
+// the time the client is told it is written, or the client is told it is not. Writing a record is
+// idempotent — a key and a value, or a key that is gone — so a failure is a request to run again.
+router::response router::router::write_record(
+	const request &request,
+	const std::string &name,
+	const record::record &record,
+	const cluster::placement &where)
+{
+	if (where.local)
+	{
+		if (request.method == boost::beast::http::verb::put)
+		{
+			repository.write_record(name, record);
+		}
+		// Deleting a key that is not there is a no op in RocksDB, and reporting 404 would mean a
+		// read before every delete.
+		else
+		{
+			repository.delete_record(name, record.key);
+		}
+	}
+
+	for (size_t i = 0; i < where.nodes.size(); i++)
+	{
+		response answer = nodes.send(where.nodes[i], request);
+
+		if (answer.status >= boost::beast::http::status::bad_request)
+		{
+			return answer;
+		}
+	}
+
+	return empty_response(boost::beast::http::status::no_content);
+}
+
+// A node that does not answer is a copy to pass over rather than an answer to give, which is what
+// replication is for: any one of the zones can be gone and the record is still read. What a node
+// that did answer said is the answer, a 404 included: every zone is written before a write is
+// answered, so one copy saying a key is not there is enough to say it is not there.
+router::response router::router::read_record(const request &request, const std::vector<std::string> &replicas)
+{
+	response answer = error_response("storage_error", "No node holding this key answered.");
+
+	for (size_t i = 0; i < replicas.size(); i++)
+	{
+		answer = nodes.send(replicas[i], request);
+
+		if (answer.status < boost::beast::http::status::internal_server_error)
+		{
+			return answer;
+		}
+	}
+
+	return answer;
 }
 
 router::response router::router::create_table(const request &request, const std::string &name)

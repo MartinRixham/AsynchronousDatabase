@@ -7,6 +7,7 @@
 
 #include "router/request.h"
 #include "router/response.h"
+#include "member.h"
 
 namespace cluster
 {
@@ -15,18 +16,29 @@ namespace cluster
 	// bounce a request between them for ever.
 	constexpr char forwarded_header[] = "X-Asyncdb-Forwarded";
 
+	// Where the copies of a key are: whether this node holds one itself, and the other nodes that
+	// hold one, in the order this node should ask them — its own zone first, because the copy in
+	// this node's zone is the near one.
+	struct placement
+	{
+		// True when this node holds the key, which is what an instance standing alone answers for
+		// every key.
+		bool local = true;
+
+		std::vector<std::string> nodes;
+	};
+
 	// The seam over the other instances, in the way that repository::repository is the seam over
-	// the store. A key belongs to exactly one node, and a request for a key this node does not own
-	// is answered by the node that does.
+	// the store. A key belongs to one node in each zone, and a request for a key this node holds no
+	// copy of is answered by a node that does.
 	class cluster
 	{
 	public:
 		// Every node including this one, in name order. Empty when this instance stands alone.
-		virtual std::vector<std::string> members() const = 0;
+		virtual std::vector<member> members() const = 0;
 
-		// The node that owns the key, or nothing at all when this node owns it — which is also
-		// what an instance standing alone answers for every key.
-		virtual std::optional<std::string> owner(const std::string &key) const = 0;
+		// Every node holding a copy of the key.
+		virtual placement replicas(const std::string &key) const = 0;
 
 		// Every node but this one.
 		virtual std::vector<std::string> peers() const = 0;

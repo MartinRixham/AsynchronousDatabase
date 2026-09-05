@@ -43,10 +43,12 @@ aws ecr get-login-password --region eu-west-2 | docker login --username AWS --pa
 docker pull $IMAGE
 TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
 PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
 ASYNCDB_ETCD=http://10.0.0.10:2379,http://10.0.1.10:2379,http://10.0.2.10:2379
 docker run -d -p 80:80 -p 8080:8080 \
   -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
   -e ASYNCDB_NODE=http://$PRIVATE_IP:8080 \
+  -e ASYNCDB_ZONE=$ZONE \
   $IMAGE
 ```
 
@@ -57,7 +59,7 @@ the image: the Amazon Linux 2 the template used to run had v1, and Amazon Linux
 idempotent over whichever of the two is already there, rather than exiting on the
 one it finds.
 
-The private address is read over **IMDSv2**. Amazon Linux 2023 AMIs are
+The private address and the zone are read over **IMDSv2**. Amazon Linux 2023 AMIs are
 registered as IMDSv2-only, so the token `PUT` is not belt and braces — the
 unauthenticated `GET` the Amazon Linux 2 script used answers `401` on this image,
 and `ASYNCDB_NODE` would be `http://:8080`.
@@ -70,7 +72,7 @@ CloudFormation resolved it at deploy time. The consequence of the two that *are*
 literals is on the [overview](/deployment/#before-the-first-deploy): the stack is
 really only deployable into one account's `eu-west-2`.
 
-The last four lines are what make the instance a member of a cluster rather than
+The last five lines are what make the instance a member of a cluster rather than
 a database of its own:
 
 - **`ASYNCDB_ETCD`** is `Fn::FindInMap` of the etcd tier's
@@ -82,8 +84,16 @@ a database of its own:
   prefix a browser uses, which is why `-p 8080:8080` is published alongside 80
   and why [8080 is open](/deployment/network#the-api-port-is-not-the-load-balancers)
   within the security group.
+- **`ASYNCDB_ZONE`** is the instance's own availability zone, `eu-west-2a` and
+  not the subnet, read from the same metadata service. It is what makes the
+  cluster keep
+  [one copy of every record in every zone](/database/cluster#one-copy-in-every-zone):
+  the group spans three subnets in three zones and launches three instances, so
+  each zone holds one node and each node holds the whole keyspace. A write goes
+  to all three, and a read is answered by whichever node the load balancer
+  picked.
 
-Set neither and the instance would be
+Set neither of the first two and the instance would be
 [what it was before](/database/cluster#turning-it-on): one process owning the
 whole keyspace, talking to nothing.
 

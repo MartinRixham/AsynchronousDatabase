@@ -30,7 +30,7 @@ namespace
 	{
 		std::string self;
 
-		std::vector<std::string> member_list;
+		std::vector<::cluster::member> member_list;
 
 		http::curl_client curl;
 
@@ -40,28 +40,38 @@ namespace
 		{
 		}
 
-		void join(const std::string &node, const std::vector<std::string> &members)
+		void join(const std::string &node, const std::vector<::cluster::member> &members)
 		{
 			self = node;
 			member_list = members;
 		}
 
-		std::vector<std::string> members() const override
+		std::vector<::cluster::member> members() const override
 		{
 			return member_list;
 		}
 
-		std::optional<std::string> owner(const std::string &key) const override
+		::cluster::placement replicas(const std::string &key) const override
 		{
 			// The name of the namespace is hidden here by the name of the base class.
-			std::string node = ::cluster::owner_of(key, member_list);
+			std::vector<::cluster::member> owners = ::cluster::owners_of(key, member_list);
+			::cluster::placement where;
 
-			if (node.empty() || node == self)
+			where.local = false;
+
+			for (size_t i = 0; i < owners.size(); i++)
 			{
-				return std::nullopt;
+				if (owners[i].node == self)
+				{
+					where.local = true;
+				}
+				else
+				{
+					where.nodes.push_back(owners[i].node);
+				}
 			}
 
-			return node;
+			return where;
 		}
 
 		std::vector<std::string> peers() const override
@@ -70,9 +80,9 @@ namespace
 
 			for (size_t i = 0; i < member_list.size(); i++)
 			{
-				if (member_list[i] != self)
+				if (member_list[i].node != self)
 				{
-					peers.push_back(member_list[i]);
+					peers.push_back(member_list[i].node);
 				}
 			}
 
@@ -117,7 +127,10 @@ protected:
 		first = std::make_shared<server::server>(0, 2, first_cluster);
 		second = std::make_shared<server::server>(0, 2, second_cluster);
 
-		std::vector<std::string> members { node(first), node(second) };
+		std::vector<cluster::member> members {
+			cluster::member { node(first), "" },
+			cluster::member { node(second), "" }
+		};
 
 		first_cluster.join(node(first), members);
 		second_cluster.join(node(second), members);
@@ -197,6 +210,19 @@ protected:
 	answer get(const std::shared_ptr<server::server> &server, const std::string &path)
 	{
 		return request(server, "GET", path, "");
+	}
+
+	// The same two servers, one in each of two zones, which is a cluster keeping a copy of every
+	// record in both of them rather than one copy between them.
+	void zone_the_cluster()
+	{
+		std::vector<cluster::member> members {
+			cluster::member { node(first), "one" },
+			cluster::member { node(second), "two" }
+		};
+
+		first_cluster.join(node(first), members);
+		second_cluster.join(node(second), members);
 	}
 
 	std::shared_ptr<server::server> &owner(const std::string &key)
@@ -392,4 +418,86 @@ TEST_F(cluster_test, the_health_of_an_instance_names_the_nodes_of_its_cluster)
 
 	ASSERT_TRUE(health.contains("nodes"));
 	EXPECT_EQ(health.at("nodes").as_array().size(), 2u);
+}
+
+// Two nodes in two zones: every record is on both of them, which is what a zoned cluster is for.
+TEST_F(cluster_test, a_record_is_written_to_the_node_in_every_zone)
+{
+	zone_the_cluster();
+
+	request(first, "PUT", "/table/account", "{}");
+
+	EXPECT_EQ(request(first, "PUT", "/table/account/key/4821", "a value").code, 204);
+
+	// Asked as forwarded, a node answers out of its own RocksDB and not out of the cluster's, so
+	// this is both nodes saying they hold the record themselves.
+	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
+	EXPECT_EQ(request(second, "GET", "/table/account/key/4821", "", true).body, "a value");
+}
+
+TEST_F(cluster_test, a_record_is_deleted_in_every_zone)
+{
+	zone_the_cluster();
+
+	request(first, "PUT", "/table/account", "{}");
+	request(first, "PUT", "/table/account/key/4821", "a value");
+
+	EXPECT_EQ(request(second, "DELETE", "/table/account/key/4821", "").code, 204);
+	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).code, 404);
+	EXPECT_EQ(request(second, "GET", "/table/account/key/4821", "", true).code, 404);
+}
+
+// The copies are the same key twice, and a scan of the cluster answers it once.
+TEST_F(cluster_test, a_scan_answers_a_record_that_is_in_every_zone_once)
+{
+	zone_the_cluster();
+
+	request(first, "PUT", "/table/account", "{}");
+	request(first, "PUT", "/table/account/key/4821", "a value");
+	request(second, "PUT", "/table/account/key/4822", "another value");
+
+	EXPECT_EQ(keys(get(first, "/table/account/key")), (std::vector<std::string> { "4821", "4822" }));
+	EXPECT_EQ(keys(get(second, "/table/account/key")), (std::vector<std::string> { "4821", "4822" }));
+}
+
+// A zone that is gone is a copy that is gone, and the record is read from the zone that is left.
+TEST_F(cluster_test, a_record_is_read_from_the_zone_that_is_still_there)
+{
+	zone_the_cluster();
+
+	request(first, "PUT", "/table/account", "{}");
+	request(first, "PUT", "/table/account/key/4821", "a value");
+
+	second->close();
+	second_thread.join();
+
+	answer answered = get(first, "/table/account/key/4821");
+
+	EXPECT_EQ(answered.code, 200);
+	EXPECT_EQ(answered.body, "a value");
+
+	// The test stops the servers it starts, and this one has stopped already.
+	second_thread = std::thread([]() {});
+}
+
+// The copies are asked in turn, so a node that is not there is a copy passed over rather than the
+// answer to the request.
+TEST_F(cluster_test, a_record_is_read_from_the_next_zone_when_a_node_does_not_answer)
+{
+	zone_the_cluster();
+
+	request(first, "PUT", "/table/account", "{}");
+	request(first, "PUT", "/table/account/key/4821", "a value");
+
+	// A membership naming a zone whose node is not there and not naming this node at all: the
+	// first node holds no copy of its own, and the copy it asks for first answers nothing.
+	first_cluster.join(node(first), {
+		cluster::member { "http://localhost:1", "one" },
+		cluster::member { node(second), "two" }
+	});
+
+	answer answered = get(first, "/table/account/key/4821");
+
+	EXPECT_EQ(answered.code, 200);
+	EXPECT_EQ(answered.body, "a value");
 }

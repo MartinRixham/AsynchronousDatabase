@@ -1,3 +1,5 @@
+#include <map>
+
 #include "partition.h"
 
 namespace
@@ -60,4 +62,25 @@ std::string cluster::owner_of(const std::string &key, const std::vector<std::str
 	}
 
 	return owner;
+}
+
+std::vector<cluster::member> cluster::owners_of(const std::string &key, const std::vector<member> &members)
+{
+	// A map rather than a hash of them, because the zones come out in one order whatever order the
+	// membership arrived in, and every node has to name the copies of a key alike.
+	std::map<std::string, std::vector<std::string>> zones;
+
+	for (size_t i = 0; i < members.size(); i++)
+	{
+		zones[members[i].zone].push_back(members[i].node);
+	}
+
+	std::vector<member> owners;
+
+	for (std::map<std::string, std::vector<std::string>>::const_iterator it = zones.begin(); it != zones.end(); ++it)
+	{
+		owners.push_back(member { owner_of(key, it->second), it->first });
+	}
+
+	return owners;
 }

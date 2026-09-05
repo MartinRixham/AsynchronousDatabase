@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A C++20 HTTP/JSON database server for asynchronous data processing (Boost.Beast + RocksDB), plus a
 vanilla-JS single-page UI that draws the tables and their dependencies as a DAG. Several instances
-partition a keyspace between them, finding each other through etcd — see
-[Clustering](#clustering).
+partition a keyspace between them and keep one copy of it in each availability zone, finding each
+other through etcd — see [Clustering](#clustering).
 
 ## Build and test
 
@@ -32,6 +32,9 @@ build/test/test_main --gtest_filter='table_test.fail_to_deserialise_table_with_n
 
 Notes:
 - `-Wall -Werror` — any warning fails the build. `cppcheck --enable=style` runs in the `validate` phase.
+- **Incremental builds hash sources, not headers.** Changing a header does not rebuild the objects
+  that include it, so a change to a struct or a class layout leaves stale objects that link and then
+  corrupt memory at run time. `cmk clean test` after touching anything under `src/**/*.h`.
 - The `verify` phase memchecks under valgrind, which is why `cmk verify` takes minutes rather than seconds.
   Cheesemake's own `valgrind.chevre` runs `build/bin/asyncdb`, and that serves until it is signalled, so the
   root `valgrind.chevre` overrides it and runs `build/test/test_main` instead, keeping the report in
@@ -116,15 +119,25 @@ reported and never asserted on: nothing here is a threshold.
 `ui/dist` and reverse-proxying `/asyncdb/*` to the `asyncdb` binary on `localhost:8080`
 (`server/server.conf`); that is why `DatabaseClient` uses relative `asyncdb/...` URLs. The compose
 file brings up **three** instances (`localhost:8080`, `8081`, `8082`) and the etcd they partition
-their keyspace through, so any of them answers for every key.
+their keyspace through, so any of them answers for every key. They are in **two** zones — 1 and 2 in
+`one`, 3 in `two` — so the compose cluster partitions inside zone `one` and keeps a whole copy in
+zone `two`.
 
 ### Clustering
 
 `ASYNCDB_ETCD` (where etcd answers — one base URL, or every member of the etcd cluster separated by
-commas, tried in turn and sticky on whichever answered) and `ASYNCDB_NODE` (this node as the others
-reach it, the API port and not the nginx in front of it). **Set neither and nothing changes**: no
-thread is started, nothing is registered, and the instance owns the whole keyspace, which is what
-every test that is not `cluster_test` runs as. Set both and the instance joins.
+commas, tried in turn and sticky on whichever answered), `ASYNCDB_NODE` (this node as the others
+reach it, the API port and not the nginx in front of it) and `ASYNCDB_ZONE` (the availability zone
+this node is in). **Set none and nothing changes**: no thread is started, nothing is registered, and
+the instance owns the whole keyspace, which is what every test that is not `cluster_test` runs as.
+Set the first two and the instance joins.
+
+`ASYNCDB_ZONE` is what turns partitioning into replication, and it is the only knob there is:
+**the membership is grouped by zone and the key is hashed once inside each group**, so every zone
+holds exactly one copy of every key. No zone named anywhere is one zone holding all the nodes, which
+is the one copy this always kept. `docker-compose.yml` runs two zones (nodes 1 and 2 in `one`,
+node 3 in `two`) so the compose cluster both partitions and replicates; `cloudformation.json` reads
+the real AZ out of IMDS, which is three zones of one node each.
 
 ## Libraries
 
@@ -200,11 +213,15 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
   reset before each request. The handle is what holds open connections, so a node that forwards to
   the same few neighbours stops paying for a handshake each time — and `curl_easy_reset` is what
   keeps the last request's body, or a HEAD's "no body", out of the next one.
-- **`cluster::cluster`** is the second pure-virtual seam the router routes against, over "who owns
-  this key" and "ask that node". `cluster::standalone` owns everything and is what a router built
-  without a cluster gets; `cluster::etcd_cluster` registers `/asyncdb/node/{address}` in etcd on a
-  lease, renews it on a thread of its own, and reads the membership back. `cluster::owner_of` is
-  rendezvous hashing over that membership, and `cluster::forward` is how a request travels.
+- **`cluster::cluster`** is the second pure-virtual seam the router routes against, over "which
+  nodes hold this key" and "ask that node". `cluster::replicas` answers a `cluster::placement` —
+  whether this node holds a copy, and the other nodes that do, this node's own zone first.
+  `cluster::standalone` holds everything and is what a router built without a cluster gets;
+  `cluster::etcd_cluster` registers `/asyncdb/node/{address}` in etcd on a lease with
+  `{"node":...,"zone":...}` as its value (a bare address is still read, as a node in no zone),
+  renews it on a thread of its own, and reads the membership back. `cluster::owner_of` is rendezvous
+  hashing over a set of nodes, `cluster::owners_of` runs it once per zone, and `cluster::forward` is
+  how a request travels.
 - **`repository::repository`** is the pure-virtual seam, over tables, records, scans and range deletes.
   `rocksdb_repository` makes each table a **column family** and keeps its document in the default one
   under `"TABLE_<name>"`; dropping a table drops the column family, so the data goes with it. The
@@ -232,12 +249,15 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
   `{ "k": last key, "s": instance }`; the instance is what makes a cursor this instance did not issue
   refusable.
 - **Partitioning is by key alone, never by table**, so the same key of two tables is on one node and
-  a record and the records derived from it are one hop. A record request goes to the owner; a table
-  create or delete goes to *every* node, because a record can only be written where its table is; a
-  scan is asked of every node and merged back into key order. A forwarded request carries
+  a record and the records derived from it are one hop. A write goes to the node holding the key in
+  *every* zone and every one of them has to take it; a read goes to one copy — this node when it
+  holds one, else the nearest zone's, passing over a node that does not answer, and asking the other
+  copies when this node holds nothing for the key. A table create or delete goes to *every* node,
+  because a record can only be written where its table is; a scan is asked of every node and merged
+  back into key order, where a key two zones hold is answered once. A forwarded request carries
   `X-Asyncdb-Forwarded` and is served where it lands, which is what stops two nodes bouncing it.
-  `doc/database/cluster.md` is the spec, including what partitioning deliberately does not do (no
-  replication, no rebalancing).
+  `doc/database/cluster.md` is the spec, including what this deliberately does not do (no read
+  repair, no rebalancing, and a write is only as available as its least available zone).
 - `DEBUG(...)` from `src/log.h` compiles to nothing unless the `LOG` define is `1`; `recipe.json` sets
   `"LOG": "echo 1"` (the define values are shell commands that Cheesemake evaluates).
 

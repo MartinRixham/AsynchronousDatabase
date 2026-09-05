@@ -7,6 +7,10 @@ services:
       # directly rather than through the nginx the browser uses.
       - ASYNCDB_ETCD=http://etcd:2379
       - ASYNCDB_NODE=http://asyncdb-1:8080
+      # Every zone holds a copy of every record. Two zones here rather than three, so that this is
+      # a cluster which both partitions — between the two nodes of zone one — and replicates: node
+      # three is zone two on its own, and holds every record the other two hold between them.
+      - ASYNCDB_ZONE=one
     ports:
       - 8080:80
     depends_on:
@@ -17,6 +21,7 @@ services:
     environment:
       - ASYNCDB_ETCD=http://etcd:2379
       - ASYNCDB_NODE=http://asyncdb-2:8080
+      - ASYNCDB_ZONE=one
     ports:
       - 8081:80
     depends_on:
@@ -27,6 +32,7 @@ services:
     environment:
       - ASYNCDB_ETCD=http://etcd:2379
       - ASYNCDB_NODE=http://asyncdb-3:8080
+      - ASYNCDB_ZONE=two
     ports:
       - 8082:80
     depends_on:

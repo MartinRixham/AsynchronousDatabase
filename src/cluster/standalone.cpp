@@ -1,14 +1,15 @@
 #include "router/api_error.h"
 #include "standalone.h"
 
-std::vector<std::string> cluster::standalone::members() const
+std::vector<cluster::member> cluster::standalone::members() const
 {
-	return std::vector<std::string>();
+	return std::vector<member>();
 }
 
-std::optional<std::string> cluster::standalone::owner(const std::string &) const
+// One instance holds the only copy of every key, and holds it here.
+cluster::placement cluster::standalone::replicas(const std::string &) const
 {
-	return std::nullopt;
+	return placement();
 }
 
 std::vector<std::string> cluster::standalone::peers() const

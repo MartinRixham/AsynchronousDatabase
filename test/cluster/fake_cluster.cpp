@@ -1,6 +1,15 @@
 #include "fake_cluster.h"
 
 cluster::fake_cluster::fake_cluster(const std::string &node, const std::vector<std::string> &members):
+	self(node)
+{
+	for (size_t i = 0; i < members.size(); i++)
+	{
+		member_list.push_back(member { members[i], "" });
+	}
+}
+
+cluster::fake_cluster::fake_cluster(const std::string &node, const std::vector<member> &members):
 	self(node),
 	member_list(members)
 {
@@ -8,7 +17,12 @@ cluster::fake_cluster::fake_cluster(const std::string &node, const std::vector<s
 
 void cluster::fake_cluster::owns(const std::string &key, const std::string &node)
 {
-	owners[key] = node;
+	owners[key] = std::vector<std::string> { node };
+}
+
+void cluster::fake_cluster::copies(const std::string &key, const std::vector<std::string> &nodes)
+{
+	owners[key] = nodes;
 }
 
 void cluster::fake_cluster::answer(const std::string &node, const router::response &response)
@@ -16,23 +30,39 @@ void cluster::fake_cluster::answer(const std::string &node, const router::respon
 	answers[node] = response;
 }
 
-std::vector<std::string> cluster::fake_cluster::members() const
+std::vector<cluster::member> cluster::fake_cluster::members() const
 {
 	return member_list;
 }
 
-std::optional<std::string> cluster::fake_cluster::owner(const std::string &key) const
+cluster::placement cluster::fake_cluster::replicas(const std::string &key) const
 {
-	std::map<std::string, std::string>::const_iterator owner = owners.find(key);
+	std::map<std::string, std::vector<std::string>>::const_iterator owner = owners.find(key);
 
 	// A key nothing was said about is this node's own, which is what an instance standing alone
 	// answers for every key.
-	if (owner == owners.end() || owner->second == self)
+	if (owner == owners.end())
 	{
-		return std::nullopt;
+		return placement();
 	}
 
-	return owner->second;
+	placement where;
+
+	where.local = false;
+
+	for (size_t i = 0; i < owner->second.size(); i++)
+	{
+		if (owner->second[i] == self)
+		{
+			where.local = true;
+		}
+		else
+		{
+			where.nodes.push_back(owner->second[i]);
+		}
+	}
+
+	return where;
 }
 
 std::vector<std::string> cluster::fake_cluster::peers() const
@@ -41,9 +71,9 @@ std::vector<std::string> cluster::fake_cluster::peers() const
 
 	for (size_t i = 0; i < member_list.size(); i++)
 	{
-		if (member_list[i] != self)
+		if (member_list[i].node != self)
 		{
-			peers.push_back(member_list[i]);
+			peers.push_back(member_list[i].node);
 		}
 	}
 

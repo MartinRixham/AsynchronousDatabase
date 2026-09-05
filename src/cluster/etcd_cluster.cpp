@@ -7,6 +7,7 @@
 
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
+#include <boost/json.hpp>
 
 #include "log.h"
 #include "forwarder.h"
@@ -41,6 +42,30 @@ namespace
 
 		return endpoints;
 	}
+
+	// What a node writes about itself: where it answers and which zone it stands in. A value that
+	// is not a document at all is a node of a version that knew nothing about zones, and it is
+	// read as the address it is rather than dropped from the membership.
+	cluster::member read_member(const std::string &value)
+	{
+		boost::system::error_code error;
+		boost::json::value json = boost::json::parse(value, error);
+
+		if (error || !json.is_object() || !json.as_object().contains("node") || !json.at("node").is_string())
+		{
+			return cluster::member { value, "" };
+		}
+
+		const boost::json::object &object = json.as_object();
+		std::string zone;
+
+		if (object.contains("zone") && object.at("zone").is_string())
+		{
+			zone = std::string(object.at("zone").as_string());
+		}
+
+		return cluster::member { std::string(object.at("node").as_string()), zone };
+	}
 }
 
 bool cluster::config::is_clustered() const
@@ -54,6 +79,7 @@ cluster::config cluster::from_environment()
 
 	config.endpoints = read_endpoints(environment("ASYNCDB_ETCD"));
 	config.node = environment("ASYNCDB_NODE");
+	config.zone = environment("ASYNCDB_ZONE");
 
 	return config;
 }
@@ -153,45 +179,61 @@ void cluster::etcd_cluster::stop()
 	DEBUG("Node " + configuration.node + " left the cluster.");
 }
 
-std::vector<std::string> cluster::etcd_cluster::members() const
+std::vector<cluster::member> cluster::etcd_cluster::members() const
 {
 	std::shared_lock<std::shared_mutex> lock(member_mutex);
 
 	return member_list;
 }
 
-std::optional<std::string> cluster::etcd_cluster::owner(const std::string &key) const
+cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 {
-	std::vector<std::string> registered = members();
+	std::vector<member> registered = members();
 
-	// One node, or none that etcd would name, owns everything it is asked for. A cluster that
+	// One node, or none that etcd would name, holds everything it is asked for. A cluster that
 	// cannot be read is a cluster of one rather than a cluster that refuses to answer.
 	if (registered.size() < 2)
 	{
-		return std::nullopt;
+		return placement();
 	}
 
 	// The name of the namespace is hidden here by the name of the base class.
-	std::string node = ::cluster::owner_of(key, registered);
+	std::vector<member> owners = ::cluster::owners_of(key, registered);
+	placement where;
 
-	if (node == configuration.node)
+	where.local = false;
+
+	for (size_t i = 0; i < owners.size(); i++)
 	{
-		return std::nullopt;
+		if (owners[i].node == configuration.node)
+		{
+			where.local = true;
+		}
+		// The copy in this node's own zone goes first, so that a request this node cannot answer
+		// itself crosses a zone only when it has to.
+		else if (owners[i].zone == configuration.zone)
+		{
+			where.nodes.insert(where.nodes.begin(), owners[i].node);
+		}
+		else
+		{
+			where.nodes.push_back(owners[i].node);
+		}
 	}
 
-	return node;
+	return where;
 }
 
 std::vector<std::string> cluster::etcd_cluster::peers() const
 {
-	std::vector<std::string> registered = members();
+	std::vector<member> registered = members();
 	std::vector<std::string> peers;
 
 	for (size_t i = 0; i < registered.size(); i++)
 	{
-		if (registered[i] != configuration.node)
+		if (registered[i].node != configuration.node)
 		{
-			peers.push_back(registered[i]);
+			peers.push_back(registered[i].node);
 		}
 	}
 
@@ -246,28 +288,43 @@ bool cluster::etcd_cluster::register_node()
 
 	lease = *granted;
 
-	return etcd_client.put(configuration.prefix + configuration.node, configuration.node, lease);
+	// A node registers its zone with its address, because it is the only one that knows which zone
+	// it is in and every other node has to know to keep a copy out of it.
+	boost::json::object registration {
+		{ "node", configuration.node },
+		{ "zone", configuration.zone }
+	};
+
+	return etcd_client.put(
+		configuration.prefix + configuration.node, boost::json::serialize(registration), lease);
 }
 
 void cluster::etcd_cluster::read_members()
 {
 	std::map<std::string, std::string> registered = etcd_client.range(configuration.prefix);
-	std::vector<std::string> names;
+	std::vector<member> names;
+	bool found = false;
 
 	for (std::map<std::string, std::string>::const_iterator it = registered.begin(); it != registered.end(); ++it)
 	{
-		names.push_back(it->second);
-	}
+		member read = read_member(it->second);
 
+		found = found || read.node == configuration.node;
+
+		names.push_back(read);
+	}
 
 	// This node is a member of its own cluster whatever etcd says, so that a node which cannot
 	// reach etcd still answers for the keys it holds instead of forwarding them to a stranger.
-	if (std::find(names.begin(), names.end(), configuration.node) == names.end())
+	if (!found)
 	{
-		names.push_back(configuration.node);
+		names.push_back(member { configuration.node, configuration.zone });
 	}
 
-	std::sort(names.begin(), names.end());
+	std::sort(
+		names.begin(),
+		names.end(),
+		[](const member &left, const member &right) { return left.node < right.node; });
 
 	std::unique_lock<std::shared_mutex> lock(member_mutex);
 

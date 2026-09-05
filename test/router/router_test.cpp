@@ -597,9 +597,22 @@ namespace
 
 	const std::string there = "http://asyncdb-2:8080";
 
+	const std::string elsewhere = "http://asyncdb-3:8080";
+
 	cluster::fake_cluster two_nodes()
 	{
 		return cluster::fake_cluster(here, { here, there });
+	}
+
+	// Three nodes, one in each zone, which is a cluster holding a copy of every record on every
+	// one of them.
+	cluster::fake_cluster three_zones()
+	{
+		return cluster::fake_cluster(here, std::vector<cluster::member> {
+			cluster::member { here, "a" },
+			cluster::member { there, "b" },
+			cluster::member { elsewhere, "c" }
+		});
 	}
 
 	router::response page(const boost::json::array &records, bool has_more)
@@ -736,6 +749,196 @@ TEST(router_cluster_test, fail_to_write_to_a_table_that_is_not_there_without_a_h
 
 	EXPECT_EQ(error_code(response), "table_not_found");
 	EXPECT_TRUE(nodes.sent().empty());
+}
+
+// Every zone holds a copy, so a write is not done until every copy has taken it — this node's own
+// included.
+TEST(router_cluster_test, write_a_record_to_every_node_that_holds_a_copy)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, there, elsewhere });
+
+	router::response response = router.route(put("/table/account/key/4821", "a value"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
+	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+
+	ASSERT_EQ(nodes.sent().size(), 2u);
+	EXPECT_EQ(nodes.sent()[0].first, there);
+	EXPECT_EQ(nodes.sent()[0].second.body, "a value");
+	EXPECT_EQ(nodes.sent()[1].first, elsewhere);
+	EXPECT_EQ(nodes.sent()[1].second.body, "a value");
+}
+
+TEST(router_cluster_test, write_a_record_to_every_copy_when_this_node_holds_none)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { there, elsewhere });
+
+	router::response response = router.route(put("/table/account/key/4821", "a value"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
+	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
+	EXPECT_EQ(nodes.sent().size(), 2u);
+}
+
+TEST(router_cluster_test, delete_a_record_from_every_node_that_holds_a_copy)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	write_record(router, "account", "4821", "a value");
+	nodes.forget();
+	nodes.copies("4821", { here, there, elsewhere });
+
+	router::response response = router.route(del("/table/account/key/4821"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
+	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
+
+	ASSERT_EQ(nodes.sent().size(), 2u);
+	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
+	EXPECT_EQ(nodes.sent()[1].second.method, boost::beast::http::verb::delete_);
+}
+
+// A copy that refuses is a record that is not in every zone, and saying so is what lets the client
+// write it again — which is safe, because writing a record twice is writing it once.
+TEST(router_cluster_test, fail_to_write_a_record_a_copy_refuses)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, there, elsewhere });
+	nodes.answer(there, router::error_response("write_stalled", "Writes are stalled."));
+
+	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "a value"))), "write_stalled");
+
+	// The copy that refused is the last one asked: the request is not sent on to the zones behind
+	// it once the client is going to be told to write it again.
+	EXPECT_EQ(nodes.sent().size(), 1u);
+}
+
+// The reason for keeping a copy in every zone: a zone that is gone is a copy to pass over.
+TEST(router_cluster_test, read_a_record_from_the_next_copy_when_a_node_does_not_answer)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { there, elsewhere });
+	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
+	nodes.answer(elsewhere, router::text_response(boost::beast::http::status::ok, "a value"));
+
+	router::response response = router.route(get("/table/account/key/4821"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.text, "a value");
+	EXPECT_EQ(nodes.sent().size(), 2u);
+}
+
+// A key that is not there is not there in any zone, because every zone is written before a write
+// is answered, so a 404 is an answer and not a copy to pass over.
+TEST(router_cluster_test, take_a_missing_key_from_the_first_copy_that_answers)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { there, elsewhere });
+	nodes.answer(there, router::empty_response(boost::beast::http::status::not_found));
+
+	EXPECT_EQ(router.route(get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
+	EXPECT_EQ(nodes.sent().size(), 1u);
+}
+
+// A node that was replaced, or a zone that came back, is the owner of keys in its own zone and
+// holds none of them. The copies in the other zones are what stop that reading as a record that
+// was never written.
+TEST(router_cluster_test, read_a_record_from_another_zone_when_this_node_has_none_of_it)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, there });
+	nodes.answer(there, router::text_response(boost::beast::http::status::ok, "a value"));
+
+	router::response response = router.route(get("/table/account/key/4821"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.text, "a value");
+	EXPECT_EQ(nodes.sent().size(), 1u);
+}
+
+TEST(router_cluster_test, answer_a_key_no_zone_holds_as_missing)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, there });
+	nodes.answer(there, router::empty_response(boost::beast::http::status::not_found));
+
+	EXPECT_EQ(router.route(get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
+}
+
+// A forwarded read is served where it stands, so a node that was asked because it holds a copy
+// answers out of its own store and does not ask a third node about it.
+TEST(router_cluster_test, answer_a_forwarded_read_of_a_key_this_node_has_none_of)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, there });
+
+	router::request forwarded = get("/table/account/key/4821");
+
+	forwarded.forwarded = true;
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::not_found);
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
+TEST(router_cluster_test, fail_to_read_a_record_no_copy_of_which_answers)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { there, elsewhere });
+	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
+	nodes.answer(elsewhere, router::error_response("storage_error", "Node \"" + elsewhere + "\" did not answer."));
+
+	EXPECT_EQ(error_code(router.route(get("/table/account/key/4821"))), "storage_error");
+	EXPECT_EQ(nodes.sent().size(), 2u);
 }
 
 TEST(router_cluster_test, create_a_table_on_every_node)
@@ -1022,6 +1225,34 @@ TEST(router_cluster_test, name_the_nodes_of_the_cluster_in_the_health_of_the_ins
 	ASSERT_EQ(named.size(), 2u);
 	EXPECT_EQ(named[0].as_string(), here);
 	EXPECT_EQ(named[1].as_string(), there);
+}
+
+// The zones are what say how many copies of a record there are, so they are what an instance says
+// about itself.
+TEST(router_cluster_test, name_the_zones_of_the_cluster_in_the_health_of_the_instance)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	boost::json::object zones = router.route(get("/health")).json.at("zones").as_object();
+
+	ASSERT_EQ(zones.size(), 3u);
+	EXPECT_EQ(zones.at("a").as_array()[0].as_string(), here);
+	EXPECT_EQ(zones.at("b").as_array()[0].as_string(), there);
+	EXPECT_EQ(zones.at("c").as_array()[0].as_string(), elsewhere);
+}
+
+TEST(router_cluster_test, name_no_zones_when_the_cluster_has_none)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	router::response response = router.route(get("/health"));
+
+	EXPECT_TRUE(response.json.contains("nodes"));
+	EXPECT_FALSE(response.json.contains("zones"));
 }
 
 TEST(router_cluster_test, name_no_nodes_when_the_instance_stands_alone)

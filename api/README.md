@@ -68,8 +68,13 @@ that is a create.
 | 7 · Drop the tables | `204`, then `404`, then created again and empty — the data went with the column family |
 | 8 · The cluster | Three instances: the membership, a table created on one node and present on all, a record written to one node and read from the others, a scan merged across all three, and a range delete and a table delete that reach every node |
 
-## Two things worth knowing before a red test is believed
+## Three things worth knowing before a red test is believed
 
+- **The compose cluster keeps two copies of a record.** `docker-compose.yml` puts nodes 1 and 2 in
+  one zone and node 3 in another, so every record is on node 3 and on one of the other two — see
+  `doc/database/cluster.md`. Nothing in the collection asserts which node holds a key, so this
+  changes no assertion — but a record read from a node that "should not" have it is the cluster
+  working rather than a red test.
 - **One assertion in folder 8 needs a cluster.** `clusterSize` is what tells the collection which
   it is running against. Set to 1 it asserts instead that `/health` names no membership at all,
   which is what standing alone looks like, and the rest of the folder runs as it stands: `node1`,
@@ -80,7 +85,7 @@ that is a create.
   either case, digits, spaces, `_` and `-`, so the collection asserts `invalid_table_name` on a name
   holding a `.` rather than on a capital. The reference still says `[a-z0-9_-]`.
 
-An encoded slash in a key used to be a third — nginx's `rewrite` worked on the decoded path, so
+An encoded slash in a key used to be one of these — nginx's `rewrite` worked on the decoded path, so
 `%2F` reached the server as a real slash and the request was a different route. `server/server.conf`
 now strips `/asyncdb` from `$request_uri` instead, which is the target as it was sent, so the two
 requests that write and read such a key are exercised through the proxy as well.

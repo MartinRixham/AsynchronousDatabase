@@ -6,6 +6,7 @@
 #include <string>
 
 #include "api_error.h"
+#include "record/record.h"
 #include "request.h"
 #include "response.h"
 #include "cluster/cluster.h"
@@ -38,6 +39,18 @@ namespace router
 		response route_range(const request &request, const std::string &name);
 
 		response route_record(const request &request, const std::string &name, const std::string &key);
+
+		// Writes the record on this node when it holds a copy, and on every other node that holds
+		// one. A copy that refuses fails the request.
+		response write_record(
+			const request &request,
+			const std::string &name,
+			const record::record &record,
+			const cluster::placement &where);
+
+		// Asks the nodes holding a copy of the key in turn, and answers with the first one that
+		// answered at all.
+		response read_record(const request &request, const std::vector<std::string> &replicas);
 
 		response create_table(const request &request, const std::string &name);
 

@@ -10,9 +10,9 @@ namespace cluster
 	class standalone : public cluster
 	{
 	public:
-		std::vector<std::string> members() const override;
+		std::vector<member> members() const override;
 
-		std::optional<std::string> owner(const std::string &key) const override;
+		placement replicas(const std::string &key) const override;
 
 		std::vector<std::string> peers() const override;
 

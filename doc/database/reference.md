@@ -16,7 +16,7 @@ Every endpoint, status code, error code and limit in one place.
 | `DELETE` | `/table/{table}/key/{key}` | [Delete a record](/database/records#delete-a-record) |
 | `GET` | `/table/{table}/key` | [Scan a range](/database/scans) |
 | `DELETE` | `/table/{table}/key` | [Delete a range](/database/tables#delete-a-range) |
-| `GET` | `/health` | Liveness, whether writes are stalled, and [the nodes of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) |
+| `GET` | `/health` | Liveness, whether writes are stalled, and [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) |
 
 ## Errors
 
@@ -68,10 +68,11 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 | --- | --- |
 | `ASYNCDB_ETCD` | Where etcd answers. One base URL, or every member of the etcd cluster separated by commas. Unset is one instance on its own |
 | `ASYNCDB_NODE` | This node as the other nodes reach it. Unset is one instance on its own |
+| `ASYNCDB_ZONE` | The availability zone this node is in. Every zone holds [one copy of every record](/database/cluster#one-copy-in-every-zone). Unset is one zone, which is one copy |
 
 | Header | Means |
 | --- | --- |
 | `X-Asyncdb-Forwarded` | Another node sent this request here. It is served where it lands |
 
 See [the cluster](/database/cluster) for what each endpoint does when there is
-more than one instance, and for what partitioning does not do.
+more than one instance, and for what partitioning and replication do not do.

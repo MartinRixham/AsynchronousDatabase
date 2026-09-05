@@ -1,8 +1,13 @@
 # The cluster
 
 One instance of asyncdb owns one RocksDB. Several instances own a keyspace
-between them: each key lives on exactly one of them, and every instance answers
-for every key, by asking the instance that holds it when it does not.
+between them: each key lives on one instance **in each zone**, and every instance
+answers for every key, by asking an instance that holds it when it does not.
+
+A cluster that is told nothing about zones is every instance in one zone, which
+is one copy of a record and the partitioning this has always been. Tell each
+instance which zone it is in and the same keyspace is kept once per zone — one
+copy of every record in every availability zone.
 
 Instances find each other through **etcd**. There is no leader, no coordinator
 and no configuration naming the other nodes: a node registers itself, reads who
@@ -11,23 +16,26 @@ question the cluster has to agree on — which node owns a key.
 
 ```
                       ┌────────┐
-                      │  etcd  │   /asyncdb/node/<address> per node, on a lease
-                      └───┬────┘
+                      │  etcd  │   /asyncdb/node/<address> per node, on a lease,
+                      └───┬────┘   naming the zone the node is in
            ┌──────────────┼──────────────┐
            │              │              │
       ┌────┴────┐    ┌────┴────┐    ┌────┴────┐
-      │ node 1  │────│ node 2  │────│ node 3  │   a key it does not own is
-      └─────────┘    └─────────┘    └─────────┘   asked of the node that does
+      │ node 1  │    │ node 2  │    │ node 3  │   a write goes to the node that
+      │ zone a  │────│ zone b  │────│ zone c  │   holds the key in every zone;
+      └─────────┘    └─────────┘    └─────────┘   a read to the nearest of them
+        key 4821       key 4821       key 4821
 ```
 
 ## Turning it on
 
-Two environment variables, and nothing else:
+Three environment variables, and nothing else:
 
 | Variable | Is |
 | --- | --- |
 | `ASYNCDB_ETCD` | Where etcd answers. One base URL, or every member of the etcd cluster separated by commas |
 | `ASYNCDB_NODE` | This node as the others reach it: `http://asyncdb-1:8080` |
+| `ASYNCDB_ZONE` | The availability zone this node stands in: `eu-west-2a`. Unset is a cluster of one zone, which is one copy of a record |
 
 ```
 ASYNCDB_ETCD=http://etcd-1:2379,http://etcd-2:2379,http://etcd-3:2379
@@ -40,8 +48,9 @@ failure for the *membership* — records are still served, because a node that
 cannot reach etcd carries on as a cluster of one, but nothing learns about
 anything joining or leaving until it comes back.
 
-Set neither and the instance is what it has always been: one process owning the
-whole keyspace, talking to nothing. Set both and it joins.
+Set neither of the first two and the instance is what it has always been: one
+process owning the whole keyspace, talking to nothing. Set both and it joins;
+set the third as well and it is a copy of the keyspace in its own zone.
 
 `ASYNCDB_NODE` is the address of the **API port**, not of the nginx in front of
 it — nodes talk to each other directly, and they do not go through the `/asyncdb`
@@ -54,7 +63,17 @@ libcurl, the same libcurl the API already uses.
 ## Membership
 
 A node registers `/asyncdb/node/{address}` with a **lease** and renews it every
-few seconds. The lease is what makes membership honest: a node that stops
+few seconds. The value is what the node knows that no other node does — where it
+answers and which zone it is in:
+
+```json
+{ "node": "http://10.0.1.23:8080", "zone": "eu-west-2b" }
+```
+
+A value that is not a document at all is read as an address in no zone, so a
+cluster half way through an upgrade still agrees about who is a member.
+
+The lease is what makes membership honest: a node that stops
 renewing — because it is dead, or partitioned, or too slow — has its key removed
 by etcd, and the other nodes stop sending it keys. A node that shuts down cleanly
 revokes its lease and is gone at once rather than at the end of it.
@@ -97,16 +116,79 @@ on the same node, so a record and the records derived from it under the same key
 are one hop, not two. That is the shape asyncdb is for: a table and the tables
 [derived from it](/database/tables#dependencies).
 
+## One copy in every zone
+
+The membership is grouped by zone, and the same hash is run **once inside each
+zone**:
+
+```
+copies(key) = for each zone z, the node n in z maximising hash(n, key)
+```
+
+So a zone holds exactly one copy of a key: one, because a zone's nodes score the
+key between themselves and one of them wins it; exactly one, because every zone
+runs that on its own. Twelve nodes in three zones of four are three copies of the
+keyspace, a third of a copy on each node, and no key on two nodes of one zone.
+
+Deciding zone by zone is what makes a zone survivable rather than expensive:
+
+- **A node leaving moves keys inside its zone only.** The other zones score the
+  same nodes as before and hold their copies where they were, so losing a node
+  does not disturb the copies that are meant to cover for it.
+- **A zone that is gone is a copy that is gone.** The zones that are left hold
+  what they held, and every key is still on one node in each of them.
+- **A zone is not a replica set.** Nothing is designated primary, no zone is a
+  follower of another, and there is no log shipped between them. Every copy is
+  written by the node that took the request.
+
+A cluster where no node names a zone is one zone containing all of them, which
+is one copy of a key — the way this behaved before zones existed, and the way an
+instance with no `ASYNCDB_ZONE` still behaves.
+
+## What a write and a read do
+
+A record is written to **every** copy before the write is answered:
+
+```
+PUT /table/account/key/4821          the node asked, whichever it is
+  ├── writes the copy in zone a      itself, when it holds that copy
+  ├── PUT ... X-Asyncdb-Forwarded    the node holding the copy in zone b
+  └── PUT ... X-Asyncdb-Forwarded    the node holding the copy in zone c
+```
+
+Every copy has to take it. A copy that refuses — because it is not there, or
+because its RocksDB is stalling — fails the request, and the copies that took it
+keep what they took. Writing a record is idempotent, a key and a value or a key
+that is gone, so **the remedy is to run the request again**, which is the remedy
+for a table create or a range delete that one node refused as well.
+
+A record is read from **one** copy: this node's own when it holds one, and
+otherwise the copy in this node's own zone, which is the near one. A copy that
+does not answer at all is passed over for the next, so a zone being down is a
+zone being skipped rather than a read that fails. What a copy that *did* answer
+says is the answer, a `404` included — every zone is written before a write is
+answered, so one copy saying a key is not there is enough to say it is not
+there.
+
+With one exception. **A key this node holds nothing for is asked of the other
+copies before it is answered as missing.** A node that has just replaced another,
+or a zone that has just come back, owns its share of the keys and holds none of
+what was written while it was away; without this it would answer `404` for
+records the other zones still have, which is the one failure worth spending a hop
+on a genuine miss to avoid. It is not read repair — the copy that was missing
+stays missing until the record is written again.
+
 ## What each endpoint does in a cluster
 
 | Endpoint | In a cluster |
 | --- | --- |
-| `GET`/`HEAD`/`PUT`/`DELETE` `/table/{table}/key/{key}` | Answered by the node that owns the key, whichever node was asked |
+| `PUT`/`DELETE` `/table/{table}/key/{key}` | Carried out on the node holding the key **in every zone**, whichever node was asked. Every copy has to take it |
+| `GET`/`HEAD` `/table/{table}/key/{key}` | Answered by one copy: this node when it holds one, else the nearest that answers. A key this node holds nothing for is asked of the other copies |
 | `PUT`/`DELETE` `/table/{table}` | Carried out on **every** node: a record can only be written where its table is |
 | `GET` `/table`, `GET /table/{table}` | Answered where they are asked. Every node holds every table |
-| `GET` `/table/{table}/key` | Asked of every node, and the pages merged back into key order |
+| `GET` `/table/{table}/key` | Asked of every node, and the pages merged back into key order. A key two zones hold is answered once |
 | `DELETE` `/table/{table}/key` | Carried out on every node, because every node holds a share of the range |
-| `GET /health` | Answered where it is asked, and names the nodes it can see |
+| `GET /health` | Answered where it is asked, and names the nodes and zones it can see |
 
 Nodes keep their connections to each other open between requests, so a forwarded
 request is a request and not a handshake as well. A node that is shutting down
@@ -126,17 +208,25 @@ a membership settle:
 {
   "status": "ok",
   "write_stalled": false,
-  "nodes": [ "http://asyncdb-1:8080", "http://asyncdb-2:8080" ]
+  "nodes": [ "http://asyncdb-1:8080", "http://asyncdb-2:8080" ],
+  "zones": {
+    "eu-west-2a": [ "http://asyncdb-1:8080" ],
+    "eu-west-2b": [ "http://asyncdb-2:8080" ]
+  }
 }
 ```
 
-The field is absent, rather than a list of one, when the instance stands alone.
+`nodes` is absent, rather than a list of one, when the instance stands alone.
+`zones` is absent when no node in the membership names one, so it is also the way
+to see that a cluster meant to keep a copy per zone is keeping one: the number of
+zones is the number of copies.
 
 ## Scans across a cluster
 
 A scan is the one operation that cannot be answered by one node. Every node is
 asked for the same range, and the answers are merged into key order and cut to
-the `limit`. What is over the limit is dropped rather than held: the next page
+the `limit`. A key that several zones hold comes back from each of them and is
+answered once. What is over the limit is dropped rather than held: the next page
 asks every node again from where this one ended, so the dropped keys are the keys
 the next page begins with.
 
@@ -151,15 +241,28 @@ which any node will take.
 The partitioning is deliberately simple, and it is worth being plain about where
 it ends.
 
-- **There is one copy of every record.** Partitioning is not replication: a node
-  that is down takes its share of the keys with it until it comes back, and a
-  node that loses its disk loses them. The durability of a key is the durability
-  of one RocksDB.
+- **There are as many copies as there are zones, and no more.** One zone is one
+  copy, and the durability of a key is then the durability of one RocksDB. Three
+  zones survive two of them being gone, and no arrangement here survives a key
+  being written to a node whose disk is then lost before anything reads it: there
+  is no log, no quorum and nothing to reconcile against.
+- **Nothing repairs a copy that fell behind.** A write that one copy refused is
+  answered as a failure, and the copies that took it keep it. There is no read
+  repair, no anti-entropy and no hinted handoff, so until the client runs the
+  write again the zones disagree, and a read may be answered by either of them. A
+  scan that finds a key in two zones answers the copy it saw first.
+- **A write is only as available as its least available zone.** Every copy has to
+  take a write, so a zone that is down stops writes to the keys it holds while
+  reads carry on from the zones that are up. Replication here is for reading
+  through the loss of a zone, not for writing through it.
 - **Records do not move when the membership changes.** A key that changes owner
-  is a key the new owner does not have, and the old owner still does. Reads for
-  it answer as though it were missing until the membership is what it was.
-  Growing a cluster is therefore a thing to do deliberately, at a quiet moment,
-  and with the keys rewritten afterwards.
+  is a key the new owner does not have, and the old owner still does. A read
+  still finds it, because the new owner asks the other zones for what it holds
+  nothing of, and a scan still sees it, because the old owner is asked as well —
+  but nothing rebuilds the copy in that zone until the record is written again,
+  and a *write* lands on the new owner and leaves the old one holding a value
+  that is now stale. Growing a cluster is therefore still a thing to do
+  deliberately, at a quiet moment, and with the keys rewritten afterwards.
 - **A node that joins has no tables.** Tables are created on every node that is a
   member at the time. Declare the tables a service needs at every start up, which
   is [what `PUT /table/{table}` is for](/database/tables#create-a-table), and a

@@ -11,6 +11,7 @@
 #include "etcd/etcd_client.h"
 #include "http/http_client.h"
 #include "cluster.h"
+#include "member.h"
 
 namespace cluster
 {
@@ -23,6 +24,11 @@ namespace cluster
 		// This node as the other nodes reach it, which is what is written into etcd and what the
 		// hash of a key names.
 		std::string node;
+
+		// The availability zone this node stands in. Every zone holds a copy of every record, so
+		// naming a second zone is what turns partitioning into replication; naming none leaves the
+		// cluster with the one copy it had.
+		std::string zone;
 
 		// How long the membership of a node outlives the node itself.
 		int64_t lease_seconds = 10;
@@ -59,7 +65,7 @@ namespace cluster
 		// Read by every request and written only by the membership thread.
 		mutable std::shared_mutex member_mutex;
 
-		std::vector<std::string> member_list;
+		std::vector<member> member_list;
 
 		int64_t lease = 0;
 
@@ -88,9 +94,9 @@ namespace cluster
 
 		void stop();
 
-		std::vector<std::string> members() const override;
+		std::vector<member> members() const override;
 
-		std::optional<std::string> owner(const std::string &key) const override;
+		placement replicas(const std::string &key) const override;
 
 		std::vector<std::string> peers() const override;
 
