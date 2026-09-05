@@ -41,6 +41,11 @@ namespace http
 	{
 	public:
 		virtual response send(const request &request) const = 0;
+
+		// Every request at once, answered in the order they were given rather than the order they
+		// finished in. A client with no way of running several at once runs them one after
+		// another, which is what this does unless something overrides it.
+		virtual std::vector<response> send_all(const std::vector<request> &requests) const;
 	};
 
 	class curl_client : public client
@@ -51,6 +56,8 @@ namespace http
 		explicit curl_client(long timeout);
 
 		response send(const request &request) const override;
+
+		std::vector<response> send_all(const std::vector<request> &requests) const override;
 	};
 }
 

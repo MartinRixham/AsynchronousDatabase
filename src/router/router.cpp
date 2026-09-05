@@ -453,17 +453,13 @@ router::response router::router::write_record(
 		}
 	}
 
-	for (size_t i = 0; i < where.nodes.size(); i++)
-	{
-		response answer = nodes.send(where.nodes[i], request);
+	// Every copy at once. This node's own copy is already written, and the thread serving the
+	// write now waits for the slowest of the others rather than for one after another — which is
+	// what a node with as many threads as it has cores has to do to answer anything else while a
+	// write is in flight.
+	std::optional<response> refused = nodes.send_all(where.nodes, request);
 
-		if (answer.status >= boost::beast::http::status::bad_request)
-		{
-			return answer;
-		}
-	}
-
-	return empty_response(boost::beast::http::status::no_content);
+	return refused ? *refused : empty_response(boost::beast::http::status::no_content);
 }
 
 // A node that does not answer is a copy to pass over rather than an answer to give, which is what
@@ -696,21 +692,11 @@ std::optional<router::response> router::router::broadcast(const request &request
 		return std::nullopt;
 	}
 
-	std::vector<std::string> peers = nodes.peers();
-
-	for (size_t i = 0; i < peers.size(); i++)
-	{
-		response answer = nodes.send(peers[i], request);
-
-		// A node that refused, or that did not answer at all, is a node the cluster now disagrees
-		// with, and saying so is what lets a client run the same request again.
-		if (answer.status >= boost::beast::http::status::bad_request)
-		{
-			return answer;
-		}
-	}
-
-	return std::nullopt;
+	// A node that refused, or that did not answer at all, is a node the cluster now disagrees
+	// with, and saying so is what lets a client run the same request again. They are asked at
+	// once, because a table belongs to every node and asking them in turn is a round trip for
+	// each of them.
+	return nodes.send_all(nodes.peers(), request);
 }
 
 std::set<std::string> router::router::table_names() const

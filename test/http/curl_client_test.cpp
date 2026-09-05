@@ -118,3 +118,108 @@ TEST_F(curl_client_test, a_connection_that_is_kept_does_not_hold_the_server_open
 
 	EXPECT_LT(taken.count(), 5);
 }
+
+// The fan out that keeps a node's threads: every request is in flight at once, and each answer
+// belongs to the request it was asked for whatever order the transfers finished in.
+TEST_F(curl_client_test, answer_every_request_of_a_fan_out)
+{
+	std::vector<http::response> responses =
+		client.send_all({ get("/health"), get("/table/nothing"), get("/table") });
+
+	ASSERT_EQ(responses.size(), 3u);
+
+	EXPECT_EQ(responses[0].status, 200);
+	EXPECT_NE(responses[0].body.find("\"status\":\"ok\""), std::string::npos);
+
+	EXPECT_EQ(responses[1].status, 404);
+	EXPECT_NE(responses[1].body.find("table_not_found"), std::string::npos);
+
+	EXPECT_EQ(responses[2].status, 200);
+	EXPECT_NE(responses[2].body.find("\"tables\""), std::string::npos);
+}
+
+// The body of a request is not copied into the handle it runs on, so a fan out has to hold its
+// requests still until it has run. Two writes carrying different bodies are two records.
+TEST_F(curl_client_test, carry_the_body_of_every_request_of_a_fan_out)
+{
+	http::request table = get("/table/account");
+
+	table.method = "PUT";
+	table.body = "{}";
+
+	ASSERT_EQ(client.send(table).status, 201);
+
+	http::request first = get("/table/account/key/1");
+	http::request second = get("/table/account/key/2");
+
+	first.method = "PUT";
+	first.body = "the first value";
+	second.method = "PUT";
+	second.body = "the second value";
+
+	std::vector<http::response> written = client.send_all({ first, second });
+
+	ASSERT_EQ(written.size(), 2u);
+	EXPECT_EQ(written[0].status, 204);
+	EXPECT_EQ(written[1].status, 204);
+
+	EXPECT_EQ(client.send(get("/table/account/key/1")).body, "the first value");
+	EXPECT_EQ(client.send(get("/table/account/key/2")).body, "the second value");
+}
+
+// A node of a fan out that is not there is answered against on its own, and the nodes that did
+// answer answer all the same — which is what lets a write say which copy refused it.
+TEST_F(curl_client_test, answer_that_a_node_of_a_fan_out_did_not_answer)
+{
+	http::request gone = get("/health");
+
+	// A port nothing listens on, which is a node that is gone rather than a node that refused.
+	gone.url = "http://localhost:1/health";
+
+	std::vector<http::response> responses = client.send_all({ gone, get("/health") });
+
+	ASSERT_EQ(responses.size(), 2u);
+
+	EXPECT_FALSE(responses[0].is_valid);
+	EXPECT_FALSE(responses[0].message.empty());
+
+	EXPECT_TRUE(responses[1].is_valid);
+	EXPECT_EQ(responses[1].status, 200);
+}
+
+// The multi handle holds the connections of every transfer run in it, for the reason the single
+// handle holds its own: a node writes to the same copies over and over.
+TEST_F(curl_client_test, keep_the_connections_of_a_fan_out_between_them)
+{
+	std::vector<http::request> requests { get("/health"), get("/table") };
+
+	std::vector<http::response> first = client.send_all(requests);
+
+	ASSERT_EQ(first.size(), 2u);
+	EXPECT_FALSE(first[0].reused);
+	EXPECT_FALSE(first[1].reused);
+
+	std::vector<http::response> second = client.send_all(requests);
+
+	ASSERT_EQ(second.size(), 2u);
+	EXPECT_TRUE(second[0].reused);
+	EXPECT_TRUE(second[1].reused);
+}
+
+// One request has nothing to overlap with, so it runs on the handle that already holds this
+// thread's connections rather than opening one of its own.
+TEST_F(curl_client_test, answer_a_fan_out_of_one_on_the_handle_of_the_thread)
+{
+	EXPECT_EQ(client.send(get("/health")).status, 200);
+
+	std::vector<http::response> responses = client.send_all({ get("/health") });
+
+	ASSERT_EQ(responses.size(), 1u);
+	EXPECT_EQ(responses[0].status, 200);
+	EXPECT_TRUE(responses[0].reused);
+}
+
+TEST_F(curl_client_test, answer_a_fan_out_of_nothing)
+{
+	EXPECT_TRUE(client.send_all({}).empty());
+}

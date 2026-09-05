@@ -842,9 +842,30 @@ TEST(router_cluster_test, fail_to_write_a_record_a_copy_refuses)
 
 	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "a value"))), "write_stalled");
 
-	// The copy that refused is the last one asked: the request is not sent on to the zones behind
-	// it once the client is going to be told to write it again.
-	EXPECT_EQ(nodes.sent().size(), 1u);
+	// The copies are asked at once rather than one after another, so the zone behind the one that
+	// refused was asked as well. That is a request that need not have been sent rather than a
+	// wrong answer: the client is told to run the whole write again, and writing a record twice
+	// is writing it once.
+	EXPECT_EQ(nodes.sent().size(), 2u);
+}
+
+// The copies are asked at once, so more than one of them can refuse. The one reported is the
+// first in the order they were asked rather than whichever answered first, so that a write is
+// refused with the same reason however the answers happen to come back.
+TEST(router_cluster_test, report_the_first_copy_to_refuse_a_write)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, there, elsewhere });
+	nodes.answer(there, router::error_response("write_stalled", "Writes are stalled."));
+	nodes.answer(elsewhere, router::error_response("storage_error", "The store failed."));
+
+	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "a value"))), "write_stalled");
+	EXPECT_EQ(nodes.sent().size(), 2u);
 }
 
 // The reason for keeping a copy in every zone: a zone that is gone is a copy to pass over.

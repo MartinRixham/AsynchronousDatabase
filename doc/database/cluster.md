@@ -216,9 +216,16 @@ PUT /table/account/key/4821            the node asked, whichever it is
         └── PUT ... X-Asyncdb-Term: 41 the copy in the zone after that
 ```
 
+The copies are written **at once rather than one after another**, so the leader
+waits for the slowest of them rather than for the sum of them, and the thread it
+is serving the write on is held for one round trip rather than for a copy each.
+
 Every copy has to take it. A copy that refuses — because it is not there, because
 its RocksDB is stalling, or because it has moved on to a later term — fails the
-request, and the copies that took it keep what they took. Writing a record is
+request, and the copies that took it keep what they took. Because they were all
+asked at once, a copy that refused was asked beside the others and not ahead of
+them: the refusal reported is the first in the order the zones are named, whichever
+of them answered first. Writing a record is
 idempotent, a key and a value or a key that is gone, so **the remedy is to run
 the request again**, which is the remedy for a table create or a range delete
 that one node refused as well.
@@ -375,9 +382,9 @@ it ends.
   is [what `PUT /table/{table}` is for](/database/tables#create-a-table), and a
   new node catches up on the next declaration.
 - **An operation on every node that one node refuses fails the request**, after
-  the nodes that answered before it have carried it out. Creating a table,
-  deleting a table and deleting a range are all idempotent, so the remedy is to
-  run the request again.
+  every other node has carried it out — they are all asked at once, so one
+  refusing does not stop the rest. Creating a table, deleting a table and deleting
+  a range are all idempotent, so the remedy is to run the request again.
 - **A term is remembered in memory, not on disk.** A node that restarts has
   forgotten which terms it has applied, so it accepts the first write it is sent
   afterwards whatever term ordered it. A node that restarts has also lost its

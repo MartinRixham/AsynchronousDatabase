@@ -132,6 +132,10 @@ namespace cluster
 
 		router::response send(const std::string &node, const router::request &request) const override;
 
+		std::optional<router::response> send_all(
+			const std::vector<std::string> &node_list,
+			const router::request &request) const override;
+
 	private:
 		void run();
 

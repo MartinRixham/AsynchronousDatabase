@@ -44,6 +44,22 @@ namespace
 		return std::string(boost::beast::http::to_string(request.method));
 	}
 
+	// What a forwarded request carries apart from itself: that it has been forwarded, so the node
+	// it reaches serves it rather than passing it on, and the term when a leader ordered it.
+	std::vector<std::string> headers_of(const router::request &request)
+	{
+		std::vector<std::string> headers { std::string(cluster::forwarded_header) + ": true" };
+
+		// A write the leader ordered carries the term it ordered it in, and a request no leader
+		// ordered carries none at all.
+		if (request.term != 0)
+		{
+			headers.push_back(std::string(cluster::term_header) + ": " + std::to_string(request.term));
+		}
+
+		return headers;
+	}
+
 	router::response to_response(const std::string &node, const http::response &answer)
 	{
 		if (!answer.is_valid)
@@ -82,18 +98,38 @@ router::response cluster::forward(
 	const std::string &node,
 	const router::request &request)
 {
-	std::vector<std::string> headers { std::string(forwarded_header) + ": true" };
-
-	// A write the leader ordered carries the term it ordered it in, and a request no leader
-	// ordered carries none at all.
-	if (request.term != 0)
-	{
-		headers.push_back(std::string(term_header) + ": " + std::to_string(request.term));
-	}
-
-	http::request forwarded { method_of(request), target(node, request), request.body, headers };
+	http::request forwarded { method_of(request), target(node, request), request.body, headers_of(request) };
 
 	DEBUG("Forwarding " + forwarded.method + " " + forwarded.url + ".");
 
 	return to_response(node, http.send(forwarded));
+}
+
+std::vector<router::response> cluster::forward_all(
+	const http::client &http,
+	const std::vector<std::string> &nodes,
+	const router::request &request)
+{
+	std::vector<std::string> headers = headers_of(request);
+	std::vector<http::request> forwarded;
+
+	for (size_t i = 0; i < nodes.size(); i++)
+	{
+		forwarded.push_back(
+			http::request { method_of(request), target(nodes[i], request), request.body, headers });
+
+		DEBUG("Forwarding " + forwarded.back().method + " " + forwarded.back().url + ".");
+	}
+
+	std::vector<http::response> answers = http.send_all(forwarded);
+	std::vector<router::response> responses;
+
+	// One answer for each node asked, whatever the client made of them, so that the node a
+	// refusal belongs to is the node it is reported against.
+	for (size_t i = 0; i < nodes.size() && i < answers.size(); i++)
+	{
+		responses.push_back(to_response(nodes[i], answers[i]));
+	}
+
+	return responses;
 }

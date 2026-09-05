@@ -215,7 +215,12 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
 - **`http::client`** is the seam over libcurl, and `curl_client` keeps **one handle per thread**,
   reset before each request. The handle is what holds open connections, so a node that forwards to
   the same few neighbours stops paying for a handshake each time — and `curl_easy_reset` is what
-  keeps the last request's body, or a HEAD's "no body", out of the next one.
+  keeps the last request's body, or a HEAD's "no body", out of the next one. `send_all` is the same
+  thing for a **fan out** — the copies of a record, or every node of a table create — run in one
+  `curl_multi` handle per thread, so the thread waits for the slowest of them rather than for the
+  sum of them, and the multi handle holds that fan out's connections the way the single handle
+  holds its own. **A fan out does not copy the bodies it is given**, so the requests have to
+  outlive the call, and a fan out of one runs on the single handle instead.
 - **`cluster::cluster`** is the second pure-virtual seam the router routes against, over "which
   nodes hold this key" and "ask that node". `cluster::replicas` answers a `cluster::placement` —
   whether this node holds a copy, and the other nodes that do, this node's own zone first.
@@ -256,7 +261,8 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
 - **Partitioning is by key alone, never by table**, so the same key of two tables is in one
   partition and a record and the records derived from it are one hop. A write is ordered by the node
   **leading** the key's partition, which writes the copy in every zone and every one of them has to
-  take it; a read goes to one copy — this node when it
+  take it — all of them at once, so a copy that refuses is a copy the others were written beside
+  rather than ahead of; a read goes to one copy — this node when it
   holds one, else the nearest zone's, passing over a node that does not answer, and asking the other
   copies when this node holds nothing for the key. A table create or delete goes to *every* node,
   because a record can only be written where its table is; a scan is asked of **one zone** — this

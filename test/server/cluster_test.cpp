@@ -143,6 +143,15 @@ namespace
 		{
 			return ::cluster::forward(curl, node, request);
 		}
+
+		// The real fan out over real sockets, so that a write reaching every copy at once is
+		// exercised here rather than only in production.
+		std::optional<router::response> send_all(
+			const std::vector<std::string> &node_list,
+			const router::request &request) const override
+		{
+			return ::cluster::refusal(::cluster::forward_all(curl, node_list, request));
+		}
 	};
 
 	struct answer

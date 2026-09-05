@@ -318,6 +318,13 @@ router::response cluster::etcd_cluster::send(const std::string &node, const rout
 	return forward(http_client, node, request);
 }
 
+std::optional<router::response> cluster::etcd_cluster::send_all(
+	const std::vector<std::string> &node_list,
+	const router::request &request) const
+{
+	return refusal(forward_all(http_client, node_list, request));
+}
+
 void cluster::etcd_cluster::run()
 {
 	std::unique_lock<std::mutex> lock(wait_mutex);

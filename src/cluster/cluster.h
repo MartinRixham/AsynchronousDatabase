@@ -92,7 +92,27 @@ namespace cluster
 		// Sends the request to the node named and returns its answer as this node's own. The node
 		// serves it where it stands rather than forwarding it again.
 		virtual router::response send(const std::string &node, const router::request &request) const = 0;
+
+		// Sends the request to every node named and answers with the first of them to refuse it,
+		// in the order they were named — or nothing at all when every one of them took it.
+		//
+		// A cluster that can ask them at once asks them at once. A write is not done until every
+		// copy has taken it, and asking them one after another holds the thread serving the write
+		// for a round trip each: a node has as many threads as it has cores, and every one of
+		// them waiting on another node is a node that cannot answer at all — its health check
+		// included, which is what has it replaced by an instance holding none of its data.
+		//
+		// Asking them at once means asking every one of them even though an earlier one refused.
+		// That is a request that need not have been sent rather than a wrong answer: writing a
+		// record twice is writing it once, and the client is told to run the whole write again.
+		virtual std::optional<router::response> send_all(
+			const std::vector<std::string> &node_list,
+			const router::request &request) const;
 	};
+
+	// The answer of the first node to refuse, in the order the nodes were asked rather than the
+	// order they answered in, so that a fan out answers alike whether it ran at once or in turn.
+	std::optional<router::response> refusal(const std::vector<router::response> &answers);
 }
 
 #endif
