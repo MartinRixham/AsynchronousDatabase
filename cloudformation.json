@@ -335,7 +335,7 @@
         "DesiredCapacity": 6,
         "MinSize": "1",
         "MaxSize": "7",
-        "HealthCheckType": "ELB",
+        "HealthCheckType": "EC2",
         "HealthCheckGracePeriod": 200,
         "TargetGroupARNs":[{ "Ref":"ALBTargetGroup" } ]
       }

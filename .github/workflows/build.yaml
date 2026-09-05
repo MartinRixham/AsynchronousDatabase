@@ -4,6 +4,10 @@ on:
   push:
     branches: [ main, master ]
 
+concurrency:
+  group: build-and-push
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -120,8 +124,6 @@ jobs:
         npm install
         npx playwright install --with-deps chromium
 
-    # The UI in a real browser, against the same stack the collection just ran against. It drops
-    # the tables it finds before each journey, so it runs after the collection and not before it.
     - name: Run the browser tests
       working-directory: automation
       run: ASYNCDB_URL=$URL npm test
@@ -134,10 +136,6 @@ jobs:
         path: automation/playwright-report/
         retention-days: 7
 
-    # The load harness against the same stack, over the load balancer. It is a test and not only a
-    # measurement: a request the cluster answers with anything but a 2xx, or does not answer at all,
-    # exits non-zero and fails the build. It runs last because it writes a table of its own and
-    # leaves it behind, which the browser tests, dropping every table they find, would not survive.
     - name: Run the load tests
       env:
         THREADS: '8'
