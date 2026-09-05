@@ -35,13 +35,14 @@ sudo yum -y update
 sudo yum -y install unzip
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
-./aws/install
+./aws/install --update
 REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com
 VERSION=0.0.3          # { "Ref": "Version" }, resolved from SSM at deploy time
 IMAGE=$REGISTRY_URL/asyncdb:$VERSION
 aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL
 docker pull $IMAGE
-PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 ASYNCDB_ETCD=http://10.0.0.10:2379,http://10.0.1.10:2379,http://10.0.2.10:2379
 docker run -d -p 80:80 -p 8080:8080 \
   -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
@@ -50,8 +51,16 @@ docker run -d -p 80:80 -p 8080:8080 \
 ```
 
 Docker is already there — that is what the AMI is for. The AWS CLI is installed
-because the version on Amazon Linux 2 is v1, and `get-login-password` is a v2
-command; installing v2 over it is the shortest way to a working `docker login`.
+because `get-login-password` is a v2 command and there is no guarantee of a v2 on
+the image: the Amazon Linux 2 the template used to run had v1, and Amazon Linux
+2023 ships v2 but not on every variant. `--update` is what makes the install
+idempotent over whichever of the two is already there, rather than exiting on the
+one it finds.
+
+The private address is read over **IMDSv2**. Amazon Linux 2023 AMIs are
+registered as IMDSv2-only, so the token `PUT` is not belt and braces — the
+unauthenticated `GET` the Amazon Linux 2 script used answers `401` on this image,
+and `ASYNCDB_NODE` would be `http://:8080`.
 
 The registry account and the region are literals; the version is not. That line
 is the template's `Version` parameter — an
@@ -114,7 +123,7 @@ gp3 is slightly cheaper than the gp2 it replaces. Declaring the mapping also
 means the number is the template's rather than the AMI's, so a new ECS AMI cannot
 change it underneath the stack.
 
-`/dev/xvda` is the root device of the Amazon Linux 2 AMI, so this is the volume
+`/dev/xvda` is the root device of the AMI, so this is the volume
 the whole instance runs on and not a second one: the OS, docker's image store,
 the logs and the database all share it. That is a thing to know rather than a
 thing this fixes — [nothing here is

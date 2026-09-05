@@ -8,7 +8,7 @@
     },
     "ECSAMI": {
       "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
-      "Default": "/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id"
+      "Default": "/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id"
     },
     "Version": {
       "Type": "AWS::SSM::Parameter::Value<String>",
@@ -259,13 +259,14 @@
                   "sudo yum -y install unzip",
                   "curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\"",
                   "unzip awscliv2.zip",
-                  "./aws/install",
+                  "./aws/install --update",
                   "REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com",
                   { "Fn::Join": [ "", [ "VERSION=", { "Ref": "Version" } ] ] },
                   "IMAGE=$REGISTRY_URL/asyncdb:$VERSION",
                   "aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL",
                   "docker pull $IMAGE",
-                  "PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)",
+                  "TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H \"X-aws-ec2-metadata-token-ttl-seconds: 60\")",
+                  "PRIVATE_IP=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/local-ipv4)",
                   { "Fn::Join": [ "", [ "ASYNCDB_ETCD=", { "Fn::FindInMap": [ "Etcd", "Cluster", "ClientEndpoints" ] } ] ] },
                   "docker run -d -p 80:80 -p 8080:8080 \\",
                   "  -e ASYNCDB_ETCD=$ASYNCDB_ETCD \\",
