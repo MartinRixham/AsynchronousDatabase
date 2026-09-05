@@ -46,12 +46,20 @@ TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-met
 PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
 ASYNCDB_ETCD=http://10.0.0.10:2379,http://10.0.1.10:2379,http://10.0.2.10:2379
-docker run -d -p 80:80 -p 8080:8080 \
+mkdir -p /var/lib/asyncdb
+docker run -d --restart always -p 80:80 -p 8080:8080 \
+  -v /var/lib/asyncdb:/var/lib/asyncdb \
   -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
   -e ASYNCDB_NODE=http://$PRIVATE_IP:8080 \
   -e ASYNCDB_ZONE=$ZONE \
   $IMAGE
 ```
+
+The store is bound from the host rather than left in the container's own
+filesystem, and `--restart always` is what makes that worth doing: a container
+that is restarted opens what the one before it wrote instead of coming back as an
+empty node. It is still the [root volume](#the-root-volume), so it goes when the
+instance does.
 
 Docker is already there — that is what the AMI is for. The AWS CLI is installed
 because `get-login-password` is a v2 command and there is no guarantee of a v2 on

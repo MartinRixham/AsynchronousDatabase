@@ -26,6 +26,19 @@ namespace server
 	// instances in one process — which is two servers in one test — are two directories.
 	std::string data_directory();
 
+	// How many threads serve requests, from ASYNCDB_THREADS. **These threads are not sized by
+	// cores**, because what they spend their lives doing is waiting on another node rather than
+	// working on this one: a request forwarded to the node that owns its key, or a write ordered
+	// by the leader of its partition, holds the thread it arrived on until the answer comes back.
+	// A pool the size of `hardware_concurrency()` is two threads on a two core instance, and two
+	// requests waiting on a neighbour are then the whole server — health check included.
+	//
+	// So the default is sized for requests in flight instead — eight threads a core, between
+	// sixteen and a hundred and twenty-eight, the floor being for a machine that reports no cores
+	// at all. Each thread keeps its own curl handles, so this is also how many connections a node
+	// holds open to each of its neighbours, which is what the ceiling is for.
+	int thread_pool_size();
+
 	class session;
 
 	class server : public std::enable_shared_from_this<server>
@@ -60,7 +73,7 @@ namespace server
 	public:
 		explicit server(
 			boost::asio::ip::port_type port,
-			int thread_count = std::thread::hardware_concurrency(),
+			int thread_count = thread_pool_size(),
 			const std::string &directory = data_directory());
 
 		// The cluster a test names itself, rather than the one etcd names. Nothing is registered

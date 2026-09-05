@@ -193,8 +193,14 @@ Request flow, one layer per directory under `src/`:
 
 and, off the router, `cluster::cluster` → `http::client` → the other nodes and etcd.
 
-- **`server::server`** owns the `io_context`, the acceptor and a thread pool sized to
-  `hardware_concurrency()`. It also owns the single `rocksdb_repository` and `router`, which are shared
+- **`server::server`** owns the `io_context`, the acceptor and a thread pool sized by
+  `server::thread_pool_size()` — `ASYNCDB_THREADS`, defaulting to eight threads a core, bounded to
+  between sixteen and a hundred and twenty-eight. **It is deliberately not `hardware_concurrency()`**: a thread here waits on
+  another node for most of a forwarded request, so the pool is a count of requests that can be in
+  flight rather than of cores, and two threads on a two core instance is a server that two waiting
+  requests fill — health check included, which is what has the instance replaced. Each thread keeps
+  its own curl handles, so the pool is also how many connections a node holds to each neighbour.
+  It also owns the single `rocksdb_repository` and `router`, which are shared
   by reference across all sessions — anything reached from the router must be safe for concurrent use.
   Constructing with port `0` picks a free port and exposes it via `port()`; tests rely on this.
 - **`server::session`** is one connection: async read → `handle_request()` → async write, looping while

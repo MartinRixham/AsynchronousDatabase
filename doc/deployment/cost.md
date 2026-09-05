@@ -522,8 +522,9 @@ broken database rather than an expensive one.
 Since the fixed cost falls per request as the stack gets busier, the cost per
 request is really a question about capacity, and the capacity is six
 `t3.micro`s: two vCPUs and a gigabyte of memory each, with a
-[thread pool sized to `hardware_concurrency()`](/deployment/database#the-launch-template)
-and therefore two threads. A 16 MiB value is read whole into memory to be
+[thread pool sized for requests waiting on other nodes](/deployment/database#the-launch-template)
+rather than for cores — eight threads a core, so sixteen of them — because a
+thread serving a forwarded request spends it waiting. A 16 MiB value is read whole into memory to be
 served, so concurrent large reads are bounded by that gigabyte long before they
 are bounded by anything else.
 

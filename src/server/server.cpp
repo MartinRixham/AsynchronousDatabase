@@ -1,14 +1,35 @@
 #include <algorithm>
 #include <memory>
+#include <thread>
 #include <vector>
 #include <utility>
 
 #include <stdlib.h>
 
+#include <boost/lexical_cast/try_lexical_convert.hpp>
+
 #include "error.h"
 #include "log.h"
 #include "server.h"
 #include "session.h"
+
+namespace
+{
+	// A thread waiting on a neighbour is doing no work on this node, so the pool is a count of
+	// requests that can be in flight rather than a count of cores. Eight of them per core is
+	// enough for a node fronting a write while it leads another, with room for the health check
+	// the load balancer replaces the instance over.
+	constexpr int threads_per_core = 8;
+
+	// hardware_concurrency() is allowed to answer nothing, and a pool of nothing serves nothing.
+	constexpr int fewest_threads = 16;
+
+	// Eight a core is a multiplier rather than a plan, and on a machine with a great many of them
+	// it is more threads than a node has anything to do with — and, because each of them keeps its
+	// own curl handles, more connections to every neighbour than a neighbour wants. A node that
+	// really needs more is told so with ASYNCDB_THREADS.
+	constexpr int most_threads = 128;
+}
 
 std::string server::data_directory()
 {
@@ -19,6 +40,25 @@ std::string server::data_directory()
 	// empty one. A node holding nothing still answers for the keys it owns, and what it answers
 	// is that they are not there.
 	return configured == NULL || *configured == '\0' ? "/var/lib/asyncdb" : configured;
+}
+
+int server::thread_pool_size()
+{
+	const char *configured = getenv("ASYNCDB_THREADS");
+	int threads = 0;
+
+	// Something that is not a number, or is not a count of threads, is nothing configured.
+	if (configured != NULL &&
+		boost::conversion::try_lexical_convert(std::string(configured), threads) &&
+		threads > 0)
+	{
+		return threads;
+	}
+
+	return std::clamp(
+		static_cast<int>(std::thread::hardware_concurrency()) * threads_per_core,
+		fewest_threads,
+		most_threads);
 }
 
 server::server::server(

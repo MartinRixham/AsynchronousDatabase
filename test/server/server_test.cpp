@@ -313,3 +313,58 @@ TEST_F(server_test, two_get_requests)
 	EXPECT_EQ(http_code, 200);
 	EXPECT_EQ(response, "{\"tables\":[]}");
 }
+
+// The pool is a count of requests that can be waiting on another node rather than a count of
+// cores: a forwarded request holds the thread it arrived on until the answer comes back, so a
+// pool the size of a small instance's cores is a server two waiting requests can fill.
+TEST(server_threads_test, size_the_pool_for_waiting_rather_than_for_cores)
+{
+	unsetenv("ASYNCDB_THREADS");
+
+	EXPECT_GE(server::thread_pool_size(), 16);
+	EXPECT_LE(server::thread_pool_size(), 128);
+	EXPECT_GT(server::thread_pool_size(), static_cast<int>(std::thread::hardware_concurrency()));
+}
+
+TEST(server_threads_test, take_the_size_of_the_pool_from_the_environment)
+{
+	setenv("ASYNCDB_THREADS", "5", 1);
+
+	EXPECT_EQ(server::thread_pool_size(), 5);
+
+	// Something that is not a count of threads is nothing configured, and a server that serves on
+	// no threads at all is what this is not allowed to answer.
+	setenv("ASYNCDB_THREADS", "not a number", 1);
+
+	EXPECT_GE(server::thread_pool_size(), 16);
+
+	setenv("ASYNCDB_THREADS", "0", 1);
+
+	EXPECT_GE(server::thread_pool_size(), 16);
+
+	setenv("ASYNCDB_THREADS", "-4", 1);
+
+	EXPECT_GE(server::thread_pool_size(), 16);
+
+	unsetenv("ASYNCDB_THREADS");
+}
+
+// The store is one directory an instance opens and opens again, and where it is is configurable
+// so that a test and a container do not have to agree about it.
+TEST(server_threads_test, take_the_directory_of_the_store_from_the_environment)
+{
+	setenv("ASYNCDB_DATA", "/tmp/asyncdb_configured", 1);
+
+	EXPECT_EQ(server::data_directory(), "/tmp/asyncdb_configured");
+
+	// Nothing configured is the directory the image mounts a volume over.
+	unsetenv("ASYNCDB_DATA");
+
+	EXPECT_EQ(server::data_directory(), "/var/lib/asyncdb");
+
+	setenv("ASYNCDB_DATA", "", 1);
+
+	EXPECT_EQ(server::data_directory(), "/var/lib/asyncdb");
+
+	unsetenv("ASYNCDB_DATA");
+}
