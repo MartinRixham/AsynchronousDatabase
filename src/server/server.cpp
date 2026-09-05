@@ -105,6 +105,21 @@ server::server::server(
 		throw std::runtime_error(ERROR("Error binding to socket: " + error.message()));
 	}
 
+	// Binding is what settles the port, so a server constructed on port 0 can be asked which one
+	// it took before it is serving. Listening is what makes the kernel take connections, and it
+	// is held back until serve() has filled the store: a bound socket that is not listening
+	// refuses at once, where a listening one that nothing is accepting on takes the connection
+	// and answers nothing — which is a health check and a neighbour waiting out their timeouts
+	// rather than being told to go elsewhere.
+	port_number = acceptor.local_endpoint().port();
+
+	DEBUG("Server bound to port: " + std::to_string(port_number) + ".");
+}
+
+void server::server::listen()
+{
+	boost::beast::error_code error;
+
 	acceptor.listen(boost::asio::socket_base::max_listen_connections, error);
 
 	if (error)
@@ -112,31 +127,52 @@ server::server::server(
 		throw std::runtime_error(ERROR("Error listening on socket: " + error.message()));
 	}
 
-	port_number = acceptor.local_endpoint().port();
-
-	DEBUG("Server started on port: " + std::to_string(port_number) + ".");
+	DEBUG("Server listening on port: " + std::to_string(port_number) + ".");
 }
 
 void server::server::serve()
 {
 	// A node that came back empty is filled from a zone that still holds its records, and it is
-	// filled *before* it registers. A node that is not in the membership is nobody's copy, so this
-	// costs no read and holds up no write however long it takes; registering first would make every
-	// write to this node's partitions wait for it, because every copy has to take a write.
+	// filled *before* it registers. A node that is not registered is nobody's copy, so this costs
+	// no read and holds up no write; registering first would make every write to this node's
+	// partitions wait for it, because every copy has to take a write.
 	//
-	// The membership it reads is one it read from etcd itself, and only that: a node that has not
-	// registered is not in it, so a cluster starting together has nothing to rebuild from and
-	// nobody waits for anybody. A membership handed in rather than discovered says nothing about
-	// which of its nodes are listening yet, and waiting on one that is not is how two nodes coming
-	// up together would each hold the other's start-up open.
+	// What keeps a cluster starting together from waiting on itself is that a node reads its
+	// membership out of etcd, and a node that has not registered is not written there yet — so the
+	// nodes a rebuild does find are ones that finished their own and are serving. It is not that
+	// the membership excludes this node: read_members() puts it back whatever etcd says, which is
+	// what makes "will I own this key?" answerable before joining. A membership handed in rather
+	// than discovered is not one to act on at all, because nothing in it says which of its nodes
+	// are listening yet.
+	//
+	// The rebuild is best effort, and nothing it does is worth dying over: a store that refuses a
+	// write, or a neighbour that answers something unreadable, would otherwise take the process
+	// down before it ever registered — and, restarted, take it down again in the same place. A
+	// node that starts thin is a copy the cluster has; one that never starts is a copy it waits
+	// for and never gets.
 	if (own_nodes.discover())
 	{
-		rebuild::rebuild(repository, nodes);
+		try
+		{
+			rebuild::rebuild(repository, nodes);
+		}
+		catch (const std::exception &caught)
+		{
+			DEBUG(std::string("The rebuild did not finish: ") + caught.what());
+		}
+		catch (...)
+		{
+			DEBUG("The rebuild did not finish.");
+		}
 	}
 
 	// Joining is what makes this instance one of several, and it is nothing at all when no etcd
 	// is configured, which is how a single instance keeps the whole keyspace to itself.
 	own_nodes.start();
+
+	// The store is filled and the node has joined, so the port is opened to the connections that
+	// were being refused while it was not ready to answer them.
+	listen();
 
 	accept();
 

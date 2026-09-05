@@ -13,6 +13,19 @@ namespace rebuild
 	// both ends, and a value may be sixteen megabytes.
 	constexpr size_t default_page = 100;
 
+	// How long a rebuild is given before it gives up and lets the node start on what it has.
+	//
+	// The node is not in the membership while this runs, so a rebuild that never ends is a node
+	// that never registers — a copy the cluster is waiting for and never gets, and one that
+	// answers no health check while it waits. Every round trip inside is bounded already; this is
+	// the bound on all of them together, for the arithmetic that says four timeouts is two minutes
+	// being wrong about how many there are.
+	//
+	// A node that gives up part way is thin rather than empty, and it will not try again — an
+	// empty store is the only trigger. That is the trade, and it is the right way round: thin and
+	// serving is a copy the cluster has, where absent is one it does not.
+	constexpr long default_seconds = 300;
+
 	// Fills a store that holds nothing from a zone that still holds its records, and answers how
 	// many records were written.
 	//
@@ -29,7 +42,11 @@ namespace rebuild
 	// A node that holds anything at all rebuilds nothing. Only a store with no tables in it is one
 	// that was lost rather than kept, and reading a whole zone on every ordinary restart would cost
 	// the keyspace to learn that nothing is missing.
-	size_t rebuild(repository::repository &repository, const cluster::cluster &nodes, size_t page = default_page);
+	size_t rebuild(
+		repository::repository &repository,
+		const cluster::cluster &nodes,
+		size_t page = default_page,
+		long seconds = default_seconds);
 }
 
 #endif

@@ -13,6 +13,7 @@
 #include "cluster/partition.h"
 #include "http/http_client.h"
 #include "server/server.h"
+#include "listening.h"
 
 namespace
 {
@@ -197,6 +198,12 @@ protected:
 
 		first_thread = std::thread([server = first]() { server->serve(); });
 		second_thread = std::thread([server = second]() { server->serve(); });
+
+		// The ports are opened by serve() and not by the constructors, so they are waited for
+		// rather than assumed — and each server forwards to the other, so both have to be there
+		// before either is asked for anything.
+		server::wait_until_listening(first->port());
+		server::wait_until_listening(second->port());
 	}
 
 	void TearDown()

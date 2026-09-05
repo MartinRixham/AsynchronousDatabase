@@ -102,6 +102,12 @@ namespace server
 			cluster::cluster *external,
 			const std::string &directory);
 
+		// Opening the port to connections, which is done once the store is filled and the node has
+		// joined rather than when the socket is bound: a bound socket that is not listening yet
+		// refuses at once, and being refused is what sends a health check or a neighbour somewhere
+		// else instead of holding it until its timeout.
+		void listen();
+
 		void accept();
 	};
 }

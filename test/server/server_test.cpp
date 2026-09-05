@@ -8,6 +8,7 @@
 #include <boost/json.hpp>
 
 #include "server/server.h"
+#include "listening.h"
 
 size_t writer(void *ptr, size_t size, size_t nmemb, std::string *stream)
 {
@@ -46,6 +47,10 @@ protected:
 		port = database_server->port();
 
 		thread = std::thread([server = database_server]() { server->serve(); });
+
+		// The port is opened by serve() and not by the constructor, so it is waited for rather
+		// than assumed.
+		server::wait_until_listening(port);
 	}
 
 	// A detached thread would serve for ever, and the server it holds, its threads and its

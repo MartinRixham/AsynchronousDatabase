@@ -271,3 +271,20 @@ TEST(rebuild_test, resumes_from_a_key_that_has_to_be_encoded)
 	ASSERT_EQ(3u, sent.size());
 	EXPECT_NE(std::string::npos, sent[2].second.query.find("from=" + url::encode("a b/c")));
 }
+
+// A node is out of the membership until its rebuild is done, so a rebuild that does not end is a
+// copy the cluster waits for and never gets. The bound is on all of the round trips together,
+// because each of them is bounded already and it is how many there are that is not.
+TEST(rebuild_test, gives_up_when_it_runs_out_of_time)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes(self, two_zones());
+
+	nodes.answer_in_turn(peer, { tables({ "account" }), page({ "a", "b" }, false) });
+
+	EXPECT_EQ(0u, rebuild::rebuild(repository, nodes, rebuild::default_page, 0));
+
+	// Nothing was asked of the zone, rather than asked and thrown away.
+	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_FALSE(repository.has_table("account"));
+}

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,15 @@ namespace
 		return request;
 	}
 
+	// Every round trip a rebuild makes is bounded by the client that makes it, and a rebuild is
+	// bounded by the clock instead: it is the whole of them together that holds a node out of the
+	// membership, and how many of them there are is a count of tables, pages and nodes rather than
+	// anything decided here.
+	bool out_of_time(const std::chrono::steady_clock::time_point &deadline)
+	{
+		return std::chrono::steady_clock::now() >= deadline;
+	}
+
 	router::request table_request()
 	{
 		router::request request;
@@ -57,10 +67,16 @@ namespace
 	bool read_tables(
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
+		const std::chrono::steady_clock::time_point &deadline,
 		std::vector<table::table> *tables)
 	{
 		for (size_t i = 0; i < zone.size(); i++)
 		{
+			if (out_of_time(deadline))
+			{
+				return false;
+			}
+
 			router::response answer = nodes.send(zone[i], table_request());
 
 			if (answer.status != boost::beast::http::status::ok ||
@@ -98,6 +114,7 @@ namespace
 		const std::string &node,
 		const std::string &name,
 		size_t page,
+		const std::chrono::steady_clock::time_point &deadline,
 		size_t *restored)
 	{
 		std::string from;
@@ -105,6 +122,16 @@ namespace
 
 		while (true)
 		{
+			// The page boundary is where a rebuild is given up, because it is the only place it
+			// can be: what is written already is this node's own, and the page not asked for is
+			// the only thing lost by stopping here.
+			if (out_of_time(deadline))
+			{
+				DEBUG("A scan of \"" + name + "\" on " + node + " ran out of time for a rebuild.");
+
+				return false;
+			}
+
 			router::response answer = nodes.send(node, scan_request(name, from, has_from, page));
 
 			if (answer.status != boost::beast::http::status::ok ||
@@ -183,11 +210,12 @@ namespace
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
 		size_t page,
+		const std::chrono::steady_clock::time_point &deadline,
 		size_t *restored)
 	{
 		std::vector<table::table> tables;
 
-		if (!read_tables(nodes, zone, &tables))
+		if (!read_tables(nodes, zone, deadline, &tables))
 		{
 			return false;
 		}
@@ -211,7 +239,7 @@ namespace
 				zone.end(),
 				[&](const std::string &node)
 				{
-					return copy_table(repository, nodes, node, name, page, restored);
+					return copy_table(repository, nodes, node, name, page, deadline, restored);
 				});
 
 			if (!whole)
@@ -224,7 +252,11 @@ namespace
 	}
 }
 
-size_t rebuild::rebuild(repository::repository &repository, const cluster::cluster &nodes, size_t page)
+size_t rebuild::rebuild(
+	repository::repository &repository,
+	const cluster::cluster &nodes,
+	size_t page,
+	long seconds)
 {
 	// A node holding anything at all is a node that kept its store, and reading a whole zone to
 	// learn that would cost the keyspace on every restart.
@@ -242,6 +274,9 @@ size_t rebuild::rebuild(repository::repository &repository, const cluster::clust
 		return 0;
 	}
 
+	std::chrono::steady_clock::time_point deadline =
+		std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+
 	for (size_t i = 1; i < zones.size(); i++)
 	{
 		if (zones[i].empty())
@@ -249,9 +284,16 @@ size_t rebuild::rebuild(repository::repository &repository, const cluster::clust
 			continue;
 		}
 
+		if (out_of_time(deadline))
+		{
+			DEBUG("A rebuild ran out of time, so this node starts with what it has.");
+
+			return 0;
+		}
+
 		size_t restored = 0;
 
-		if (from_zone(repository, nodes, zones[i], page, &restored))
+		if (from_zone(repository, nodes, zones[i], page, deadline, &restored))
 		{
 			DEBUG("Rebuilt " + std::to_string(restored) + " records before joining.");
 

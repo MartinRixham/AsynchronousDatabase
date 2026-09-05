@@ -35,17 +35,31 @@ registering would see a membership of one, decide it owned every key, and answer
 `404` for all of them — [the cluster-of-one failure](/runbook/membership#etcd-cannot-be-reached)
 on purpose. Failing the health check while it works is the correct answer.
 
+The socket is *bound* from the start, because binding is what settles the port,
+but it does not **listen** until the rebuild is done. That distinction is the
+whole of it: a bound socket that is not listening refuses a connection at once,
+where a listening one that nothing is accepting on takes the connection and then
+answers nothing — so a health check or a neighbour would wait out its own
+timeout rather than being told to go somewhere else.
+
 ### Why a cluster starting together does not wait for itself
 
 A node blocking its own start-up on its neighbours answering is a cluster that
 can deadlock: every node waiting for every other, and none of them listening yet.
-What stops it is that **the membership a rebuild reads is the one it read from
-etcd, and a node that has not registered is not in it.**
+What stops it is that **a node writes itself into etcd only once it is ready, so
+the neighbours a rebuild finds there are neighbours that have finished their
+own.**
 
-So a cluster coming up together sees no members, finds nothing to rebuild from,
-and starts. A single replaced node coming up beside neighbours that are already
-serving sees them, and they answer. The nodes a rebuild waits on are exactly the
-nodes that have already finished their own.
+It is worth being exact about what that does *not* say. The membership a rebuild
+reads is not one this node is absent from: `read_members()` puts this node back
+whatever etcd says, which is what makes "will I own this key?" answerable before
+joining. What is absent from it is every *other* node that has not registered
+yet — and that is the part the argument rests on.
+
+So a cluster coming up together finds fewer than two members, has no second zone
+to read, and starts. A single replaced node coming up beside neighbours that are
+already serving sees them, and they answer. The nodes a rebuild waits on are
+exactly the nodes that have already finished their own.
 
 A membership handed to the server rather than discovered — which is what a test
 does — is not one a rebuild acts on, for the same reason: nothing in it says
@@ -98,6 +112,19 @@ A zone with a node that does not answer is a zone that cannot give the whole of
 what it holds, so the **next zone is asked for the whole thing again** — the same
 fallback a scan already makes. If no zone answers, the node starts with what it
 has, which is what it would have had anyway.
+
+The whole of it is bounded by a clock as well, at five minutes. Every round trip
+inside has a timeout of its own, but how many of them there are is a count of
+tables, pages and nodes — so the arithmetic that says "four timeouts is two
+minutes" is only ever wrong in one direction. A rebuild that runs out of time
+stops where it is and the node starts thin, which is a copy the cluster has
+rather than one it is still waiting for. It will not try again: an empty store is
+the only trigger, and the store is no longer empty.
+
+Nothing the rebuild does is worth dying over either. A store that refuses a
+write, or a neighbour that answers something unreadable, is logged and the node
+starts — because a process that fell over here would fall over in the same place
+when it was restarted, and never register at all.
 
 Pages carry values, so they are asked in hundreds rather than in thousands: a
 value may be sixteen megabytes, and a page is built whole in memory at both ends.
