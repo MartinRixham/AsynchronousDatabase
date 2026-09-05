@@ -140,10 +140,12 @@ change it underneath the stack.
 the whole instance runs on and not a second one: the OS, docker's image store,
 the logs and the database all share it. That is a thing to know rather than a
 thing this fixes — [nothing here is
-durable](/deployment/#what-this-stack-does-not-do), the container mounts no
-volume, and RocksDB is writing into the overlay filesystem at `/tmp/asyncdb`.
-gp3 makes that storage predictable. It does not make it persistent, and it is
-not the instance-local NVMe a write-heavy store would want.
+durable](/deployment/#what-this-stack-does-not-do), and RocksDB is writing to
+`/var/lib/asyncdb`, which the container binds from the host rather than keeping
+in an overlay filesystem that goes when the container does. That is what a
+restarted container reopens; it is still the root volume, so it goes when the
+instance does. gp3 makes that storage predictable. It does not make it
+persistent, and it is not the instance-local NVMe a write-heavy store would want.
 
 ## The auto scaling group
 

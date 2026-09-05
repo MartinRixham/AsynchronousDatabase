@@ -293,11 +293,22 @@ drives it with libcurl. `test/server/cluster_test.cpp` is the same thing twice o
 on two ports, each given a `cluster::cluster` naming the other, so forwarding, table fan-out and
 merged scans are exercised over real sockets. Both have to stop the servers they start.
 
-**Gotcha:** the RocksDB directory is hardcoded to `/tmp/asyncdb` in `server::server`'s constructor, and
-each process opens a *randomly named* subdirectory of it, so data does not survive a restart and stale
-directories accumulate. Tests `remove_all("/tmp/asyncdb/")` in `SetUp` — and because the directory is
-opened in the repository's constructor, `repository_test` holds its repositories in a `unique_ptr` so
-that the emptying happens first.
+**The store is one directory, named by `ASYNCDB_DATA`.** `server::data_directory()` reads it and
+defaults to `/var/lib/asyncdb`, which the image mounts a volume over — a named one per node in
+`docker-compose.yml`, a bind of the host's own in `cloudformation.json` — so an instance that is
+started again opens what the one before it wrote. The repository opens the directory **as it stands**
+rather than something random underneath it.
+
+**Gotcha: RocksDB locks the directory it opens**, so two servers in one process are two directories —
+which is why the server constructors take one and `cluster_test` gives its two `/tmp/asyncdb/first`
+and `/tmp/asyncdb/second`. Tests pass `/tmp/asyncdb` rather than take the default, and
+`remove_all("/tmp/asyncdb/")` in `SetUp` — and because the directory is opened in the repository's
+constructor, `repository_test` holds its repositories in a `unique_ptr` so that the emptying happens
+first.
+
+A volume survives a container, and **an instance being replaced is still an empty database**: the
+root volume goes with the instance, and a node that comes back holding nothing answers
+`table_not_found` for the keys it owns until the tables are declared again.
 
 ## UI architecture
 

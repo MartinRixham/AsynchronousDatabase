@@ -90,6 +90,22 @@ TEST_F(repository_test, two_instances_do_not_share_a_keyspace)
 	EXPECT_NE(repository->instance(), other_repository->instance());
 }
 
+// The point of the store being the directory it was given rather than something random named
+// underneath it: an instance that is started again opens what the instance before it wrote, and
+// not an empty store beside it.
+TEST_F(repository_test, a_store_is_read_back_by_the_instance_started_after_it)
+{
+	create_table("a_table");
+	repository->write_record("a_table", record::valid_record("a key", "a value"));
+
+	// Closed and opened again, which is a container that was restarted or a host that rebooted.
+	repository = nullptr;
+	repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
+
+	EXPECT_TRUE(repository->has_table("a_table"));
+	EXPECT_EQ(repository->read_record("a_table", "a key"), "a value");
+}
+
 TEST_F(repository_test, read_table)
 {
 	create_table("a_table");

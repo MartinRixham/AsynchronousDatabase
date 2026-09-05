@@ -189,14 +189,17 @@ and let each come back before the next goes.
 
 It is a small template, and it is worth being plain about where it stops.
 
-- **There is nothing durable.** RocksDB lives in the container's filesystem, on
-  the [root volume](/deployment/database#the-root-volume) of an instance the auto
-  scaling group is free to replace. The volume is EBS and is declared by the
-  launch template, but `DeleteOnTermination` is true and nothing mounts it into
-  the container: no volume, no snapshot, no backup, and a replaced instance is an
-  empty database. What survives an instance is the
-  [copy each other zone holds](/database/cluster#one-copy-in-every-zone), and
-  nothing rebuilds the one that went with it; what survives the stack is
+- **There is nothing durable.** RocksDB lives at `/var/lib/asyncdb`, which the
+  container binds from the [root volume](/deployment/database#the-root-volume) of
+  an instance the auto scaling group is free to replace. Binding it is what makes
+  a *restarted container* open the store it wrote rather than an empty one, and
+  the container is run `--restart always` so that a crash is a restart. The volume
+  is EBS and declared by the launch template, but `DeleteOnTermination` is true:
+  no snapshot, no backup, and **a replaced instance is still an empty database**,
+  which answers [`table_not_found`](/database/cluster#what-this-does-not-do) for
+  the keys it owns until the tables are declared again. What survives an instance
+  is the [copy each other zone holds](/database/cluster#one-copy-in-every-zone),
+  and nothing rebuilds the one that went with it; what survives the stack is
   nothing.
 - **The stack cannot be deployed twice in one region.** `ClusterALB` is a fixed
   name, and so is the ECR repository the instances pull from. The

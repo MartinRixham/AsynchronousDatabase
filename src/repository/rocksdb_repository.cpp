@@ -45,12 +45,16 @@ repository::rocksdb_repository::rocksdb_repository(const std::string &directory)
 	rocksdb::Options options;
 	options.create_if_missing = true;
 
-	std::filesystem::path directory_path = std::filesystem::path(directory);
-	std::filesystem::create_directories(directory_path);
+	// The database *is* the directory it was given rather than something named underneath it, so
+	// an instance that is started again opens what the instance before it wrote. A directory
+	// nothing has written yet is made here; RocksDB fills it.
+	std::filesystem::path database_path = std::filesystem::path(directory);
+	std::filesystem::create_directories(database_path);
 
+	// What a scan cursor names is this repository and not this directory: a cursor is a position
+	// in an iteration, and an iteration belongs to the instance that started it.
 	instance_name = std::to_string(std::rand());
 
-	std::filesystem::path database_path = directory_path / instance_name;
 	std::vector<std::string> names;
 
 	rocksdb::DB::ListColumnFamilies(options, database_path.string(), &names);

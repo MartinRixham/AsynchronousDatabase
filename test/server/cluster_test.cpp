@@ -183,8 +183,9 @@ protected:
 	{
 		std::filesystem::remove_all("/tmp/asyncdb/");
 
-		first = std::make_shared<server::server>(0, 2, first_cluster);
-		second = std::make_shared<server::server>(0, 2, second_cluster);
+		// RocksDB locks the directory it opens, so two servers in one process are two stores.
+		first = std::make_shared<server::server>(0, 2, first_cluster, "/tmp/asyncdb/first");
+		second = std::make_shared<server::server>(0, 2, second_cluster, "/tmp/asyncdb/second");
 
 		std::vector<cluster::member> members {
 			cluster::member { node(first), "" },

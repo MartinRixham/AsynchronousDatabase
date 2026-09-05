@@ -26,7 +26,7 @@ protected:
 	{
 		std::filesystem::remove_all("/tmp/asyncdb/");
 
-		database_server = std::make_shared<server::server>(0, 2);
+		database_server = std::make_shared<server::server>(0, 2, "/tmp/asyncdb");
 		serving = true;
 		thread = std::thread([server = database_server]() { server->serve(); });
 	}

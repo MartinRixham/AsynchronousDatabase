@@ -29,6 +29,14 @@ COPY server/server.conf /etc/nginx/http.d/default.conf
 COPY --from=ui /ui/dist /usr/share/nginx/html
 COPY server/404.html server/50x.json /usr/share/nginx/html/
 COPY --from=builder /build/bin/asyncdb .
+
+# The store. A volume is mounted over it — docker-compose names one for each node, and the AWS
+# stack binds the host's /var/lib/asyncdb — so a container that is restarted opens what the one
+# before it wrote rather than starting empty. Nothing is mounted, and it is the container's own
+# filesystem, which goes when the container does.
+ENV ASYNCDB_DATA=/var/lib/asyncdb
+RUN mkdir -p /var/lib/asyncdb
+
 CMD nginx & ./asyncdb
 
 # 80 is nginx and the UI, and 8080 is the API, which is how the other nodes of a cluster reach

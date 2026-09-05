@@ -4,6 +4,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -17,6 +18,14 @@
 
 namespace server
 {
+	// Where the store is kept, from ASYNCDB_DATA: one directory, which an instance opens and
+	// opens again when it is started again, so a node that comes back holds what it wrote. Set
+	// nothing and it is the directory the image mounts a volume over.
+	//
+	// It is a directory of its own for each instance, because RocksDB locks the one it opens: two
+	// instances in one process — which is two servers in one test — are two directories.
+	std::string data_directory();
+
 	class session;
 
 	class server : public std::enable_shared_from_this<server>
@@ -51,14 +60,16 @@ namespace server
 	public:
 		explicit server(
 			boost::asio::ip::port_type port,
-			int thread_count = std::thread::hardware_concurrency());
+			int thread_count = std::thread::hardware_concurrency(),
+			const std::string &directory = data_directory());
 
 		// The cluster a test names itself, rather than the one etcd names. Nothing is registered
 		// and nothing is renewed: the membership is what it was given.
 		server(
 			boost::asio::ip::port_type port,
 			int thread_count,
-			cluster::cluster &nodes);
+			cluster::cluster &nodes,
+			const std::string &directory = data_directory());
 
 		void serve();
 
@@ -75,7 +86,8 @@ namespace server
 			boost::asio::ip::port_type port,
 			int thread_count,
 			const cluster::config &configuration,
-			cluster::cluster *external);
+			cluster::cluster *external,
+			const std::string &directory);
 
 		void accept();
 	};

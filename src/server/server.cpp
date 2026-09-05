@@ -3,23 +3,38 @@
 #include <vector>
 #include <utility>
 
+#include <stdlib.h>
+
 #include "error.h"
 #include "log.h"
 #include "server.h"
 #include "session.h"
 
+std::string server::data_directory()
+{
+	const char *configured = getenv("ASYNCDB_DATA");
+
+	// The image mounts a volume here, so an instance that is started again — a container that was
+	// restarted, or a host that rebooted — opens the store the one before it wrote rather than an
+	// empty one. A node holding nothing still answers for the keys it owns, and what it answers
+	// is that they are not there.
+	return configured == NULL || *configured == '\0' ? "/var/lib/asyncdb" : configured;
+}
+
 server::server::server(
 	boost::asio::ip::port_type port,
-	int threads):
-		server(port, threads, cluster::from_environment(), NULL)
+	int threads,
+	const std::string &directory):
+		server(port, threads, cluster::from_environment(), NULL, directory)
 {
 }
 
 server::server::server(
 	boost::asio::ip::port_type port,
 	int threads,
-	cluster::cluster &cluster_nodes):
-		server(port, threads, cluster::config(), &cluster_nodes)
+	cluster::cluster &cluster_nodes,
+	const std::string &directory):
+		server(port, threads, cluster::config(), &cluster_nodes, directory)
 {
 }
 
@@ -27,11 +42,12 @@ server::server::server(
 	boost::asio::ip::port_type port,
 	int threads,
 	const cluster::config &configuration,
-	cluster::cluster *external):
+	cluster::cluster *external,
+	const std::string &directory):
 		thread_count(threads),
 		io_context(thread_count),
 		acceptor(boost::asio::make_strand(io_context)),
-		repository(repository::rocksdb_repository("/tmp/asyncdb")),
+		repository(repository::rocksdb_repository(directory)),
 		own_nodes(cluster::etcd_cluster(configuration)),
 		nodes(external == NULL ? static_cast<cluster::cluster &>(own_nodes) : *external),
 		router(router::router(repository, nodes))
