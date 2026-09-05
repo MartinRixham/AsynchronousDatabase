@@ -10,7 +10,8 @@ export default defineConfig({
 			{ text: "Home", link: "/" },
 			{ text: "Database API", link: "/database/" },
 			{ text: "Deployment", link: "/deployment/" },
-			{ text: "Pipeline", link: "/pipeline/" }
+			{ text: "Pipeline", link: "/pipeline/" },
+			{ text: "Runbook", link: "/runbook/" }
 		],
 		sidebar: [
 			{
@@ -46,6 +47,17 @@ export default defineConfig({
 					{ text: "Overview", link: "/pipeline/" },
 					{ text: "The image build", link: "/pipeline/image" },
 					{ text: "The release gate", link: "/pipeline/release" }
+				]
+			},
+			{
+				text: "Runbook",
+				items: [
+					{ text: "When something is wrong", link: "/runbook/" },
+					{ text: "What a client sees", link: "/runbook/errors" },
+					{ text: "A node has failed", link: "/runbook/nodes" },
+					{ text: "Membership and leadership", link: "/runbook/membership" },
+					{ text: "The store", link: "/runbook/storage" },
+					{ text: "The deployment", link: "/runbook/deployment" }
 				]
 			}
 		],

@@ -1,0 +1,194 @@
+# What a client sees
+
+Every error the API gives carries the same body, and the `code` is what to
+branch on — not the message, which names nodes and RocksDB statuses and changes,
+and not the status, which several codes share:
+
+```json
+{
+  "error": {
+    "code": "no_leader",
+    "message": "No node is leading this key's partition yet."
+  }
+}
+```
+
+[The reference](/database/reference#errors) lists them all. This page is the
+same list read the other way round: what to *do* about each one.
+
+## Is it worth retrying?
+
+| Code | Status | Retry | Because |
+| --- | --- | --- | --- |
+| `no_leader` | 503 | **Yes, after a second** | An election is in flight and will settle |
+| `write_stalled` | 503 | **Yes, backing off** | Back pressure, not failure |
+| `stale_leader` | 409 | **Yes, at once** | The write went to a leader that had been replaced |
+| `storage_error` | 500 | **Yes, once** | A node did not answer; another may |
+| `table_not_found` | 404 | Only after declaring the table | A node may have come back empty |
+| `invalid_cursor` | 400 | No — restart the scan | The cursor belongs to another instance |
+| `table_exists` | 409 | No | The table is there with different options |
+| everything else 4xx | 400, 413 | No | The request is wrong and will stay wrong |
+| `unavailable` | 502, 504 | **Yes** | nginx's, not the server's — the database is not up yet |
+
+Every write in this API is idempotent — a key and a value, a key that is gone, a
+table with its options, a range that is deleted — so **running the whole request
+again is always safe**, and it is the documented remedy for every failure a
+write can be given.
+
+## `503 no_leader`
+
+Two different things say this, and the message tells them apart.
+
+> `No node is leading this key's partition yet.`
+
+Nothing has claimed the key's partition. Either the cluster is cold and has not
+finished claiming all 256 partitions, or the leader's node went away and its
+lease has not run out yet. **Wait a second or two and write again.** Reads are
+unaffected throughout — they never wait for a leader.
+
+> `This node does not lead this key's partition.`
+
+A write arrived forwarded at a node that does not lead the partition, which is
+two nodes disagreeing about who leads it. It is refused rather than passed on
+again, so that a disagreement cannot bounce a write between nodes for ever.
+This settles as the membership does. If it persists, the nodes disagree about
+the membership itself — see
+[the membership is wrong](/runbook/membership#the-membership-is-wrong).
+
+Neither is data loss, and neither needs a hand. What makes them last longer than
+a few seconds is etcd being unreachable, because nothing new is elected then:
+[etcd cannot be reached](/runbook/membership#etcd-cannot-be-reached).
+
+## `409 stale_leader`
+
+> `This key is led in a later term than the one that ordered this write.`
+
+A copy was sent a write ordered in an older term than one it has already
+applied — a leader that lost its lease, but not its network, writing behind the
+leader that replaced it. The fencing worked: the older leader's write was
+refused, which is the point of it.
+
+**Run the write again.** It goes to the current leader and is ordered in the
+current term. Seeing this steadily rather than once around a node's departure
+means leadership is moving constantly, which is a node that keeps failing to
+renew its lease — [membership](/runbook/membership#leadership-keeps-moving).
+
+## `503 write_stalled`
+
+RocksDB is stopping or delaying writers on the node that took the write, because
+memtables or level zero have backed up. It is back pressure and not failure,
+which is why it is told apart from an error at all.
+
+**Back off and retry.** Writing harder makes it worse. `write_stalled` in
+`/health` says which node is doing it, and
+[the store](/runbook/storage#writes-are-stalled) says what to look at.
+
+## `500 storage_error`
+
+One code, two very different causes, and the message is what separates them.
+
+> `Node "http://asyncdb-2:8080" did not answer: ...`
+>
+> `Node "http://asyncdb-2:8080" answered with something that is not a document.`
+>
+> `No node holding this key answered.`
+
+A node in the cluster is unreachable or answering nonsense. Nothing is wrong
+with the store — go to [a node does not answer](/runbook/nodes#a-node-does-not-answer).
+
+> `Writing record "..." failed: Corruption: ...`
+>
+> `Creating table "..." failed: IO error: ...`
+
+RocksDB itself refused, and the status it returned is in the message. Go to
+[RocksDB returned an error](/runbook/storage#rocksdb-returned-an-error).
+
+There is also a catch-all, which is any other exception escaping the router:
+
+> `Failed to respond due to error: ...`
+
+That is a bug rather than an operational condition. Capture the message and the
+request that produced it.
+
+## `404 table_not_found`
+
+The node that answered has no such table. In a cluster that is one of two
+things:
+
+- **The table was never created on this node**, because the node joined after
+  the table was declared. Tables are created on every node that is a member at
+  the time, and nothing back-fills one that joins later.
+- **The node came back empty**, which is an instance that was replaced.
+
+Both have the same remedy, and it is the one the API is designed around:
+**declare the tables again.** `PUT /table/{table}` is idempotent — the same
+options are a `200` — so a service that declares the tables it needs at every
+start-up repairs this by starting.
+
+```bash
+curl -sX PUT http://localhost:8080/asyncdb/table/account \
+  -H 'Content-Type: application/json' -d '{"dependencies":[]}'
+```
+
+The records are a different matter: see
+[a node came back empty](/runbook/storage#a-node-came-back-empty).
+
+## A record that should be there is not
+
+A read is answered by **one** copy, and what a copy that answered says is the
+answer — a `404` included. That is sound when every zone was written, which is
+what a successful write means. It is not sound when a write **failed** and the
+client did not run it again: the copies that took it kept it, the copy that
+refused did not, and a read may be answered by either.
+
+So a record that comes and goes between reads is a write that was reported as
+failed and never retried. **Write it again**, which is the only thing that puts
+the copy back — there is no read repair here.
+
+One case is handled: a key this node holds *nothing* for is asked of the other
+copies before it is answered as missing, so a node that was replaced does not
+answer `404` for records the other zones still have. It costs a hop on a genuine
+miss, and it is worth it.
+
+If a whole table's worth of records is missing, check the table was not dropped:
+dropping a table drops its column family, and the data goes with it, on every
+node.
+
+## `400 invalid_cursor` part way through a scan
+
+> A cursor names the instance that issued it.
+
+The page was asked of a different instance from the one that started the scan —
+which, behind a load balancer, is what happens by default, because nothing makes
+the second request land on the node that answered the first.
+
+**Page a scan against the node that started it**, or use `from` and `to`
+instead, which any node will take. A cursor also stops being valid when the
+instance that issued it restarts, because the name is generated afresh each time
+the repository is opened.
+
+## `502` or `504` with an HTML body
+
+That answer is nginx's, not the server's, so it carries no `code` at all. The
+database did not answer the proxy in front of it: the process is starting, or it
+has stopped. Go to [the container has stopped](/runbook/nodes#the-container-has-stopped).
+
+## The 4xx that are just wrong requests
+
+These need a client change, not an operator:
+
+| Code | The request |
+| --- | --- |
+| `invalid_table_name` | Not 1–64 characters of `[A-Za-z0-9_ -]`, or is `default` |
+| `invalid_body` | The table body is not a JSON object |
+| `dependency_not_found` | Names a table that does not exist — which is what keeps the graph free of dangling edges |
+| `invalid_key_encoding` | The key does not percent-decode to valid UTF-8 |
+| `key_too_large` / `value_too_large` | Over 4 KiB / 16 MiB |
+| `invalid_range` | `from` is not below `to`, or a range delete with no bounds |
+| `table_exists` | The table exists with *different* options. The same options again are a `200` |
+| `method_not_allowed` | Something other than GET, HEAD, PUT or DELETE |
+| `invalid_path` | A path segment that is `..`, or a target that does not begin with `/` |
+
+`dependency_not_found` on a table that plainly exists is the cluster case again:
+a node that joined late does not have it. Declare the dependency on that node
+first.
