@@ -92,14 +92,14 @@ jobs:
       run: |
         for attempt in $(seq 1 90); do
           nodes=$(curl -fsS --max-time 10 "$URL/asyncdb/health" | jq '.nodes | length') || nodes=0
-          if [ "${nodes:-0}" = "3" ]; then
-            echo "Three nodes answering after $attempt attempts."
+          if [ "${nodes:-0}" = "6" ]; then
+            echo "Six nodes answering after $attempt attempts."
             exit 0
           fi
-          echo "Attempt $attempt: ${nodes:-0} of 3 nodes."
+          echo "Attempt $attempt: ${nodes:-0} of 6 nodes."
           sleep 10
         done
-        echo "The cluster did not reach three nodes."
+        echo "The cluster did not reach six nodes."
         exit 1
 
     - name: Install newman

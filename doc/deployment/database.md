@@ -1,6 +1,7 @@
 # The database tier
 
-Three instances running the asyncdb image, behind an application load balancer.
+Six instances running the asyncdb image, two in each availability zone, behind
+an application load balancer.
 Seven resources: a role and an instance profile, a launch template, an auto
 scaling group, and the load balancer, its target group and its listener.
 
@@ -59,8 +60,8 @@ the image: the Amazon Linux 2 the template used to run had v1, and Amazon Linux
 idempotent over whichever of the two is already there, rather than exiting on the
 one it finds.
 
-The private address and the zone are read over **IMDSv2**. Amazon Linux 2023 AMIs are
-registered as IMDSv2-only, so the token `PUT` is not belt and braces — the
+The private address and the zone are read over **IMDSv2**. Amazon Linux 2023
+AMIs are registered as IMDSv2-only, so the token `PUT` is not belt and braces — the
 unauthenticated `GET` the Amazon Linux 2 script used answers `401` on this image,
 and `ASYNCDB_NODE` would be `http://:8080`.
 
@@ -88,10 +89,12 @@ a database of its own:
   not the subnet, read from the same metadata service. It is what makes the
   cluster keep
   [one copy of every record in every zone](/database/cluster#one-copy-in-every-zone):
-  the group spans three subnets in three zones and launches three instances, so
-  each zone holds one node and each node holds the whole keyspace. A write goes
-  to all three, and a read is answered by whichever node the load balancer
-  picked.
+  the group spans three subnets in three zones and launches six instances, so
+  each zone holds two nodes, the two of them split that zone's copy between
+  them, and each node holds half the keyspace. A write goes to one node in each
+  zone; a read is answered by the node the load balancer picked, or by the one
+  other node in that node's own zone, which is traffic that
+  [crosses no zone and costs nothing](/deployment/cost#bytes-across-an-availability-zone).
 
 Set neither of the first two and the instance would be
 [what it was before](/database/cluster#turning-it-on): one process owning the
@@ -146,7 +149,17 @@ not the instance-local NVMe a write-heavy store would want.
 
 `AutoScalingGroup` spans all three subnets, launches from the launch template at
 `LatestVersionNumber`, registers into `ALBTargetGroup`, and is
-`DesiredCapacity: 3` between `MinSize: 1` and `MaxSize: 4`.
+`DesiredCapacity: 6` between `MinSize: 1` and `MaxSize: 7`.
+
+Six is three zones of two, and the group is what makes it so: an auto scaling
+group balances its capacity across the subnets it is given, so six instances
+over three subnets is two in each. That is the whole of the arrangement —
+[three copies of the keyspace, each split in half](/database/cluster#one-copy-in-every-zone)
+— and it is arrived at by counting instances rather than by configuring
+anything. `MaxSize` is one above the desired capacity so that a replacement can
+launch before the instance it replaces goes; **capacity is worth moving three at
+a time**, one per zone, so that no zone is left holding a larger share than the
+others.
 
 Three, spread over three subnets, is one instance per availability zone. The
 bounds allow a fourth for a replacement to come up before an old one goes, and

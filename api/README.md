@@ -9,7 +9,7 @@ status codes, the documented error codes, and the behaviour those documents prom
 | `asyncdb.postman_collection.json` | The collection: eight folders, run in order |
 | `asyncdb.local.postman_environment.json` | One instance answering on the API port, `localhost:8080` |
 | `asyncdb.compose.postman_environment.json` | The three instances of `docker-compose`, through the nginx in front of each |
-| `asyncdb.aws.postman_environment.json` | The three instances of the AWS stack, behind the one load balancer in front of them all |
+| `asyncdb.aws.postman_environment.json` | The six instances of the AWS stack, behind the one load balancer in front of them all |
 
 ## Import
 
@@ -46,7 +46,7 @@ newman run api/asyncdb.postman_collection.json -e api/asyncdb.aws.postman_enviro
 ```
 
 This is what the build does on a push to `master`: it creates the stack, waits for `/health` to name
-three nodes, runs the collection, and deletes the stack whether the collection passed or not — a
+six nodes, runs the collection, and deletes the stack whether the collection passed or not — a
 failing assertion fails the build.
 
 The requests depend on the ones before them — a scan reads what the writes before it seeded, and
@@ -66,7 +66,7 @@ that is a create.
 | 5 · Scans | Prefix, `values=false`, `from` inclusive against `to` exclusive, `reverse`, two pages and the cursor between them, a foreign cursor (400), an inverted range (400), the whole table |
 | 6 · Delete a range | A range delete with no range (400), a prefix deleted whole, and a key outside it that survived |
 | 7 · Drop the tables | `204`, then `404`, then created again and empty — the data went with the column family |
-| 8 · The cluster | Three instances: the membership, a table created on one node and present on all, a record written to one node and read from the others, a scan merged across all three, and a range delete and a table delete that reach every node |
+| 8 · The cluster | More than one instance: the membership, a table created on one node and present on all, a record written to one node and read from the others, a scan merged across all of them, and a range delete and a table delete that reach every node |
 
 ## Three things worth knowing before a red test is believed
 
@@ -75,8 +75,9 @@ that is a create.
   `doc/database/cluster.md`. Nothing in the collection asserts which node holds a key, so this
   changes no assertion — but a record read from a node that "should not" have it is the cluster
   working rather than a red test.
-- **One assertion in folder 8 needs a cluster.** `clusterSize` is what tells the collection which
-  it is running against. Set to 1 it asserts instead that `/health` names no membership at all,
+- **One assertion in folder 8 needs a cluster.** `clusterSize` is what tells the collection how
+  many nodes to expect from `/health` — 3 for `docker-compose`, 6 for the AWS stack, and 1 for a
+  lone instance. Set to 1 it asserts instead that `/health` names no membership at all,
   which is what standing alone looks like, and the rest of the folder runs as it stands: `node1`,
   `node2` and `node3` are then the one instance, and each request is answered where it lands rather
   than forwarded. Nothing else in the collection is conditional, so every environment runs the whole

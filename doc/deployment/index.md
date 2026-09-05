@@ -3,8 +3,8 @@
 `cloudformation.json` in the root of the repository is the whole of the
 infrastructure: one template, one stack, no modules and no state file. It builds
 a VPC across three availability zones, an application load balancer, an auto
-scaling group of instances running the asyncdb image from ECR, and three
-instances running etcd for them to find each other through.
+scaling group of six instances running the asyncdb image from ECR — two in each
+zone — and three instances running etcd for them to find each other through.
 
 ```
                      internet
@@ -14,9 +14,10 @@ instances running etcd for them to find each other through.
                     └────┬────┘
         ┌────────────────┼────────────────┐        one public subnet per AZ
         │                │                │
-   ┌────┴────┐      ┌────┴────┐      ┌────┴────┐   AutoScalingGroup, desired 3
-   │ asyncdb │──────│ asyncdb │──────│ asyncdb │   nginx :80, API :8080
-   └────┬────┘      └────┬────┘      └────┬────┘   forwarding to each other
+   ┌────┴────┐      ┌────┴────┐      ┌────┴────┐   AutoScalingGroup, desired 6
+   │ asyncdb │      │ asyncdb │      │ asyncdb │   nginx :80, API :8080
+   │ asyncdb │──────│ asyncdb │──────│ asyncdb │   two per zone, holding half
+   └────┬────┘      └────┬────┘      └────┬────┘   the keyspace each
         └────────────────┼────────────────┘
                          │  ASYNCDB_ETCD names all three
         ┌────────────────┼────────────────┐
@@ -29,9 +30,11 @@ instances running etcd for them to find each other through.
 The shape is the one [the cluster](/database/cluster) describes — several
 instances, one etcd, no leader — with the load balancer in front so that a
 client can ask any of them, which is exactly what the cluster is for: every node
-answers for every key. One instance per availability zone, and
-[one copy of every record in each zone](/database/cluster#one-copy-in-every-zone),
-so the node the load balancer picked is a node that holds the key.
+answers for every key. Two instances per availability zone, and
+[one copy of every record in each zone](/database/cluster#one-copy-in-every-zone)
+split between that zone's two nodes, so the node the load balancer picked holds
+the key half the time and asks its partner in the same zone the rest of the
+time.
 
 ## Driving it
 
@@ -51,7 +54,7 @@ the working tree is what is deployed — there is no bucket and no packaging ste
 because the template creates roles.
 
 The same four lines are what the build drives on a push to `master`: it creates
-the stack, waits for `/health` to name three nodes, runs the
+the stack, waits for `/health` to name six nodes, runs the
 [Postman collection](https://github.com/martinrixham/asyncdb/tree/master/api)
 against the `Url` output with `newman`, and then deletes the stack, whether the
 collection passed or not. A failing assertion fails the build. Because the stack
@@ -65,7 +68,7 @@ The stack has one output, `Url`: the load balancer's DNS name with `http://` in
 front of it. That single address is the whole deployment — the UI in a browser,
 and the API under `/asyncdb` — because every node
 [answers for every key](/database/cluster), so there is nothing to choose
-between the three instances behind it.
+between the six instances behind it.
 
 ```bash
 aws cloudformation describe-stacks --stack-name asyncdb \
@@ -202,8 +205,8 @@ It is a small template, and it is worth being plain about where it stops.
 - **There is no HTTPS.** The listener is HTTP on port 80, in and out. There is
   no certificate, no redirect and no `Scheme: internal` anywhere: everything the
   API carries crosses the internet in the clear.
-- **Nothing scales anything.** The application group is `DesiredCapacity: 3`
-  between 1 and 4 with no scaling policy, no alarm and no target tracking, and
+- **Nothing scales anything.** The application group is `DesiredCapacity: 6`
+  between 1 and 7 with no scaling policy, no alarm and no target tracking, and
   the etcd tier is three fixed instances. The bounds are there for a hand to
   move — and growing the group is
   [a thing to do deliberately](/database/cluster#what-this-is-not), because a

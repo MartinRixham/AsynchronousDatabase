@@ -330,9 +330,9 @@
           "LaunchTemplateId": { "Ref": "LaunchTemplate" },
           "Version": { "Fn::GetAtt": [ "LaunchTemplate", "LatestVersionNumber" ] }
         },
-        "DesiredCapacity": 3,
+        "DesiredCapacity": 6,
         "MinSize": "1",
-        "MaxSize": "4",
+        "MaxSize": "7",
         "HealthCheckType": "ELB",
         "HealthCheckGracePeriod": 200,
         "TargetGroupARNs":[{ "Ref":"ALBTargetGroup" } ]

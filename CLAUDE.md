@@ -76,7 +76,8 @@ newman run api/asyncdb.postman_collection.json -e api/asyncdb.local.postman_envi
 
 The eight folders are ordered and depend on each other — folder 0 drops what the last run left, and
 a scan's second page carries the cursor its first page issued — so run whole folders, in order. The
-`clusterSize` variable is what makes folder 8 assert a three-node cluster or a lone instance.
+`clusterSize` variable is how many nodes folder 8 expects `/health` to name: 3 for compose, 6 for the
+AWS stack, 1 for a lone instance.
 
 ### Browser tests (`automation/`)
 
@@ -298,7 +299,7 @@ Built on [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum), not a m
 
 Pushing to `master` builds the Docker image and, **only if the tag in the `version` file does not already
 exist in ECR**, pushes it, writes that tag to the SSM parameter `/asyncdb/version` and git-tags the commit.
-It then `make create-stack`s the CloudFormation stack, waits for `/health` to name three nodes, runs the
+It then `make create-stack`s the CloudFormation stack, waits for `/health` to name six nodes, runs the
 Postman collection against the stack's `Url` output with `newman`, then the Playwright journeys and
 then `perf/write.sh` and `perf/read.sh` against that same address, and `make delete-stack`s it again —
 whether they passed or not, so a failing assertion, journey or load run fails the build and still
@@ -318,6 +319,11 @@ when that instance is replaced. **The parameter has to exist before the first de
 cannot resolve it otherwise, and an instance that cannot pull its tag has no container at all, fails the
 ALB health check on `/asyncdb/health`, and is replaced by another that cannot pull either — the load
 balancer answers 502 throughout.
+
+The database tier is **six** instances, `DesiredCapacity: 6` across three subnets, which an auto
+scaling group balances into two per availability zone — three copies of the keyspace (one per zone,
+because `ASYNCDB_ZONE` is the instance's real AZ), each split in half between that zone's two nodes.
+Capacity is worth moving three at a time so that no zone holds a larger share than the others.
 
 The etcd tier is three instances at addresses fixed in the template's `Etcd` mapping, not a discovery
 service: `ASYNCDB_ETCD` is `Fn::FindInMap` of that same mapping, which is what joins the database tier
