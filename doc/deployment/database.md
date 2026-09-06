@@ -27,16 +27,14 @@ names it by `Ref` — the profile's generated name — which is why the stack ne
 `ImageId` and `InstanceType` come from the [parameters](/deployment/#parameters),
 the security group is `InstanceSecurityGroup`, the key pair is the `asyncdb` one
 that has to exist already, the root volume is [thirty gigabytes of
-gp3](#the-root-volume), and the rest is user data — a base64 `Fn::Join` of
+gp3](#the-root-volume), `TagSpecifications` names every instance the group
+launches `asyncdb` — which is what
+[`Name=tag:Name,Values=asyncdb`](/runbook/deployment) finds, and what tells the
+six of them from the three `etcd-n` in the console — and the rest is user data — a base64 `Fn::Join` of
 shell lines, run once as root at first boot:
 
 ```bash
 #! /bin/bash
-sudo yum -y update
-sudo yum -y install unzip
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip awscliv2.zip
-./aws/install --update
 REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com
 VERSION=0.0.3          # { "Ref": "Version" }, resolved from SSM at deploy time
 IMAGE=$REGISTRY_URL/asyncdb:$VERSION
@@ -46,7 +44,6 @@ TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-met
 PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
 ASYNCDB_ETCD=http://10.0.0.10:2379,http://10.0.1.10:2379,http://10.0.2.10:2379
-mkdir -p /var/lib/asyncdb
 docker run -d --restart always -p 80:80 -p 8080:8080 \
   -v /var/lib/asyncdb:/var/lib/asyncdb \
   -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
@@ -61,12 +58,19 @@ that is restarted opens what the one before it wrote instead of coming back as a
 empty node. It is still the [root volume](#the-root-volume), so it goes when the
 instance does.
 
-Docker is already there — that is what the AMI is for. The AWS CLI is installed
-because `get-login-password` is a v2 command and there is no guarantee of a v2 on
-the image: the Amazon Linux 2 the template used to run had v1, and Amazon Linux
-2023 ships v2 but not on every variant. `--update` is what makes the install
-idempotent over whichever of the two is already there, rather than exiting on the
-one it finds.
+Docker and the AWS CLI are both already there — that is what
+[the bake](/pipeline/ami) is for. The user data used to open with a `yum -y
+update` and a download-and-install of AWS CLI v2, because `get-login-password` is
+a v2 command and Amazon Linux ships v2 but not on every variant. Call it two
+minutes, inside a `HealthCheckGracePeriod` of 200 seconds, on every instance, at
+every launch. `DatabaseAmi` is that work done once, and what is left here is a
+login, a pull and a run.
+
+The image is **not** in the AMI, deliberately. It moves every release, so baking
+it would put an AMI build on the release path; at a few tens of megabytes from a
+registry in the same region the pull it would save is seconds. `Version` still
+resolves `/asyncdb/version` at deploy time, so a release reaches an instance when
+that instance is replaced, and no AMI has to be built for it.
 
 The private address and the zone are read over **IMDSv2**. Amazon Linux 2023
 AMIs are registered as IMDSv2-only, so the token `PUT` is not belt and braces — the

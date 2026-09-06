@@ -57,7 +57,7 @@ inputs are not.
 | Data between availability zones | $0.01 / GB | Charged **in each direction**, so $0.02 per GB that crosses |
 | Data in from the internet | free | Which is why [a write is cheaper than a read](#what-each-endpoint-costs) |
 | ECR storage | $0.10 / GB-month | One image, a few hundred megabytes |
-| SSM standard parameters | free | `/asyncdb/version` and the AMI lookup |
+| SSM standard parameters | free | `/asyncdb/version` and the two `/asyncdb/ami/…` the tiers launch from |
 
 Assume a 730 hour month throughout.
 

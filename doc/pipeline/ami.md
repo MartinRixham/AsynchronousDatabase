@@ -93,9 +93,10 @@ The variables all have defaults in the template, and the workflow passes five:
 | `commit` / `run_id` | `unknown` / `local` | Tagged onto the image and the builder — what it was built from, and which run may sweep it up |
 
 The base image is not a variable. `data "amazon-parameterstore"` resolves
-`/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id`, the same
-parameter the template's `ECSAMI` resolves, so what is baked is a layer over
-exactly the image the stack would otherwise have launched.
+`/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id`, the
+public parameter the template resolved for itself until it took these images
+instead — so a bake is a layer over whatever the stack would have launched on the
+day it ran, and the template no longer resolves anything of Amazon's at all.
 
 ## Where the ids go
 
@@ -104,12 +105,18 @@ exactly the image the stack would otherwise have launched.
 [`/asyncdb/version` already uses](/pipeline/release): the id changes on every
 build, so nothing that consumes it should have to be edited when it does.
 
-The stack does **not** read them yet. `cloudformation.json` still resolves the
-ECS-optimised AMI for both tiers, so a bake changes nothing about a deploy until
-the template names these parameters instead — and, exactly as with
-`/asyncdb/version`, a parameter an `AWS::SSM::Parameter::Value` cannot resolve
-fails the whole stack operation, so the first bake has to come before the first
-deploy that reads it.
+`cloudformation.json` reads them as its `DatabaseAmi` and `EtcdAmi`
+[parameters](/deployment/#parameters), both
+`AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>`, so a deploy resolves whatever
+the last bake wrote rather than what the working tree says. **They have to exist
+before the deploy that reads them**, exactly as `/asyncdb/version` does:
+CloudFormation cannot resolve a parameter that is not there and fails the whole
+stack operation rather than the one resource.
+
+A bake does not reach a running instance. The auto scaling group takes the new
+launch template version, and an instance launched after that carries the new
+image — so, like a release, an AMI reaches the fleet one instance replacement at
+a time.
 
 ## When to run it
 
@@ -139,7 +146,9 @@ is the snapshot.
 - **Nothing prunes them**, or the snapshot behind each one. Every run registers
   an image and deregisters none, the way ECR accumulates tags.
 - **Nothing checks that an image is current.** A parameter pointing at a bake
-  from a year ago deploys happily, with a year-old Amazon Linux on it. The
+  from a year ago deploys happily, with a year-old Amazon Linux on it — which is
+  the deliberate half of the trade the
+  [parameters](/deployment/#parameters) make: no drift, and no refresh either. The
   `asyncdb:commit` and `asyncdb:source-image` tags are the only record of what a
   given AMI was built from.
 - **A cancelled run is the one ending Packer may not be given time to clean up

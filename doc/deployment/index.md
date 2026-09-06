@@ -92,20 +92,29 @@ come up and pull nothing.**
 | Parameter | Default | Is |
 | --- | --- | --- |
 | `InstanceType` | `t3.micro` | Used for both groups — the database instances and the etcd instances |
-| `ECSAMI` | `/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id` | An SSM public parameter, resolved at deploy time to the current AMI id |
+| `DatabaseAmi` | `/asyncdb/ami/database` | An SSM parameter of this account's, resolved at deploy time to the image [the bake](/pipeline/ami) built for the database tier |
+| `EtcdAmi` | `/asyncdb/ami/etcd` | The same, for the etcd tier |
 | `Version` | `/asyncdb/version` | An SSM parameter of this account's, resolved at deploy time to the image tag the instances pull |
 
-The ECS-optimised AMI is used **for Docker, not for ECS**. There is no ECS
-cluster in the template, no task definition and no agent doing anything; the AMI
-is simply the Amazon Linux with a Docker daemon already installed and running,
-so the user data can go straight to `docker run`. It is **Amazon Linux 2023**:
-the 2 the stack used to run went end of life in June 2025, and the move is a
-parameter default and two lines of user data — `--update` on the CLI install and
-an IMDSv2 token for the metadata read, since 2023's AMIs take no unauthenticated
-metadata request. Resolving it through SSM rather
-than pinning an id is what keeps the template region-independent and stops it
-going stale — at the cost of an instance replacement picking up a newer AMI than
-its neighbours.
+Both AMIs are the **ECS-optimised Amazon Linux 2023** image with each tier's boot
+dependencies already installed. The ECS-optimised part is used **for Docker, not
+for ECS**: there is no ECS cluster in the template, no task definition and no
+agent doing anything; it is simply the Amazon Linux with a Docker daemon already
+installed and running, so the user data can go straight to `docker run`. It is
+**2023**: the 2 the stack used to run went end of life in June 2025, and what the
+move cost is an IMDSv2 token for the metadata read, since 2023's AMIs take no
+unauthenticated metadata request.
+
+The template **used to resolve the ECS-optimised AMI itself**, at every deploy,
+through the public parameter
+`/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id`. That
+never went stale, and it cost the thing that matters more: two instances of the
+same auto scaling group launched a fortnight apart were two different operating
+systems, because an instance replacement picks up whatever is current. Naming
+this account's own parameters instead makes taking a newer Amazon Linux a
+deliberate act with [a workflow](/pipeline/ami) behind it — at the cost of the
+parameters having to [exist before the first
+deploy](/pipeline/ami#where-the-ids-go).
 
 ## What is in the stack
 

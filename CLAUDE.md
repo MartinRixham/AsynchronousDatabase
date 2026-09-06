@@ -372,12 +372,15 @@ into a cluster.
 
 `.github/workflows/ami.yaml` is run **by hand** from the Actions tab and bakes one AMI per tier with
 Packer, from `ami/asyncdb.pkr.hcl`: `ami/database.sh` (the `dnf` update, `unzip` and AWS CLI v2 the
-launch template's user data installs at every boot) and `ami/etcd.sh` (`quay.io/coreos/etcd:v3.5.9`,
-pinned to the same tag `Etcd1..3` run), each followed by `ami/clean.sh`. The base image is the same
-ECS-optimised AL2023 parameter `ECSAMI` resolves, read by a `data "amazon-parameterstore"` block; the
-resulting id is written to `/asyncdb/ami/{database,etcd}` out of Packer's `manifest.json`.
-**The asyncdb image is deliberately not baked** — a database instance still pulls `asyncdb:$VERSION`
-from ECR at boot, so a release needs no AMI behind it. `cloudformation.json` does not read those
-parameters yet; both tiers still launch from `ECSAMI`. The scripts run as root and `set -euo
-pipefail`, so a failed install is a failed bake rather than an image missing half of itself.
-`packer fmt` disagrees with the template's tabs and nothing runs it. `doc/pipeline/ami.md` is the page.
+launch template's user data used to install at every boot) and `ami/etcd.sh`
+(`quay.io/coreos/etcd:v3.5.9`, pinned to the same tag `Etcd1..3` run), each followed by
+`ami/clean.sh`. The base is the ECS-optimised AL2023 image, read by a `data
+"amazon-parameterstore"` block; the id of the result is written to `/asyncdb/ami/{database,etcd}`
+out of Packer's `manifest.json`, and `cloudformation.json` resolves those two as its `DatabaseAmi`
+and `EtcdAmi` parameters — so **they have to exist before a deploy**, exactly as `/asyncdb/version`
+does, and taking a newer Amazon Linux is a bake rather than something an instance replacement does
+on its own. **The asyncdb image is deliberately not baked** — an instance still pulls
+`asyncdb:$VERSION` from ECR at boot, so a release needs no AMI behind it. The scripts run as root
+and `set -euo pipefail`, so a failed install is a failed bake rather than an image missing half of
+itself. `packer fmt` disagrees with the template's tabs and nothing runs it. `doc/pipeline/ami.md`
+is the page.

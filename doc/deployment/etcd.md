@@ -80,7 +80,7 @@ in its number, its subnet and its address:
   "Type": "AWS::EC2::Instance",
   "DependsOn": [ "PublicRoute", "SubnetRouteTableAssociation1" ],
   "Properties": {
-    "ImageId": { "Ref": "ECSAMI" },
+    "ImageId": { "Ref": "EtcdAmi" },
     "InstanceType": { "Ref": "InstanceType" },
     "SubnetId": { "Ref": "PublicSubnet1" },
     "PrivateIpAddress": "10.0.0.10",
@@ -92,10 +92,14 @@ in its number, its subnet and its address:
 }
 ```
 
-The `DependsOn` is there because the user data pulls an image at first boot: an
-instance created before its subnet has a route to the internet gateway comes up
-with nothing on it and says nothing about why. An auto scaling group hid that by
-launching late; three instances do not.
+The `DependsOn` is there because the user data used to pull an image at first
+boot: an instance created before its subnet has a route to the internet gateway
+comes up with nothing on it and says nothing about why. An auto scaling group hid
+that by launching late; three instances do not. `EtcdAmi` now carries
+`quay.io/coreos/etcd:v3.5.9` already, so the `docker run` below finds it locally
+and quay.io is off the boot path — but the dependency stays, because an image
+that does not hold the tag the user data names pulls it exactly as before, and
+because an etcd with no route out is not a cluster in any case.
 
 ```bash
 #! /bin/bash
