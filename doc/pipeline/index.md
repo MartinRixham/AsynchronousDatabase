@@ -148,11 +148,12 @@ is above the gate rather than beside the push.
 
 ## Mirroring etcd
 
-One step of this workflow is about the *other* tier, and it is here because
-[the etcd instances are in a private subnet with no route to
-quay.io](/deployment/network#why-the-instances-are-private). The tag they run has
-to be in this account's registry before the stack that pulls it exists, and this
-is what puts it there.
+One step of this workflow is about the *other* tier, and it is here because the
+etcd instances pull their image out of this account's registry and never out of
+quay.io — [a boot that depends on a third party's registry is a boot that fails
+when it does not answer](/deployment/etcd#where-the-image-comes-from). The tag
+they run has to be in that registry before the stack that pulls it exists, and
+this is what puts it there.
 
 ```bash
 ETCD_VERSION=$(cat etcd-version)

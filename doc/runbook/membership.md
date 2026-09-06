@@ -156,7 +156,7 @@ sudo tail -50 /var/log/cloud-init-output.log
 | In the log | Is |
 | --- | --- |
 | `member add` refused, and the script exited | No quorum. The section above is the recovery |
-| `UnauthorizedOperation` on `DescribeInstances` | The instance profile, or the [EC2 endpoint](/deployment/network#the-endpoints) it goes through |
+| `UnauthorizedOperation` on `DescribeInstances` | The instance profile, or [the route out](/deployment/network#the-route-out) the call goes over |
 | The cluster string names fewer than three | The other instances were not visible within five minutes — check they carry `Name=etcd` |
 | Nothing at all after the docker run | etcd started and exited. `docker logs etcd` says why; a cluster ID mismatch means the data directory was not empty |
 

@@ -18,14 +18,9 @@
 # for everyone; here, one node is broken for etcd, and the rest of the cluster carries on
 # without it — which is what makes the recovery a re-registration rather than a repopulation.
 #
-# This one needs the agent. See the note on SSM faults in chaos/README.md.
+# The fault goes in through the SSM agent. See the note on the SSM faults in chaos/README.md.
 
 source "$(dirname "$0")/harness.sh"
-
-[ "${CHAOS_SSM:-0}" = 1 ] || {
-	echo "Skipped: this experiment injects the fault through SSM. Set CHAOS_SSM=1."
-	exit 77
-}
 
 banner "One node loses etcd" "It becomes a cluster of one, and re-registers by itself when etcd comes back."
 

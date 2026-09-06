@@ -9,16 +9,13 @@
 # fault at all. It is seconds, where finding the same mistake by running the suite is the length
 # of the experiment that hits it.
 #
-# It needs the stack up, because the arns in a template name real instances and subnets. The SSM
-# tier is validated too — a template is checked whether or not the instances could carry out the
-# document it names, so nothing here is skipped.
+# It needs the stack up, because the arns in a template name real instances and subnets.
 
 source "$(dirname "$0")/harness.sh"
 
 here=$(dirname "$0")
 
 export CHAOS_VALIDATE=1
-export CHAOS_SSM=1
 
 setup
 preflight_fis || exit 1

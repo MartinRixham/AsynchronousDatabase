@@ -16,15 +16,10 @@
 #
 # This is the most invasive experiment in the suite — a full root volume is a docker daemon and
 # an SSM agent with nowhere to write either — so it is last of the SSM tier and its percentage
-# is deliberately short of the whole disk. This one needs the agent, and see the note on SSM
-# faults in chaos/README.md.
+# is deliberately short of the whole disk. The fault goes in through the SSM agent, as the note
+# on the SSM faults in chaos/README.md describes.
 
 source "$(dirname "$0")/harness.sh"
-
-[ "${CHAOS_SSM:-0}" = 1 ] || {
-	echo "Skipped: this experiment injects the fault through SSM. Set CHAOS_SSM=1."
-	exit 77
-}
 
 banner "A node's disk fills" "Writes are refused with a documented code. Reads carry on."
 

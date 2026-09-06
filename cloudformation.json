@@ -19,7 +19,7 @@
     "EtcdVersion": {
       "Type": "AWS::SSM::Parameter::Value<String>",
       "Default": "/asyncdb/etcd",
-      "Description": "The etcd tag to run, the same arrangement as Version: the repository's etcd-version file is what the build mirrors out of quay.io into this account's registry, and this is the parameter it writes afterwards. The tier is in a private subnet with no route to quay.io, so the mirror is how the tag reaches an instance at all."
+      "Description": "The etcd tag to run, the same arrangement as Version: the repository's etcd-version file is what the build mirrors out of quay.io into this account's registry, and this is the parameter it writes afterwards. The tier pulls out of this account's registry and never out of quay.io, so the mirror is how the tag reaches an instance at all."
     }
   },
   "Resources": {
@@ -33,6 +33,19 @@
     },
     "InternetGateway": {
       "Type": "AWS::EC2::InternetGateway"
+    },
+    "Ipv6CidrBlock": {
+      "Type": "AWS::EC2::VPCCidrBlock",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "AmazonProvidedIpv6CidrBlock": true
+      }
+    },
+    "EgressOnlyInternetGateway": {
+      "Type": "AWS::EC2::EgressOnlyInternetGateway",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" }
+      }
     },
     "AttachGateway": {
       "Type": "AWS::EC2::VPCGatewayAttachment",
@@ -70,27 +83,36 @@
     },
     "PrivateSubnet1": {
       "Type": "AWS::EC2::Subnet",
+      "DependsOn": "Ipv6CidrBlock",
       "Properties": {
         "VpcId": { "Ref": "VPC" },
         "CidrBlock": "10.0.0.0/24",
+        "Ipv6CidrBlock": { "Fn::Select": [ 0, { "Fn::Cidr": [ { "Fn::Select": [ 0, { "Fn::GetAtt": [ "VPC", "Ipv6CidrBlocks" ] } ] }, 3, 64 ] } ] },
+        "AssignIpv6AddressOnCreation": true,
         "AvailabilityZone": { "Fn::Select": [ 0, { "Fn::GetAZs": "" } ] },
         "MapPublicIpOnLaunch": false
       }
     },
     "PrivateSubnet2": {
       "Type": "AWS::EC2::Subnet",
+      "DependsOn": "Ipv6CidrBlock",
       "Properties": {
         "VpcId": { "Ref": "VPC" },
         "CidrBlock": "10.0.1.0/24",
+        "Ipv6CidrBlock": { "Fn::Select": [ 1, { "Fn::Cidr": [ { "Fn::Select": [ 0, { "Fn::GetAtt": [ "VPC", "Ipv6CidrBlocks" ] } ] }, 3, 64 ] } ] },
+        "AssignIpv6AddressOnCreation": true,
         "AvailabilityZone": { "Fn::Select": [ 1, { "Fn::GetAZs": "" } ] },
         "MapPublicIpOnLaunch": false
       }
     },
     "PrivateSubnet3": {
       "Type": "AWS::EC2::Subnet",
+      "DependsOn": "Ipv6CidrBlock",
       "Properties": {
         "VpcId": { "Ref": "VPC" },
         "CidrBlock": "10.0.2.0/24",
+        "Ipv6CidrBlock": { "Fn::Select": [ 2, { "Fn::Cidr": [ { "Fn::Select": [ 0, { "Fn::GetAtt": [ "VPC", "Ipv6CidrBlocks" ] } ] }, 3, 64 ] } ] },
+        "AssignIpv6AddressOnCreation": true,
         "AvailabilityZone": { "Fn::Select": [ 2, { "Fn::GetAZs": "" } ] },
         "MapPublicIpOnLaunch": false
       }
@@ -114,6 +136,14 @@
       "Type": "AWS::EC2::RouteTable",
       "Properties": {
         "VpcId": { "Ref": "VPC" }
+      }
+    },
+    "PrivateRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": { "Ref": "PrivateRouteTable" },
+        "DestinationIpv6CidrBlock": "::/0",
+        "EgressOnlyInternetGatewayId": { "Ref": "EgressOnlyInternetGateway" }
       }
     },
     "PublicSubnetRouteTableAssociation1": {
@@ -172,9 +202,13 @@
           }
         ],
         "SecurityGroupEgress": [
-          { 
+          {
             "IpProtocol": "-1",
             "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "-1",
+            "CidrIpv6": "::/0"
           }
         ]
       }
@@ -196,6 +230,10 @@
           {
             "IpProtocol": "-1",
             "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "-1",
+            "CidrIpv6": "::/0"
           }
         ]
       }
@@ -217,33 +255,10 @@
           {
             "IpProtocol": "-1",
             "CidrIp": "0.0.0.0/0"
-          }
-        ]
-      }
-    },
-    "VpcEndpointSecurityGroup": {
-      "Type": "AWS::EC2::SecurityGroup",
-      "Properties": {
-        "VpcId": { "Ref": "VPC" },
-        "GroupDescription": "Allow HTTPS to the interface endpoints from both tiers",
-        "SecurityGroupIngress": [
-          {
-            "IpProtocol": "tcp",
-            "FromPort": 443,
-            "ToPort": 443,
-            "SourceSecurityGroupId": { "Ref": "InstanceSecurityGroup" }
           },
           {
-            "IpProtocol": "tcp",
-            "FromPort": 443,
-            "ToPort": 443,
-            "SourceSecurityGroupId": { "Ref": "EtcdSecurityGroup" }
-          }
-        ],
-        "SecurityGroupEgress": [
-          {
             "IpProtocol": "-1",
-            "CidrIp": "0.0.0.0/0"
+            "CidrIpv6": "::/0"
           }
         ]
       }
@@ -279,105 +294,6 @@
         "FromPort": 2379,
         "ToPort": 2379,
         "SourceSecurityGroupId": { "Ref": "EtcdSecurityGroup" }
-      }
-    },
-    "S3Endpoint": {
-      "Type": "AWS::EC2::VPCEndpoint",
-      "Properties": {
-        "VpcId": { "Ref": "VPC" },
-        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.s3" },
-        "VpcEndpointType": "Gateway",
-        "RouteTableIds": [ { "Ref": "PrivateRouteTable" } ]
-      }
-    },
-    "EcrApiEndpoint": {
-      "Type": "AWS::EC2::VPCEndpoint",
-      "Properties": {
-        "VpcId": { "Ref": "VPC" },
-        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.ecr.api" },
-        "VpcEndpointType": "Interface",
-        "PrivateDnsEnabled": true,
-        "SubnetIds": [
-          { "Ref": "PrivateSubnet1" },
-          { "Ref": "PrivateSubnet2" },
-          { "Ref": "PrivateSubnet3" }
-        ],
-        "SecurityGroupIds": [ { "Ref": "VpcEndpointSecurityGroup" } ]
-      }
-    },
-    "EcrDockerEndpoint": {
-      "Type": "AWS::EC2::VPCEndpoint",
-      "Properties": {
-        "VpcId": { "Ref": "VPC" },
-        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.ecr.dkr" },
-        "VpcEndpointType": "Interface",
-        "PrivateDnsEnabled": true,
-        "SubnetIds": [
-          { "Ref": "PrivateSubnet1" },
-          { "Ref": "PrivateSubnet2" },
-          { "Ref": "PrivateSubnet3" }
-        ],
-        "SecurityGroupIds": [ { "Ref": "VpcEndpointSecurityGroup" } ]
-      }
-    },
-    "SsmEndpoint": {
-      "Type": "AWS::EC2::VPCEndpoint",
-      "Properties": {
-        "VpcId": { "Ref": "VPC" },
-        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.ssm" },
-        "VpcEndpointType": "Interface",
-        "PrivateDnsEnabled": true,
-        "SubnetIds": [
-          { "Ref": "PrivateSubnet1" },
-          { "Ref": "PrivateSubnet2" },
-          { "Ref": "PrivateSubnet3" }
-        ],
-        "SecurityGroupIds": [ { "Ref": "VpcEndpointSecurityGroup" } ]
-      }
-    },
-    "SsmMessagesEndpoint": {
-      "Type": "AWS::EC2::VPCEndpoint",
-      "Properties": {
-        "VpcId": { "Ref": "VPC" },
-        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.ssmmessages" },
-        "VpcEndpointType": "Interface",
-        "PrivateDnsEnabled": true,
-        "SubnetIds": [
-          { "Ref": "PrivateSubnet1" },
-          { "Ref": "PrivateSubnet2" },
-          { "Ref": "PrivateSubnet3" }
-        ],
-        "SecurityGroupIds": [ { "Ref": "VpcEndpointSecurityGroup" } ]
-      }
-    },
-    "Ec2MessagesEndpoint": {
-      "Type": "AWS::EC2::VPCEndpoint",
-      "Properties": {
-        "VpcId": { "Ref": "VPC" },
-        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.ec2messages" },
-        "VpcEndpointType": "Interface",
-        "PrivateDnsEnabled": true,
-        "SubnetIds": [
-          { "Ref": "PrivateSubnet1" },
-          { "Ref": "PrivateSubnet2" },
-          { "Ref": "PrivateSubnet3" }
-        ],
-        "SecurityGroupIds": [ { "Ref": "VpcEndpointSecurityGroup" } ]
-      }
-    },
-    "Ec2Endpoint": {
-      "Type": "AWS::EC2::VPCEndpoint",
-      "Properties": {
-        "VpcId": { "Ref": "VPC" },
-        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.ec2" },
-        "VpcEndpointType": "Interface",
-        "PrivateDnsEnabled": true,
-        "SubnetIds": [
-          { "Ref": "PrivateSubnet1" },
-          { "Ref": "PrivateSubnet2" },
-          { "Ref": "PrivateSubnet3" }
-        ],
-        "SecurityGroupIds": [ { "Ref": "VpcEndpointSecurityGroup" } ]
       }
     },
     "InstanceRole": {
@@ -454,17 +370,23 @@
                   "#! /bin/bash",
                   "systemctl enable --now docker",
                   "mkdir -p /var/lib/asyncdb",
-                  "REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com",
+                  "REGION=eu-west-2",
+                  "# The subnet has no IPv4 route out, so every call to AWS goes over IPv6 to a dual stack endpoint.",
+                  "export AWS_USE_DUALSTACK_ENDPOINT=true",
+                  "[ -f /etc/amazon/ssm/amazon-ssm-agent.json ] || cp /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json",
+                  "python3 -c \"import json; f = '/etc/amazon/ssm/amazon-ssm-agent.json'; c = json.load(open(f)); c.setdefault('Agent', {}).update({'Region': '$REGION', 'UseDualStackEndpoint': True}); json.dump(c, open(f, 'w'), indent = 2)\"",
+                  "systemctl restart amazon-ssm-agent",
+                  "REGISTRY_URL=332187735950.dkr-ecr.eu-west-2.on.aws",
                   { "Fn::Join": [ "", [ "VERSION=", { "Ref": "Version" } ] ] },
                   "IMAGE=$REGISTRY_URL/asyncdb:$VERSION",
-                  "aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL",
+                  "aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URL",
                   "docker pull $IMAGE",
                   "TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H \"X-aws-ec2-metadata-token-ttl-seconds: 60\")",
                   "PRIVATE_IP=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/local-ipv4)",
                   "ZONE=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/placement/availability-zone)",
                   { "Fn::Join": [ "", [ "VPC=", { "Ref": "VPC" } ] ] },
                   "for attempt in $(seq 12); do",
-                  "  ASYNCDB_ETCD=$(aws ec2 describe-instances --region eu-west-2 \\",
+                  "  ASYNCDB_ETCD=$(aws ec2 describe-instances --region $REGION \\",
                   "    --filters Name=tag:Name,Values=etcd Name=vpc-id,Values=$VPC Name=instance-state-name,Values=running \\",
                   "    --query 'Reservations[].Instances[].PrivateIpAddress' --output text \\",
                   "    | tr '\\t' '\\n' | grep . | sort | sed -e 's|^|http://|' -e 's|$|:2379|' | paste -sd,)",
@@ -523,7 +445,7 @@
     },
     "AutoScalingGroup": {
       "Type": "AWS::AutoScaling::AutoScalingGroup",
-      "DependsOn": [ "S3Endpoint", "EcrApiEndpoint", "EcrDockerEndpoint", "Ec2Endpoint" ],
+      "DependsOn": [ "PrivateRoute" ],
       "Properties": {
         "VPCZoneIdentifier": [
           { "Ref": "PrivateSubnet1" },
@@ -617,7 +539,12 @@
                 "systemctl enable --now docker",
                 "mkdir -p /var/lib/etcd",
                 "REGION=eu-west-2",
-                "REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com",
+                "# The subnet has no IPv4 route out, so every call to AWS goes over IPv6 to a dual stack endpoint.",
+                "export AWS_USE_DUALSTACK_ENDPOINT=true",
+                "[ -f /etc/amazon/ssm/amazon-ssm-agent.json ] || cp /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json",
+                "python3 -c \"import json; f = '/etc/amazon/ssm/amazon-ssm-agent.json'; c = json.load(open(f)); c.setdefault('Agent', {}).update({'Region': '$REGION', 'UseDualStackEndpoint': True}); json.dump(c, open(f, 'w'), indent = 2)\"",
+                "systemctl restart amazon-ssm-agent",
+                "REGISTRY_URL=332187735950.dkr-ecr.eu-west-2.on.aws",
                 { "Fn::Join": [ "", [ "IMAGE=$REGISTRY_URL/etcd:", { "Ref": "EtcdVersion" } ] ] },
                 "aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URL",
                 "docker pull $IMAGE",
@@ -689,7 +616,7 @@
     },
     "EtcdAutoScalingGroup": {
       "Type": "AWS::AutoScaling::AutoScalingGroup",
-      "DependsOn": [ "Ec2Endpoint", "EtcdClientIngress", "EtcdPeerIngress" ],
+      "DependsOn": [ "PrivateRoute", "EtcdClientIngress", "EtcdPeerIngress" ],
       "Properties": {
         "VPCZoneIdentifier": [
           { "Ref": "PrivateSubnet1" },

@@ -128,7 +128,7 @@ parameter override away.
 
 | Page | Resources |
 | --- | --- |
-| [The network](/deployment/network) | `VPC`, `InternetGateway`, `AttachGateway`, `PublicSubnet1`–`3`, `PrivateSubnet1`–`3`, `PublicRouteTable`, `PublicRoute`, `PrivateRouteTable`, `PublicSubnetRouteTableAssociation1`–`3`, `PrivateSubnetRouteTableAssociation1`–`3`, `S3Endpoint`, `EcrApiEndpoint`, `EcrDockerEndpoint`, `SsmEndpoint`, `SsmMessagesEndpoint`, `Ec2MessagesEndpoint`, `Ec2Endpoint`, `ALBSecurityGroup`, `InstanceSecurityGroup`, `EtcdSecurityGroup`, `VpcEndpointSecurityGroup`, `InstanceApiIngress`, `EtcdPeerIngress`, `EtcdClientIngress` |
+| [The network](/deployment/network) | `VPC`, `InternetGateway`, `AttachGateway`, `PublicSubnet1`–`3`, `PrivateSubnet1`–`3`, `PublicRouteTable`, `PublicRoute`, `PrivateRouteTable`, `PublicSubnetRouteTableAssociation1`–`3`, `PrivateSubnetRouteTableAssociation1`–`3`, `Ipv6CidrBlock`, `EgressOnlyInternetGateway`, `PrivateRoute`, `ALBSecurityGroup`, `InstanceSecurityGroup`, `EtcdSecurityGroup`, `InstanceApiIngress`, `EtcdPeerIngress`, `EtcdClientIngress` |
 | [The database tier](/deployment/database) | `InstanceRole`, `InstanceProfile`, `LaunchTemplate`, `AutoScalingGroup`, `ApplicationLoadBalancer`, `ALBTargetGroup`, `ALBListener` |
 | [The etcd tier](/deployment/etcd) | `EtcdRole`, `EtcdInstanceProfile`, `EtcdLaunchTemplate`, `EtcdAutoScalingGroup` |
 | [What it costs](/deployment/cost) | All of the above, priced — and what a read, a write and a scan add to it |

@@ -162,9 +162,9 @@ resume. The usual causes are the pull and the grace period.
 | `ClusterALB` already exists | A stack is already standing. The name is fixed, so **there can be one of these per region** |
 | Parameter `/asyncdb/version` not found | The SSM parameter does not exist. CloudFormation cannot resolve it, so the operation fails outright |
 | The group reports a failed activity, not a template error | Something the launch template names is missing — the AMI, the instance profile or the image |
-| An etcd instance has no container | The tag `/asyncdb/etcd` names is not in this account's ECR. There is [no route to quay.io any more](/deployment/network#why-the-instances-are-private), so an instance can only pull [what the build mirrored](/pipeline/#mirroring-etcd) — or the node found a cluster it could not join, which is [a quorum failure](/runbook/membership#etcd-has-lost-quorum) and deliberate |
-| Either tier came up in a cluster of one | `ec2:DescribeInstances` did not answer. `Ec2Endpoint` has to be up before an instance boots, and the instance profile has to carry the `discovery` policy |
-| The database instances have no container | The ECR endpoints. `docker login` and `docker pull` go through `EcrApiEndpoint`, `EcrDockerEndpoint` and `S3Endpoint`, and all three have to be up before an instance boots |
+| An etcd instance has no container | The tag `/asyncdb/etcd` names is not in this account's ECR. The boot script pulls [what the build mirrored](/pipeline/#mirroring-etcd) and never quay.io — or the node found a cluster it could not join, which is [a quorum failure](/runbook/membership#etcd-has-lost-quorum) and deliberate |
+| Either tier came up in a cluster of one | `ec2:DescribeInstances` did not answer. [The route out](/deployment/network#the-route-out) has to be there before an instance boots, `AWS_USE_DUALSTACK_ENDPOINT` has to be set so the call goes to an endpoint IPv6 reaches, and the instance profile has to carry the `discovery` policy |
+| The database instances have no container | The pull. `docker login` and `docker pull` go out over [the route out](/deployment/network#the-route-out), and both have to name ECR's dual-stack form — `ecr.eu-west-2.api.aws` for the login and `…dkr-ecr.eu-west-2.on.aws` for the registry — because there is no IPv4 route to the ordinary names |
 
 Three things the template needs and does not create:
 **an ECR repository `asyncdb` in `eu-west-2`**, **the SSM parameter

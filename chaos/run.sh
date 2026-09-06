@@ -4,7 +4,6 @@
 # leaves behind is something the next one can still be run against.
 #
 #   chaos/run.sh
-#   CHAOS_SSM=1 chaos/run.sh                              with the faults that need the agent
 #   CHAOS_EXPERIMENTS='zone-lost node-stops' chaos/run.sh  a subset, in the order given
 #
 # This is what the pipeline runs, after the load tests and before the stack is torn down. It
@@ -16,9 +15,9 @@ source "$(dirname "$0")/harness.sh"
 here=$(dirname "$0")
 
 # Agentless first, because they need nothing of the instances themselves and so run anywhere.
-# The SSM tier is skipped unless CHAOS_SSM is set — see chaos/README.md for why. And etcd losing
-# quorum is last, because it is the only one that leaves the cluster having been wrong about
-# itself rather than merely short of a node.
+# The four that go in through the SSM agent follow. And etcd losing quorum is last, because it
+# is the only one that leaves the cluster having been wrong about itself rather than merely
+# short of a node.
 default="node-stops zone-lost scan-loses-a-node etcd-unreachable node-latency disk-fills etcd-quorum-lost"
 
 experiments=${CHAOS_EXPERIMENTS:-$default}

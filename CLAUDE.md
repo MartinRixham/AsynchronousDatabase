@@ -139,11 +139,13 @@ assertions and nothing else. Everything is an environment variable — `CHAOS_EX
 - **Order matters.** The agentless faults are first; `etcd-quorum-lost` is last, because it is
   the only one that leaves the cluster having been wrong about itself, and the pipeline deletes
   the stack next.
-- **Four of the seven are skipped unless `CHAOS_SSM=1`** (exit 77 is a skip). They inject through
-  `aws:ssm:send-command` and an `AWSFIS-Run-*` document, and those documents install `at` and
-  `tc` from the distribution repositories — which **no instance in this stack has a route to**.
-  The agentless three (`aws:ec2:stop-instances`, `aws:network:disrupt-connectivity`) need nothing
-  of the instances, which is why they are the default. `chaos/README.md` is the page.
+- **Four of the seven inject through `aws:ssm:send-command`** and an `AWSFIS-Run-*` document,
+  and those documents install `at` and `tc` from the distribution repositories. They were skipped
+  behind a `CHAOS_SSM=1` for as long as the instances had no route out; they run by default now
+  that [the private subnets have one](#release), and what they depend on is an instance being
+  able to install a package while it is under test. The agentless three
+  (`aws:ec2:stop-instances`, `aws:network:disrupt-connectivity`) need nothing of the instances,
+  which is why they are still first. `chaos/README.md` is the page.
 - `node-stops` is the only test anywhere of the rebuild in `doc/runbook/rebuild.md`.
 - **`chaos.json` grants the permission as well as the role.** `ChaosPolicy` attaches the `fis:`
   actions and a `PassRole` scoped to `ChaosRole` to the IAM groups in the `Operators` parameter
@@ -407,14 +409,23 @@ cannot resolve it otherwise, and an instance that cannot pull its tag has no con
 ALB health check on `/asyncdb/health`, and is replaced by another that cannot pull either — the load
 balancer answers 502 throughout.
 
-**Both tiers are in private subnets**, and where a NAT gateway would be there are seven VPC endpoints:
-`S3Endpoint` (a gateway endpoint on `PrivateRouteTable`) plus interface endpoints for `ecr.api`,
-`ecr.dkr`, `ssm`, `ssmmessages`, `ec2messages` and `ec2` — the last of these is what discovery goes
-through, and without it neither tier forms a cluster — all three private subnets each. **No instance has
-a public address, and there is no route to the internet from either tier** — so a pull reaches ECR
-and nothing else, there is no SSH and no key pair (Session Manager is the way onto an instance), and
-the three public subnets hold the ALB alone. The interface endpoints are charged per AZ and are
-about half the stack's fixed cost; `doc/deployment/network.md` is the page.
+**Both tiers are in private subnets**, and where a NAT gateway would be there is an
+`EgressOnlyInternetGateway`: the private subnets are dual stack (`Ipv6CidrBlock` gives the VPC an
+Amazon `/56`, `Fn::Cidr` cuts a `/64` for each of them, `AssignIpv6AddressOnCreation` is on), and
+`PrivateRoute` sends `::/0` to that gateway. **No instance has a public IPv4 address, there is no
+`0.0.0.0/0` anywhere in `PrivateRouteTable`, and nothing outside the VPC can open a connection to
+an instance** — an egress-only gateway is outbound only and stateful — but an instance can open one
+outwards over IPv6. There is no SSH and no key pair (Session Manager is the way onto an instance),
+and the three public subnets hold the ALB alone.
+
+**Everything an instance calls therefore has to be named in its dual-stack form**, because an AWS
+endpoint is IPv4-only otherwise: both user data scripts export `AWS_USE_DUALSTACK_ENDPOINT=true`
+for the CLI (`ecr.…api.aws`, `ec2.…api.aws`), pull from `332187735950.dkr-ecr.eu-west-2.on.aws`
+rather than `dkr.ecr.eu-west-2.amazonaws.com`, and write `UseDualStackEndpoint` into
+`/etc/amazon/ssm/amazon-ssm-agent.json` before restarting the agent, which is what keeps Session
+Manager and the `AWSFIS-Run-*` documents working. Get one of those wrong and the instance boots
+with no container and is replaced by another that does the same. This replaced seven VPC
+endpoints that were about half the stack's fixed cost; `doc/deployment/network.md` is the page.
 
 The database tier is **six** instances, `DesiredCapacity: 6` across three subnets, which an auto
 scaling group balances into two per availability zone — three copies of the keyspace (one per zone,
@@ -437,11 +448,11 @@ every etcd instance without rolling the database tier strands it. `doc/deploymen
 CloudFormation at deploy time — the ECS-optimised Amazon Linux 2023, taken for the Docker daemon
 already on it and **not** for ECS: there is no cluster, no task definition and no agent doing
 anything. Each tier's user data does its own host preparation, which is `systemctl enable --now
-docker` and one `mkdir`, and then pulls its container from ECR.
+docker`, one `mkdir` and the dual-stack lines above, and then pulls its container from ECR.
 
 There was a Packer bake here (`ami/`, `.github/workflows/ami.yaml`, `/asyncdb/ami/{database,etcd}`)
-and it is gone. Its one load-bearing product was the etcd container, which a private subnet has
-[no route to quay.io](#release) to pull: **the build now mirrors that tag into this account's ECR
+and it is gone. Its one load-bearing product was the etcd container, which a private subnet then
+had no route to quay.io to pull: **the build now mirrors that tag into this account's ECR
 instead**, which takes quay.io off the boot path the same way and puts the tag on the pipeline that
 already runs rather than on one somebody has to remember to run. What was left of the bake
 afterwards was a `dnf -y update` that goes stale the day it is taken, against a base image AWS

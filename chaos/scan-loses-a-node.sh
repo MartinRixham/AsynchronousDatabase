@@ -13,14 +13,9 @@
 # It is also the state that is next to impossible to arrange by hand, which is the argument for
 # doing this with FIS at all: three targets, one instance each, filtered by availability zone.
 #
-# This one needs the agent. See the note on SSM faults in chaos/README.md.
+# The fault goes in through the SSM agent. See the note on the SSM faults in chaos/README.md.
 
 source "$(dirname "$0")/harness.sh"
-
-[ "${CHAOS_SSM:-0}" = 1 ] || {
-	echo "Skipped: this experiment injects the fault through SSM. Set CHAOS_SSM=1."
-	exit 77
-}
 
 banner "One node in every zone goes deaf" "Key reads carry on. Scans have nowhere left to fall back to."
 

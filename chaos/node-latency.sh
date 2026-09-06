@@ -17,14 +17,9 @@
 # doc/runbook/membership.md#leadership-keeps-moving instead: renewals start failing, and
 # leadership moves every lease.
 #
-# This one needs the agent. See the note on SSM faults in chaos/README.md.
+# The fault goes in through the SSM agent. See the note on the SSM faults in chaos/README.md.
 
 source "$(dirname "$0")/harness.sh"
-
-[ "${CHAOS_SSM:-0}" = 1 ] || {
-	echo "Skipped: this experiment injects the fault through SSM. Set CHAOS_SSM=1."
-	exit 77
-}
 
 banner "A node is slow" "It stays in the membership, and everything forwarding to it waits."
 

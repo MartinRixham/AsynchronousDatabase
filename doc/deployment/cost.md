@@ -1,8 +1,9 @@
 # What it costs
 
 The stack is nine `t3.micro` instances, one load balancer, nine thirty gigabyte
-volumes and [six interface endpoints](/deployment/network#the-endpoints) in
-three availability zones, and **none of it is billed per request**. There is no API
+volumes in three availability zones, behind
+[a route out that is free](/deployment/network#the-route-out), and **none of it
+is billed per request**. There is no API
 gateway metering calls, no per-operation storage service, no serverless
 anything: the bill is a fixed monthly cost for capacity that is running whether
 or not anybody is using it, plus four marginal charges that a request can move.
@@ -54,9 +55,7 @@ inputs are not.
 | Application load balancer | $0.0265 / hour | Plus capacity units |
 | Load balancer capacity unit | $0.008 / LCU-hour | The max of four dimensions, [not their sum](#load-balancer-capacity-units) |
 | Public IPv4 address, in use | $0.005 / hour | Per address, charged since February 2024 — the load balancer's three are the only ones left |
-| VPC interface endpoint | $0.011 / hour | Per endpoint **per availability zone**, so six endpoints over three zones is eighteen of these |
-| VPC interface endpoint data | $0.011 / GB | What goes through one — here, an image pull at each instance launch |
-| VPC gateway endpoint | free | `S3Endpoint` is a route, not an ENI, and the layers it carries are the bulk of a pull |
+| Egress-only internet gateway | free | No hourly charge, no charge per gigabyte of its own, and none per availability zone — it is a route, not an ENI |
 | Data out to the internet | $0.09 / GB | After 100 GB a month, free across the account |
 | Data between availability zones | $0.01 / GB | Charged **in each direction**, so $0.02 per GB that crosses |
 | Data in from the internet | free | Which is why [a write is cheaper than a read](#what-each-endpoint-costs) |
@@ -72,33 +71,29 @@ existing.
 
 | Line | Arithmetic | Monthly | Share |
 | --- | --- | --- | --- |
-| Interface endpoints | 6 × 3 × $0.011 × 730 | $144.54 | 52% |
-| Database instances | 6 × $0.0118 × 730 | $51.68 | 19% |
-| etcd instances | 3 × $0.0118 × 730 | $25.84 | 9% |
-| Root volumes | 9 × 30 GB × $0.0928 | $25.06 | 9% |
-| Load balancer hours | $0.0265 × 730 | $19.34 | 7% |
-| Public IPv4 addresses | 3 × $0.005 × 730 | $10.95 | 4% |
-| | | **$277.41** | |
+| Database instances | 6 × $0.0118 × 730 | $51.68 | 39% |
+| etcd instances | 3 × $0.0118 × 730 | $25.84 | 19% |
+| Root volumes | 9 × 30 GB × $0.0928 | $25.06 | 19% |
+| Load balancer hours | $0.0265 × 730 | $19.34 | 15% |
+| Public IPv4 addresses | 3 × $0.005 × 730 | $10.95 | 8% |
+| | | **$132.87** | |
 
-That is **$0.380 an hour**, or about $3,330 a year, for an empty database. Three
+That is **$0.182 an hour**, or about $1,590 a year, for an empty database. Three
 things in it are worth saying out loud:
 
-- **The endpoints are half the bill, and they are the most expensive way to have
-  bought what they buy.** An interface endpoint is charged per availability zone,
-  so the six of them are eighteen hourly charges; three zones is what makes
-  [a private subnet](/deployment/network#why-the-instances-are-private) cost
-  $145 a month. A single NAT gateway would have been $32.85 and one in each zone
-  $98.55 — both cheaper, and both a route to all of the internet rather than to
-  ECR, S3 and Session Manager. The nine public addresses this replaced were
-  $32.85 between them. **It is a security bill, not an efficiency one**: what it
-  buys is nine instances that cannot open a connection to anything but the
-  services named in the template. Three of the six — the `ssm` trio, $72 of the
-  $145 — are there only so that there is a way onto an instance at all; dropping
-  them and accepting that a broken instance is replaced rather than inspected is
-  the one real saving available here. The sixth, `ec2`, is the newest and is not
-  optional: it is [how either tier finds the other](/deployment/etcd), and
-  without it neither group forms a cluster.
-- **The etcd tier is a tenth of the bill**, and it holds
+- **The route out is free, and it used to be half the bill.** Six interface
+  endpoints in three availability zones was eighteen hourly charges and $144.54
+  a month — 52% of a total that was $277.41 — because an interface endpoint is
+  charged per zone whether anything goes through it or not. An egress-only
+  internet gateway is charged for none of that: no hourly rate, no per-zone
+  multiplier, and no data charge beyond the
+  [data out to the internet](#reads-writes-and-gigabytes) that any route would
+  have carried. A NAT gateway, the other way of having a route out, would have
+  been $32.85 a month for one and $98.55 for one per zone. **What the change
+  spends instead of money is reach**: nine instances that could open a
+  connection to seven named services can now open one to any IPv6 address there
+  is, which is [argued where the route is](/deployment/network#the-route-out).
+- **The etcd tier is a fifth of the bill**, and it holds
   [six keys on a ten second lease](/database/cluster#membership). It is
   membership only. Nothing about it needs a `t3.micro` each, and nothing about
   it needs three separate instances except the wish to survive an availability
@@ -114,10 +109,10 @@ appears:
 
 | Sustained load | Requests a month | Fixed cost per million |
 | --- | --- | --- |
-| 1 / second | 2.6 M | $105.56 |
-| 10 / second | 26 M | $10.56 |
-| 100 / second | 263 M | $1.056 |
-| 250 / second | 657 M | $0.422 |
+| 1 / second | 2.6 M | $50.56 |
+| 10 / second | 26 M | $5.056 |
+| 100 / second | 263 M | $0.506 |
+| 250 / second | 657 M | $0.202 |
 
 **A request has no price of its own; it has a share of the rent.** Everything
 below this line is small next to moving up that table, so the first question
@@ -148,10 +143,10 @@ record.
 
 | Sustained load | Rent share | **Read of 1 KiB** | **Write of 1 KiB** |
 | --- | --- | --- | --- |
-| 1 / second | $105.56 | **$105.660** | **$105.620** |
-| 10 / second | $10.56 | **$10.656** | **$10.616** |
-| 100 / second | $1.056 | **$1.156** | **$1.116** |
-| 250 / second | $0.422 | **$0.522** | **$0.482** |
+| 1 / second | $50.56 | **$50.659** | **$50.619** |
+| 10 / second | $5.056 | **$5.156** | **$5.116** |
+| 100 / second | $0.506 | **$0.606** | **$0.566** |
+| 250 / second | $0.202 | **$0.302** | **$0.262** |
 
 All per million operations. The marginal part of that — the part that is
 genuinely the operation's own — is **$0.100 per million reads** and **$0.060 per
@@ -280,19 +275,19 @@ services have:
 
 | Sustained load | Per million requests | Total monthly |
 | --- | --- | --- |
-| 1 / second | $105.65 | $277.65 |
-| 10 / second | $10.65 | $279.83 |
-| 100 / second | $1.148 | $301.59 |
-| 250 / second | $0.514 | $337.85 |
+| 1 / second | $50.65 | $133.11 |
+| 10 / second | $5.148 | $135.29 |
+| 100 / second | $0.598 | $157.05 |
+| 250 / second | $0.294 | $193.31 |
 
-**Two and a half orders of magnitude more traffic costs 22% more money.** That
+**Two and a half orders of magnitude more traffic costs 45% more money.** That
 is the whole economics of this stack in one line: it is rent, and the API
 operations are nearly free until the records get large or the CPU runs out.
 
 To price a workload that is not this one:
 
 ```
-monthly = 277.41                                   fixed
+monthly = 132.87                                   fixed
         + reads  × size_GB × 0.098                 egress + ALB
         + writes × size_GB × 0.059                 to the leader + copies + ALB
         + (reads + writes) × cpu_ms × 1.39e-8      credits, if above baseline
@@ -482,15 +477,15 @@ keep-alive connections:
 
 | Line | Arithmetic | Monthly |
 | --- | --- | --- |
-| Fixed cost | as above | $277.41 |
+| Fixed cost | as above | $132.87 |
 | Egress | (538 GB − 100 free) × $0.09 | $39.44 |
 | Cross-AZ | (2 copies + 5/9 to the leader) × 135 GB written × $0.02 | $6.88 |
 | Load balancer LCU | 0.92 GB/hour → 1 LCU × 730 | $5.84 |
 | CPU credits | assumed within baseline | $0.00 |
-| | | **$329.57** |
+| | | **$185.03** |
 
-250 requests a second is 657 million requests a month, so that is **$0.50 per
-million requests**, of which $0.42 is the rent. Only the 131 million writes cross
+250 requests a second is 657 million requests a month, so that is **$0.28 per
+million requests**, of which $0.20 is the rent. Only the 131 million writes cross
 a zone — twice each to the copies, and a further five ninths of the time to reach
 the leader — while the 526 million reads are answered inside the zone they landed
 in. The same traffic without keep-alive is $382, and the same traffic hot enough
@@ -554,8 +549,8 @@ capacity is a hand on `MinSize` and `MaxSize`, and
 [growing the cluster is a thing to do deliberately](/database/cluster#what-this-is-not)
 because a key that changes owner is a key the new owner does not have. **Grow it
 three at a time**, one per availability zone: each node adds $0.0118 an hour and
-nothing else — no address, and no endpoint, since the ones in its zone are
-already paid for — and nine instances is three zones of three, each node holding
+nothing else — no address, and nothing zonal, since the route out is free and
+VPC-wide — and nine instances is three zones of three, each node holding
 a third of the keyspace. A seventh node on its own is not wrong — it partitions
 its own zone in thirds while the other two stay halves — it is just paid for
 without buying a copy.
@@ -564,11 +559,11 @@ without buying a copy.
 
 The [release](/pipeline/release) creates the whole stack, waits for six nodes,
 runs the Postman collection, the Playwright journeys and both load scripts, and
-deletes it again. At $0.380 an hour, **a stack standing for half an hour costs
-about twenty-nine cents** — EC2 bills per second past a one minute minimum, and
-EBS and the public addresses are prorated the same way, but the eighteen
-interface endpoints are charged by the hour or part of one, so a short-lived
-stack pays a full hour of them and they are most of that twenty-nine cents.
+deletes it again. At $0.182 an hour, **a stack standing for half an hour costs
+about eleven cents** — EC2 bills per second past a one minute minimum, and EBS
+and the public addresses are prorated the same way, but the load balancer is
+charged by the hour or part of one, so a short-lived stack pays a full hour of
+it and it is most of that eleven cents.
 
 Two footnotes on that:
 
@@ -577,7 +572,7 @@ Two footnotes on that:
 - A `create-stack` that fails because
   [one is already standing](/deployment/#what-this-stack-does-not-do) leaves
   that stack alone — and running. A stack forgotten after a failed build is
-  $277 a month, and the ALB's fixed name means you will find out the next time
+  $133 a month, and the ALB's fixed name means you will find out the next time
   a release tries to deploy.
 
 ECR holds one image per released tag at $0.10 a GB-month and nothing prunes

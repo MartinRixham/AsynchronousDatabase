@@ -56,11 +56,13 @@ chaos/node-stops.sh
 
 ### What it costs
 
-Roughly twenty minutes for the agentless three, most of it `node-stops` waiting for the auto
-scaling group to launch a replacement and for that replacement to rebuild itself. The faults
-themselves are minutes; the waiting is the deployment's own timings — a ten second lease, a
-sixty second load balancer health check, a two hundred second grace period — and
-`CHAOS_SETTLE` and `CHAOS_RECOVERY` are how much of each is allowed for.
+Roughly twenty minutes for the first three, most of it `node-stops` waiting for the auto
+scaling group to launch a replacement and for that replacement to rebuild itself, and about
+half an hour again for the four that go in through SSM — four or five minutes of fault each,
+and a settle after every one of them. The faults themselves are minutes; the waiting is the
+deployment's own timings — a ten second lease, a sixty second load balancer health check, a two
+hundred second grace period — and `CHAOS_SETTLE` and `CHAOS_RECOVERY` are how much of each is
+allowed for.
 
 ## The role, and the permission to use it
 
@@ -100,37 +102,26 @@ would have been caught by it in seconds: a template the credentials were not all
 and `completeIfInstancesTerminated` without the `startInstancesAfterDuration` the service
 insists goes with it.
 
-## The faults that need the agent
+## The faults that go in through SSM
 
 Four of the seven inject their fault with `aws:ssm:send-command` and one of the `AWSFIS-Run-*`
-documents, and **they are skipped unless `CHAOS_SSM=1`**:
+documents, and they run by default like the other three. They did not always: those documents
+install what they need — `atd` for the rollback timer, `tc` for the latency — from the
+distribution's own repositories, and for as long as
+[the network](../doc/deployment/network.md) was seven VPC endpoints and no route out, the four
+failed at their precondition and were skipped behind a `CHAOS_SSM=1` that nobody set.
 
-```bash
-CHAOS_SSM=1 chaos/run.sh
-```
+The endpoints are [gone](../doc/deployment/network.md#the-route-out). What replaced them is an
+egress-only internet gateway, which is a route to the internet that only opens outwards and only
+over IPv6 — so `dnf` reaches the Amazon Linux repositories, the SSM agent reaches Systems
+Manager over its dual-stack endpoint, and the documents do what they say. The cost of that is
+paid in the deployment rather than here: **the faults now depend on an instance being able to
+install a package while it is under test**, and a repository that does not answer is an
+experiment that fails at its precondition rather than an assertion that did not hold. FIS
+reports that as an experiment that `failed` with a reason, which the harness prints.
 
-The reason is [the network](../doc/deployment/network.md). Those documents install what they
-need — `atd` for the rollback timer, `tc` for the latency — from the distribution's own
-repositories, and **no instance in this stack has a route to the internet**. Where a NAT gateway
-would be there are seven VPC endpoints, and none of them is `cdn.amazonlinux.com`. So on the
-stack as it stands the SSM faults will fail at their precondition, and FIS reports that as an
-experiment that `failed` with a reason, which the harness prints.
-
-Three ways to have them, in the order they are worth considering:
-
-1. **Bake the dependencies in.** One `dnf -y install at iproute-tc` in the database tier's user
-   data, and every one of them works. It costs a package install on every boot, inside the
-   [two hundred second grace period](../doc/runbook/deployment.md), and that budget is not
-   generous already.
-2. **Run them against a stack with a route out**, which is what a `NatGateway` parameter would
-   be for.
-3. **Leave them skipped**, which is what the pipeline does. The four failure modes they cover
-   are the four that are least dangerous to be wrong about: three of them are read-only
-   degradations, and the fourth is the disk filling.
-
-The agentless three need none of this, because the fault is a network access control list or an
-instance state that the service changes from outside. That is the whole reason they are the
-default.
+The other three need none of it, because the fault is a network access control list or an
+instance state that the service changes from outside. That is why they are still first.
 
 ## What this does not cover
 
@@ -159,7 +150,6 @@ As in [`perf/`](../perf).
 | Variable | Is | Default |
 | --- | --- | --- |
 | `CHAOS_EXPERIMENTS` | Which experiments, in what order | all seven |
-| `CHAOS_SSM` | `1` runs the four that need the agent | unset, so they are skipped |
 | `CHAOS_STACK` | The stack under test | `asyncdb` |
 | `CHAOS_ROLE_STACK` | The stack holding the FIS role | `asyncdb-chaos` |
 | `CHAOS_ROLE` | The role arn, instead of that stack's output | |

@@ -200,10 +200,9 @@ persistent, and it is not the instance-local NVMe a write-heavy store would want
 `AutoScalingGroup` spans all three **private** subnets, launches from the launch
 template at `LatestVersionNumber`, registers into `ALBTargetGroup`, and is
 `DesiredCapacity: 6` between `MinSize: 1` and `MaxSize: 7`. It carries a
-`DependsOn` naming `S3Endpoint`, `EcrApiEndpoint`, `EcrDockerEndpoint` and
-`Ec2Endpoint`, because [the pull goes through them](/deployment/network#the-endpoints)
-— and the etcd discovery through the last of them — and nothing in the launch
-template says so.
+`DependsOn` naming `PrivateRoute`, because
+[the pull and the etcd discovery both go out over it](/deployment/network#the-route-out)
+and nothing in the launch template says so.
 
 Six is three zones of two, and the group is what makes it so: an auto scaling
 group balances its capacity across the subnets it is given, so six instances

@@ -94,13 +94,14 @@ existed can collide on it — which is the whole reason the old `etcd-1`,
 ### Where the image comes from
 
 `quay.io/coreos/etcd` is where the tag originates and **not** where an instance
-gets it. The tier is in
-[a private subnet whose only route out is to the named AWS
-services](/deployment/network#why-the-instances-are-private), so quay.io is not
-reachable from it at all; the tag is
+gets it. The tag is
 [mirrored into ECR by the build](/pipeline/#mirroring-etcd), and the pull here is
-the same login and the same registry the
-[database tier](/deployment/database#the-launch-template) uses one endpoint over.
+the same login and the same dual-stack registry name the
+[database tier](/deployment/database#the-launch-template) uses. The tier does
+have [a route to the internet](/deployment/network#the-route-out) now, where it
+used not to, so this is no longer the only way the image could reach an
+instance — it is still the way it does, because a boot that depends on a third
+party's registry answering is a boot that fails when it does not.
 That is why `EtcdRole` carries `AmazonEC2ContainerRegistryReadOnly` alongside its
 `DescribeInstances`.
 
@@ -262,7 +263,7 @@ Four things about it, three of which have not changed:
 ```json
 "EtcdAutoScalingGroup": {
   "Type": "AWS::AutoScaling::AutoScalingGroup",
-  "DependsOn": [ "Ec2Endpoint", "EtcdClientIngress", "EtcdPeerIngress" ],
+  "DependsOn": [ "PrivateRoute", "EtcdClientIngress", "EtcdPeerIngress" ],
   "Properties": {
     "VPCZoneIdentifier": [ "…PrivateSubnet1", "…2", "…3" ],
     "LaunchTemplate": { "…": "EtcdLaunchTemplate at LatestVersionNumber" },
@@ -292,8 +293,8 @@ of the numbers are load-bearing:
   before it starts anything.
 
 The `DependsOn` names the three things the boot script needs and nothing in a
-launch template references: the [EC2 endpoint](/deployment/network#the-endpoints)
-`DescribeInstances` goes through, and the two security group rules that let a
+launch template references: the [route out](/deployment/network#the-route-out)
+`DescribeInstances` goes over, and the two security group rules that let a
 launching node reach 2379 and 2380 on the instances already running.
 
 `HealthCheckType` is `EC2` because there is no target group in front of etcd to
