@@ -56,7 +56,11 @@ means:
 - there is nothing to order, so it accepts **every** write locally, with no
   leader and no copies;
 - it asks nobody for a scan, so a scan answers only what it holds;
-- `/health` names no `nodes` at all, which is how this is recognised.
+- `/health` names **one** node, itself, in a `zones` of one zone, which is how
+  this is recognised. Not *no* `nodes`: an absent `nodes` is
+  [an instance that stands alone](/database/cluster#what-each-endpoint-does-in-a-cluster),
+  one that was never given an `ASYNCDB_ETCD` to lose. A node that has lost etcd
+  puts itself in the list, and a list of one is what that looks like.
 
 That is the safe way to be wrong on the reasoning that refusing to answer would
 turn one broken etcd into a broken database — but it is only safe while the node
@@ -65,10 +69,19 @@ client traffic is the one situation here that can silently diverge the data**,
 because the writes it accepts are written nowhere else and no leader ordered
 them.
 
+**And nothing takes it out of service for you.** The load balancer's health check
+is `/asyncdb/health`, which answers `200` whatever the membership says — `status`
+is always `ok`, and a cluster of one is a node that is serving perfectly well by
+that measure. So an isolated node stays in the target group, goes on being routed
+to, and answers `404` for every key it does not hold. Taking it out is step 2
+below and it is a hand's work, not the load balancer's.
+
 **Do:**
 
-1. `/health` on every node. A node whose `nodes` field is **absent** has lost
-   etcd; the ones that still name a list have not.
+1. `/health` on every node. A node whose `nodes` names **only itself** has lost
+   etcd; the ones that still name the others have not. It goes on reporting a
+   non-zero `leads` — the partitions it last claimed — so `leads` does not fall
+   to zero to tell you, and the length of `nodes` is the whole diagnosis.
 2. Take that node out of service if it is behind the load balancer, or stop it.
    Its keys are held in every other zone and reads carry on without it.
 3. Fix etcd — see below — and let the node re-register. It re-registers from
@@ -170,7 +183,7 @@ again every three seconds, so a difference that is a few seconds old is normal.
 | Seen | Is |
 | --- | --- |
 | A node missing from every list but itself | That node cannot reach etcd, or has not started. Its own `/health` says which |
-| A node missing from one list only | That reader cannot reach etcd. Its `nodes` will be absent entirely |
+| A node missing from one list only | That reader cannot reach etcd. Its own `nodes` will name only itself |
 | A node named that is gone | Within ten seconds, its lease running out. Longer, and something is still renewing it |
 | Fewer `zones` than the deployment has | A whole zone's nodes are gone, or `ASYNCDB_ZONE` is unset on them |
 | A node named in no zone | It registered a bare address, or with `ASYNCDB_ZONE` empty |

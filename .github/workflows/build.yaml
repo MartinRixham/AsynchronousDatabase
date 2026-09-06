@@ -38,19 +38,12 @@ jobs:
         echo "Version: $VERSION"
         echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-    # The registry the instances pull from is the one this pushes to, and there is no reason to
-    # make a person create by hand a thing the build knows the name of. It has to come before the
-    # version gate below and not merely before the push: "has this tag been published already?"
-    # has no answer at all until the repository exists, and a `describe-images` that fails for
-    # that reason reads as a release.
-    - name: Create the asyncdb repository
+    - name: Check if version exists in ECR
+      id: check_version
       run: |
         aws ecr describe-repositories --repository-name asyncdb > /dev/null 2>&1 \
           || aws ecr create-repository --repository-name asyncdb > /dev/null
 
-    - name: Check if version exists in ECR
-      id: check_version
-      run: |
         if aws ecr describe-images \
           --repository-name asyncdb \
           --image-ids imageTag=$VERSION \
@@ -89,10 +82,6 @@ jobs:
           git push origin "$VERSION"
         fi
 
-    # The etcd tier is in a private subnet with no route to quay.io, so the tag it runs has to be
-    # in this account's registry before the stack that pulls it exists. Mirroring is idempotent
-    # and unconditional: it is the tag in `etcd-version` that decides whether there is anything
-    # to do, and not the `version` gate above, because the two move for different reasons.
     - name: Mirror etcd into ECR
       run: |
         ETCD_VERSION=$(cat etcd-version)
@@ -185,19 +174,33 @@ jobs:
         VALUE_BYTES=1024 perf/write.sh
         URL=$BASE/table/perf_load/key/0 perf/read.sh
 
+    - name: The chaos role
+      id: chaos_role
+      if: steps.deploy.outputs.created == 'true'
+      run: |
+        make create-chaos-stack
+        echo "created=true" >> $GITHUB_OUTPUT
+        aws cloudformation wait stack-create-complete --stack-name asyncdb-chaos
+
+    - name: Validate the experiment templates
+      run: chaos/validate.sh
+
+    - name: Run the chaos suite
+      run: chaos/run.sh
+
+    - name: Tear down the chaos role
+      if: always() && steps.chaos_role.outputs.created == 'true'
+      run: |
+        make delete-chaos-stack
+        aws cloudformation wait stack-delete-complete --stack-name asyncdb-chaos
+
     - name: Stack events
       if: failure() && steps.deploy.outputs.created == 'true'
       run: make describe-stack
 
-    # A node that never opened its port is one the load balancer never routed to, so nothing it
-    # would have said reached this build. The stack is torn down next and takes its instances with
-    # it, so whatever they have to say is read here or not at all. Every command is best effort:
-    # a diagnosis that fails the build is one that hides what failed it.
     - name: What the nodes say for themselves
       if: failure() && steps.deploy.outputs.created == 'true'
       run: |
-        # Nothing below is allowed to end the step: it all runs after something has already
-        # failed, and the tear down that follows is what must not be skipped.
         set +e
 
         echo "The membership the load balancer answers with:"
@@ -212,9 +215,6 @@ jobs:
         echo "The instances the stack is running:"
         cat instances.txt
 
-        # Run Command reaches an instance that answers no request of its own, which is the whole
-        # point of asking this way rather than over HTTP: the node worth reading is exactly the
-        # one the load balancer never routed to.
         while read -r id ip zone; do
           [ -n "$id" ] || continue
 
@@ -223,7 +223,7 @@ jobs:
           command=$(aws ssm send-command \
             --instance-ids "$id" \
             --document-name AWS-RunShellScript \
-            --parameters 'commands=["docker ps -a","docker logs --tail 200 asyncdb 2>&1 || docker logs --tail 200 $(docker ps -aq | head -1) 2>&1"]' \
+            --parameters 'commands=["docker ps -a","docker logs --tail 200 $(docker ps --format \"{{.ID}} {{.Image}}\" | awk \"/asyncdb/{print \\$1; exit}\") 2>&1"]' \
             --query 'Command.CommandId' --output text)
 
           if [ -n "$command" ]; then
@@ -232,8 +232,6 @@ jobs:
               --query '[StandardOutputContent,StandardErrorContent]' --output text
           fi
 
-          # The console carries cloud-init, which is what says whether the container was started
-          # at all — the answer Run Command cannot give when there is no agent to ask.
           echo "--- console ---"
           aws ec2 get-console-output --instance-id "$id" --output text | tail -n 60
 

@@ -1,7 +1,7 @@
 # The build pipeline
 
 `.github/workflows/build.yaml` is the push side of CI: one workflow, one job,
-twenty-two steps, no matrix and no reusable workflow. It builds the Docker image,
+twenty-six steps, no matrix and no reusable workflow. It builds the Docker image,
 asks ECR whether the version in the `version` file has been published already and
 publishes it if it has not — and then **stands the whole AWS stack up, runs every
 test that needs a running server against it, and deletes it again**. The other
@@ -41,6 +41,7 @@ half of CI is `.github/workflows/pull-request.yaml`, which is
                  │   newman    │  the Postman collection
                  │  playwright │  the browser journeys
                  │    perf     │  write.sh then read.sh
+                 │    chaos    │  the FIS experiments, which break the stack
                  └──────┬──────┘
                  ┌──────┴──────┐
                  │delete-stack │  if: always() — a red run leaves nothing standing
@@ -110,6 +111,10 @@ One job, `build-and-push`, on `ubuntu-latest`. Its steps in order:
 | Install newman, Run the API collection | [the Postman collection](https://github.com/MartinRixham/AsynchronousDatabase/tree/master/api) against `$URL/asyncdb` |
 | Install the browser tests, Run the browser tests | Playwright with `ASYNCDB_URL=$URL`, and an `upload-artifact@v4` of the report `if: failure()` |
 | Run the load tests | `perf/write.sh` then `perf/read.sh`, eight threads, 250 requests |
+| The chaos role | `make create-chaos-stack` — the role FIS assumes, a stack of its own, with its own `created` output |
+| Validate the experiment templates | `chaos/validate.sh` — every template created and deleted again, nothing started |
+| Run the chaos suite | `chaos/run.sh` — [the runbook's failure modes](/runbook/), injected |
+| Tear down the chaos role | `make delete-chaos-stack`, `if: always()` — but only if this run created it |
 | Stack events | `make describe-stack`, `if: failure()` |
 | What the nodes say for themselves | `if: failure()` — `docker logs` over SSM Run Command and `get-console-output`, per instance, every command best effort so that a diagnosis cannot fail the run |
 | Tear down the stack | `make delete-stack`, `if: always()` — but only if this run created it |
@@ -212,10 +217,16 @@ Everything else in the repository is a thing a person runs:
   Playwright journeys run against the stack the build stood up, and it is deleted
   again whether they passed or not. On a pull request nothing runs them, because
   [nothing is deployed](#the-pull-request-build).
-- `perf/` — the load harness likewise, and on `master` it is the last thing the
-  deploy step's stack sees: `perf/write.sh` and then `perf/read.sh` over the load
-  balancer, failing the build if the cluster answers any of that load with
-  anything but a 2xx.
+- `perf/` — the load harness likewise: `perf/write.sh` and then `perf/read.sh`
+  over the load balancer, failing the build if the cluster answers any of that
+  load with anything but a 2xx.
+- `chaos/` — the last thing the deploy step's stack sees, and the only thing that
+  breaks it on purpose. Each experiment injects one of
+  [the runbook's failure modes](/runbook/) with the Fault Injection Service and
+  asserts that the cluster behaves and then recovers the way that page says it
+  does. It runs after `perf/` so that nothing before it is measuring a cluster
+  something else has already broken, and the role FIS assumes is created and
+  deleted around it rather than left standing.
 - `doc/` — this wiki is never built by either workflow, so a VitePress error or a
   broken link reaches `master` unnoticed.
 

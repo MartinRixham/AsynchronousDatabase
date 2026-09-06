@@ -43,8 +43,8 @@ likelihood:
 1. **The image tag cannot be pulled.** The commonest cause, and the one that
    sustains itself — see below.
 2. **etcd is not up**, so nothing joined. The database still answers, so this
-   does *not* cause a 502 on its own; if `/health` answers with no `nodes` field,
-   that is what is happening, and reads and writes are being served by
+   does *not* cause a 502 on its own; if `/health` answers with a `nodes` naming
+   only the node that answered, that is what is happening, and reads and writes are being served by
    [six separate cluster-of-one instances](/runbook/membership#etcd-cannot-be-reached).
    That is worse than a 502 and looks better.
 3. **The stack was created in the wrong region.** The registry

@@ -51,7 +51,7 @@ curl -s http://localhost:8080/asyncdb/health | jq
 | no answer at all | The process is not serving, or nginx is answering for it — [a node that has failed](/runbook/nodes) |
 | `status` | Always `ok`. It says the process is answering, and nothing more |
 | `write_stalled` | `true` is [RocksDB applying back pressure](/runbook/storage#writes-are-stalled) on this node |
-| `nodes` | The membership **as this node sees it**. Absent entirely when the instance stands alone |
+| `nodes` | The membership **as this node sees it**. A list naming only this node is [a node that has lost etcd](/runbook/membership#etcd-cannot-be-reached); absent entirely is an instance that was never clustered at all |
 | `zones` | The grouping, and so the number of copies. The number of zones *is* the number of copies |
 | `leads` | How many of the 256 partitions this node orders the writes of. `0` on every node is [an election that has not settled](/runbook/membership#no-partition-has-a-leader) |
 
@@ -121,3 +121,15 @@ rebuild covers an *empty* node, not a thin one.
 | [The store](/runbook/storage) | RocksDB: stalls, errors, disks, and data that is not there |
 | [The deployment](/runbook/deployment) | The stack, the image, the load balancer and the release |
 | [Rebuilding a node](/runbook/rebuild) | How a replaced node fills itself in before it joins, and when it does not |
+
+## What checks that this page is still true
+
+`chaos/` is this runbook as a test suite. Each experiment injects one of the
+failure modes above into the deployed stack with the AWS Fault Injection
+Service — an instance stopped, an availability zone cut off, etcd's quorum taken
+away — and asserts that what happens is what the page for it says happens, and
+that what recovers by itself does. The build runs it after the load tests, so a
+page here that has gone out of date fails a release rather than an incident.
+
+Not everything on these pages is a fault an infrastructure service can inject.
+`chaos/README.md` lists what it covers and what it deliberately does not.

@@ -1,0 +1,102 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "The role the Fault Injection Service assumes to break the asyncdb stack. It is a stack of its own, created for a chaos run and deleted after it, because a role that can stop and terminate instances is not a thing to leave standing beside a database.",
+	"Resources": {
+		"ChaosRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Principal": {
+								"Service": "fis.amazonaws.com"
+							},
+							"Action": "sts:AssumeRole"
+						}
+					]
+				},
+				"ManagedPolicyArns": [
+					"arn:aws:iam::aws:policy/service-role/AWSFaultInjectionSimulatorEC2Access",
+					"arn:aws:iam::aws:policy/service-role/AWSFaultInjectionSimulatorNetworkAccess",
+					"arn:aws:iam::aws:policy/service-role/AWSFaultInjectionSimulatorSSMAccess"
+				]
+			}
+		},
+		"ChaosPolicy": {
+			"Type": "AWS::IAM::ManagedPolicy",
+			"Properties": {
+				"Description": "Drive the Fault Injection Service, and pass it the role it assumes. Attached for as long as the chaos stack stands and no longer.",
+				"Groups": {
+					"Ref": "Operators"
+				},
+				"PolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Sid": "DriveTheService",
+							"Effect": "Allow",
+							"Action": [
+								"fis:CreateExperimentTemplate",
+								"fis:DeleteExperimentTemplate",
+								"fis:GetExperimentTemplate",
+								"fis:ListExperimentTemplates",
+								"fis:StartExperiment",
+								"fis:StopExperiment",
+								"fis:GetExperiment",
+								"fis:ListExperiments",
+								"fis:ListActions",
+								"fis:TagResource",
+								"fis:UntagResource"
+							],
+							"Resource": "*"
+						},
+						{
+							"Sid": "PassTheRoleToIt",
+							"Effect": "Allow",
+							"Action": [
+								"iam:PassRole"
+							],
+							"Resource": {
+								"Fn::GetAtt": [
+									"ChaosRole",
+									"Arn"
+								]
+							},
+							"Condition": {
+								"StringEquals": {
+									"iam:PassedToService": "fis.amazonaws.com"
+								}
+							}
+						}
+					]
+				}
+			}
+		}
+	},
+	"Outputs": {
+		"ChaosRole": {
+			"Description": "The role arn every experiment template names.",
+			"Value": {
+				"Fn::GetAtt": [
+					"ChaosRole",
+					"Arn"
+				]
+			}
+		},
+		"ChaosPolicy": {
+			"Description": "The policy that lets the credentials running the suite drive FIS.",
+			"Value": {
+				"Ref": "ChaosPolicy"
+			}
+		}
+	},
+	"Parameters": {
+		"Operators": {
+			"Type": "CommaDelimitedList",
+			"Default": "builders",
+			"Description": "The IAM groups whose members run the suite. The operator policy is attached to these for as long as this stack stands, and the credentials the pipeline uses are in one of them."
+		}
+	}
+}

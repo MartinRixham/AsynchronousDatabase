@@ -112,6 +112,51 @@ including the `000` of a transfer that never answered — makes the run exit non
 lets `build.yaml` run them last against the deployed stack and fail the build on them. Latency is
 reported and never asserted on: nothing here is a threshold.
 
+### Chaos tests (`chaos/`)
+
+The failure modes in `doc/runbook`, injected into the **deployed AWS stack** with the AWS Fault
+Injection Service and asserted on from outside. No part of `cmk`, and the only suite here that
+breaks the thing it is testing:
+
+```bash
+make create-stack            # or the stack a build stood up
+make create-chaos-stack      # chaos/chaos.json: the FIS role and the permission to drive it
+chaos/validate.sh            # every template created and deleted, nothing started — seconds
+chaos/run.sh                 # all seven experiments, in order
+make delete-chaos-stack
+```
+
+`chaos/harness.sh` is sourced by each experiment the way `perf/harness.sh` is, and owns the
+same four things every one of them needs: the stack, the FIS experiment, a probe recording what
+a client saw while the fault ran, and the verdict. An experiment script is the fault and the
+assertions and nothing else. Everything is an environment variable — `CHAOS_EXPERIMENTS`,
+`CHAOS_SETTLE`, `CHAOS_RECOVERY` — and a failed assertion is a non-zero exit, which is what lets
+`build.yaml` run it after the load tests and fail the build on it.
+
+- **The suite refuses to start** against a cluster that is not already six nodes in three zones
+  with nothing stalled, and stops early if an experiment's damage did not heal — everything
+  after that would be measuring the previous fault.
+- **Order matters.** The agentless faults are first; `etcd-quorum-lost` is last, because it is
+  the only one that leaves the cluster having been wrong about itself, and the pipeline deletes
+  the stack next.
+- **Four of the seven are skipped unless `CHAOS_SSM=1`** (exit 77 is a skip). They inject through
+  `aws:ssm:send-command` and an `AWSFIS-Run-*` document, and those documents install `at` and
+  `tc` from the distribution repositories — which **no instance in this stack has a route to**.
+  The agentless three (`aws:ec2:stop-instances`, `aws:network:disrupt-connectivity`) need nothing
+  of the instances, which is why they are the default. `chaos/README.md` is the page.
+- `node-stops` is the only test anywhere of the rebuild in `doc/runbook/rebuild.md`.
+- **`chaos.json` grants the permission as well as the role.** `ChaosPolicy` attaches the `fis:`
+  actions and a `PassRole` scoped to `ChaosRole` to the IAM groups in the `Operators` parameter
+  (default `builders`, which holds the pipeline's identity). Nothing else in the account grants
+  FIS anything, so outside a chaos run nobody here can start an experiment. `make
+  update-chaos-stack` is how a chaos stack that predates the policy gets it.
+- **Run `chaos/validate.sh` after touching an experiment.** Creating a template is where the
+  service checks every action, parameter and target arn in it, so create-then-delete is the
+  whole of "would this run?" for two API calls and no fault. Both bugs that cost a full run to
+  find — a template the credentials could not create, and `completeIfInstancesTerminated`
+  without the `startInstancesAfterDuration` the service insists goes with it — are caught by it
+  in seconds.
+
 ### Running the whole thing
 
 `docker-compose up`, then the UI is on `localhost:8080`. The image runs nginx on port 80 serving
