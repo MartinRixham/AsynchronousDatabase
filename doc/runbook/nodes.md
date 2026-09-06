@@ -130,8 +130,16 @@ A node of it that does not answer is a **zone to give up on, not a scan to
 fail**: the whole range is asked of the next zone instead.
 
 So a scan that fails means **every zone has a node that does not answer**, while
-reads and writes of individual keys are still fine — they only need one copy and
-one leader.
+reads and writes of individual keys are mostly still fine — they only need one
+copy and one leader, rather than every node of a zone.
+
+Mostly, and not entirely, because the copies of a partition are one node per
+zone: when one node in every zone is the one that does not answer, **one
+partition in eight has every copy of it deaf**. Those keys are still held, and
+still read — but only by a request that reaches one of those nodes, because a
+node that answers no other node can still answer a client. And a write needs
+*every* copy, so a write whose key touches one of them is refused for as long as
+it does not answer, which is roughly seven writes in eight.
 
 **Check** each node in each zone directly:
 

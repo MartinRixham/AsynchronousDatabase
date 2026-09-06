@@ -28,6 +28,22 @@ zone=$(instances asyncdb | awk '{ print $2 }' | uniq | head -1)
 subnet=$(instances asyncdb | awk -v z="$zone" '$2 == z { print $3 }' | head -1)
 cut_off=$(instances asyncdb | awk -v z="$zone" '$2 == z { print $1 }')
 
+# A node of one of the other two zones, which is where the claim this experiment makes is true.
+witness=$(instances asyncdb | awk -v z="$zone" '$2 != z { print $1 }' | head -1)
+
+# What the membership will be left with, worked out from the membership and not from the
+# instances: the group balances across zones but drifts as instances are replaced, and an
+# instance it has just launched is running and not yet registered, so subtracting instances from
+# instances was right only by luck. It is asked before the fault, because afterwards the load
+# balancer answers with whichever side it routed to.
+addresses=$(aws ec2 describe-instances --instance-ids $cut_off \
+	--query 'Reservations[].Instances[].PrivateIpAddress' --output text \
+	| tr '\t' '\n' | jq -Rsc 'split("\n") | map(select(length > 0))')
+
+remaining=$(curl --fail --silent --max-time 10 "$base/health" \
+	| jq --argjson cut "$addresses" \
+		'[ .nodes[] | select([ $cut[] as $ip | select(contains($ip)) ] | length == 0) ] | length')
+
 # The group may be at seven instances for a while — it is allowed to be, MaxSize is 7 — so what
 # matters is that the zone has nodes to cut off and not exactly how many.
 [ "$(echo "$cut_off" | wc -l)" -ge 2 ] \
@@ -68,12 +84,12 @@ start_probe
 # Two zones is one copy of the keyspace gone. The nodes of the cut off zone cannot renew their
 # leases against a single etcd member that has no quorum, so they leave the membership rather
 # than sit in it refusing every write to their keys.
-# What is left is what was there minus what was cut off, and neither number is two. The group
-# balances across zones but drifts as instances are replaced, so a zone can hold three nodes and
-# another one — a run that assumed two per zone asserted a membership that could never arrive.
-remaining=$(( $(instances asyncdb | wc -l) - $(echo "$cut_off" | wc -l) ))
-
-await "(.zones | length) == 2 and (.nodes | length) == $remaining" "$settle" \
+#
+# It is asked of a node that is still on the majority side, and not of the load balancer: nothing
+# takes a cut off node out of the load balancer until its own health check has failed twice, so
+# until then it goes on answering — with a membership of one, which is the truth about itself and
+# not about the cluster this is making a claim about.
+await_node "$witness" "(.zones | length) == 2 and (.nodes | length) == $remaining" "$settle" \
 	"a zone left the membership, leaving $remaining nodes and two copies"
 
 stop_probe

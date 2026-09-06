@@ -14,10 +14,10 @@ broke came back, and an assertion that did not hold is a non-zero exit — which
 | --- | --- | --- |
 | `node-stops` | [A node does not answer](../doc/runbook/nodes.md), [an instance was replaced](../doc/runbook/nodes.md), [the rebuild](../doc/runbook/rebuild.md) | `aws:ec2:stop-instances`, one database node |
 | `zone-lost` | [A read needs one copy](../doc/runbook/index.md), [fewer zones than the deployment has](../doc/runbook/membership.md) | `aws:network:disrupt-connectivity`, scope `availability-zone` |
-| `scan-loses-a-node` | [A scan fails while everything else works](../doc/runbook/nodes.md) | `AWSFIS-Run-Network-Blackhole-Port` on 8080, one node **per zone** |
-| `etcd-unreachable` | [etcd cannot be reached](../doc/runbook/membership.md) — one node, cluster of one | `AWSFIS-Run-Network-Blackhole-Port` on 2379, egress |
-| `node-latency` | [A node that is up but wrong](../doc/runbook/nodes.md), [threads are all waiting](../doc/runbook/nodes.md) | `AWSFIS-Run-Network-Latency` toward the VPC |
-| `disk-fills` | [RocksDB returned an error](../doc/runbook/storage.md), [the disk is filling](../doc/runbook/storage.md) | `AWSFIS-Run-Disk-Fill` |
+| `scan-loses-a-node` | [A scan fails while everything else works](../doc/runbook/nodes.md) | A `DOCKER-USER` rule rejecting what arrives for port 8080, one node **per zone** |
+| `etcd-unreachable` | [etcd cannot be reached](../doc/runbook/membership.md) — one node, cluster of one | A `DOCKER-USER` rule rejecting what the container sends to port 2379 |
+| `node-latency` | [A node that is up but wrong](../doc/runbook/nodes.md), [threads are all waiting](../doc/runbook/nodes.md) | `AWSFIS-Run-Network-Latency-Sources` toward the VPC |
+| `disk-fills` | [RocksDB returned an error](../doc/runbook/storage.md), [the disk is filling](../doc/runbook/storage.md) | `AWSFIS-Run-Disk-Fill`, the whole volume |
 | `etcd-quorum-lost` | [etcd has lost quorum](../doc/runbook/membership.md) | `aws:ec2:stop-instances`, two of the three members |
 
 The order is the order they run in, and it is not arbitrary. The agentless faults come first
@@ -104,12 +104,11 @@ insists goes with it.
 
 ## The faults that go in through SSM
 
-Four of the seven inject their fault with `aws:ssm:send-command` and one of the `AWSFIS-Run-*`
-documents, and they run by default like the other three. They did not always: those documents
-install what they need — `atd` for the rollback timer, `tc` for the latency — from the
-distribution's own repositories, and for as long as
-[the network](../doc/deployment/network.md) was seven VPC endpoints and no route out, the four
-failed at their precondition and were skipped behind a `CHAOS_SSM=1` that nobody set.
+Four of the seven inject their fault with `aws:ssm:send-command`, and they run by default like
+the other three. They did not always: the documents they run install what they need — `atd` for
+the rollback timer, `tc` for the latency — from the distribution's own repositories, and for as
+long as [the network](../doc/deployment/network.md) was seven VPC endpoints and no route out, the
+four failed at their precondition and were skipped behind a `CHAOS_SSM=1` that nobody set.
 
 The endpoints are [gone](../doc/deployment/network.md#the-route-out). What replaced them is an
 egress-only internet gateway, which is a route to the internet that only opens outwards and only
@@ -122,6 +121,31 @@ reports that as an experiment that `failed` with a reason, which the harness pri
 
 The other three need none of it, because the fault is a network access control list or an
 instance state that the service changes from outside. That is why they are still first.
+
+### Two of the four are a rule of our own
+
+`node-latency` and `disk-fills` run `AWSFIS-Run-Network-Latency-Sources` and
+`AWSFIS-Run-Disk-Fill`. `scan-loses-a-node` and `etcd-unreachable` run `AWS-RunShellScript` and a
+script `blackhole_parameters` in [`harness.sh`](harness.sh) builds, because
+**`AWSFIS-Run-Network-Blackhole-Port` blocks nothing here**: it writes its rules into `INPUT` and
+`OUTPUT`, and asyncdb is a container behind a published port. Everything a peer sends it is
+translated and forwarded, so it goes through `FORWARD` and never `INPUT`; everything the container
+sends is forwarded too, and never `OUTPUT`. Both experiments ran the document, watched it report
+success, and asserted against a cluster in which nothing at all had happened — three nodes that
+were meant to be deaf answered a scan and refused none of the writes, and a node that was meant to
+have lost etcd renewed its lease throughout. `DOCKER-USER` is the chain docker leaves in `FORWARD`
+for exactly this, and it is the one a container's traffic passes through.
+
+The rule **rejects** rather than drops. A node waits thirty seconds on another node, so a dropped
+packet is a node that hangs and a reset is a node that does not answer, which is what these two
+are about — the copy that does answer is asked next, and `node-latency` is the experiment about
+waiting. The script takes the rule out again when its time is up, when it is signalled, and from a
+`setsid` of its own if it is killed outright, which is the same belt and braces the `AWSFIS-Run-*`
+documents get from `at`.
+
+`node-latency` needs none of this, because `tc` shapes the host's own interface and a container's
+traffic leaves through it like anything else. That is why it was the one SSM experiment that
+passed while the other three were asserting against faults that were never injected.
 
 ## What this does not cover
 
@@ -139,9 +163,14 @@ are not are worth naming so that nobody looks here for them:
 
 One thing it covers and reports rather than asserts: **the runbook overstates what survives**
 [a node that does not answer in every zone](../doc/runbook/nodes.md). It says reads and writes of
-individual keys are fine there, and for reads that is exactly true — but a write needs *every*
-copy, so roughly seven writes in eight touch one of the three deaf nodes and are refused.
-`scan-loses-a-node` prints that number rather than asserting on it.
+individual keys are fine there, and neither is quite true. A write needs *every* copy, so roughly
+seven writes in eight touch one of the three deaf nodes and are refused; `scan-loses-a-node`
+prints that number rather than asserting on it. And a read needs one copy that answers, but the
+copies of a partition are one node per zone and one node per zone is what has gone deaf — so one
+partition in eight has every copy of it deaf, and those keys are read only by a request the load
+balancer happens to send to one of the deaf nodes themselves, which are still in service and still
+hold them. The experiment asserts that every key is read, and gives the load balancer the attempts
+it takes to come round to them.
 
 ## Everything is an environment variable
 

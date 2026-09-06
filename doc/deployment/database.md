@@ -47,17 +47,23 @@ of a shell script, run once as root at first boot:
 #! /bin/bash
 systemctl enable --now docker
 mkdir -p /var/lib/asyncdb
-REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com
-VERSION=0.0.3          # { "Ref": "Version" }, resolved from SSM at deploy time
+REGION=eu-west-2
+# The subnet has no IPv4 route out, so every call to AWS goes over IPv6 to a dual stack endpoint.
+export AWS_USE_DUALSTACK_ENDPOINT=true
+[ -f /etc/amazon/ssm/amazon-ssm-agent.json ] || cp /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json
+python3 -c "import json; f = '/etc/amazon/ssm/amazon-ssm-agent.json'; c = json.load(open(f)); c.setdefault('Agent', {}).update({'Region': '$REGION', 'UseDualStackEndpoint': True}); json.dump(c, open(f, 'w'), indent = 2)"
+systemctl restart amazon-ssm-agent
+REGISTRY_URL=332187735950.dkr-ecr.eu-west-2.on.aws
+VERSION=0.0.3          # ${Version}, resolved from SSM at deploy time
 IMAGE=$REGISTRY_URL/asyncdb:$VERSION
-aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $REGISTRY_URL
+aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URL
 docker pull $IMAGE
 TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
 PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
-VPC=vpc-0123456789abcdef0                  # { "Ref": "VPC" }
+VPC=vpc-0123456789abcdef0                  # ${VPC}
 for attempt in $(seq 12); do
-  ASYNCDB_ETCD=$(aws ec2 describe-instances --region eu-west-2 \
+  ASYNCDB_ETCD=$(aws ec2 describe-instances --region $REGION \
     --filters Name=tag:Name,Values=etcd Name=vpc-id,Values=$VPC Name=instance-state-name,Values=running \
     --query 'Reservations[].Instances[].PrivateIpAddress' --output text \
     | tr '\t' '\n' | grep . | sort | sed -e 's|^|http://|' -e 's|$|:2379|' | paste -sd,)
@@ -81,8 +87,9 @@ instance does.
 **Docker and the AWS CLI are both already on the image.** They come with
 [`BaseAmi`](/deployment/#parameters) — the ECS-optimised Amazon Linux 2023, taken
 for the daemon rather than for ECS — so the first two lines are an `enable` that
-is very nearly a no-op and a directory for the bind mount below, and what follows
-is a login, a pull and a run.
+is very nearly a no-op and a directory for the bind mount below, what follows is
+[the dual-stack preparation](/deployment/network#the-route-out) a private subnet
+with no IPv4 route out needs, and the rest is a login, a pull and a run.
 
 That is the whole of the host preparation, and it is worth saying what used to be
 here instead. The user data once opened with a `yum -y update` and a
@@ -109,10 +116,11 @@ and `ASYNCDB_NODE` would be `http://:8080`.
 The registry account and the region are literals; the version is not. That line
 is the template's `Version` parameter — an
 `AWS::SSM::Parameter::Value<String>` reading `/asyncdb/version`, which the build
-writes after it pushes — joined into the script, so the shell sees a tag and
-CloudFormation resolved it at deploy time. The consequence of the two that *are*
-literals is on the [overview](/deployment/#before-the-first-deploy): the stack is
-really only deployable into one account's `eu-west-2`.
+writes after it pushes — substituted into the script by `Fn::Sub`, so the shell
+sees a tag and CloudFormation resolved it at deploy time. The consequence of the
+two that *are* literals is on the
+[overview](/deployment/#before-the-first-deploy): the stack is really only
+deployable into one account's `eu-west-2`.
 
 The last five lines are what make the instance a member of a cluster rather than
 a database of its own:

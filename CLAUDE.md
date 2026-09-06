@@ -139,13 +139,17 @@ assertions and nothing else. Everything is an environment variable — `CHAOS_EX
 - **Order matters.** The agentless faults are first; `etcd-quorum-lost` is last, because it is
   the only one that leaves the cluster having been wrong about itself, and the pipeline deletes
   the stack next.
-- **Four of the seven inject through `aws:ssm:send-command`** and an `AWSFIS-Run-*` document,
-  and those documents install `at` and `tc` from the distribution repositories. They were skipped
-  behind a `CHAOS_SSM=1` for as long as the instances had no route out; they run by default now
-  that [the private subnets have one](#release), and what they depend on is an instance being
-  able to install a package while it is under test. The agentless three
-  (`aws:ec2:stop-instances`, `aws:network:disrupt-connectivity`) need nothing of the instances,
-  which is why they are still first. `chaos/README.md` is the page.
+- **Four of the seven inject through `aws:ssm:send-command`**, and they were skipped behind a
+  `CHAOS_SSM=1` for as long as the instances had no route out; they run by default now that
+  [the private subnets have one](#release). `node-latency` and `disk-fills` run an
+  `AWSFIS-Run-*` document, which installs `at` and `tc` from the distribution repositories — so
+  what they depend on is an instance being able to install a package while it is under test.
+  `scan-loses-a-node` and `etcd-unreachable` run `AWS-RunShellScript` and a rule of their own in
+  the `DOCKER-USER` chain, because **`AWSFIS-Run-Network-Blackhole-Port` blocks nothing here**:
+  it writes into `INPUT` and `OUTPUT`, and a container behind a published port is reached through
+  `FORWARD` and sends through it too, so the document reported success and injected nothing. The
+  agentless three (`aws:ec2:stop-instances`, `aws:network:disrupt-connectivity`) need nothing of
+  the instances, which is why they are still first. `chaos/README.md` is the page.
 - `node-stops` is the only test anywhere of the rebuild in `doc/runbook/rebuild.md`.
 - **`chaos.yaml` grants the permission as well as the role.** `ChaosPolicy` attaches the `fis:`
   actions and a `PassRole` scoped to `ChaosRole` to the IAM groups in the `Operators` parameter
@@ -286,7 +290,10 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
 - **`repository::repository`** is the pure-virtual seam, over tables, records, scans and range deletes.
   `rocksdb_repository` makes each table a **column family** and keeps its document in the default one
   under `"TABLE_<name>"`; dropping a table drops the column family, so the data goes with it. The
-  handle map is guarded by a `shared_mutex`.
+  handle map is guarded by a `shared_mutex`. Every write goes through `written` rather than `check`,
+  which `Resume()`s a store RocksDB stopped for a background error before reporting the failure:
+  a write that failed for want of space is otherwise sticky, and a disk with room on it again would
+  be a node refusing every write to half the keyspace until somebody restarted it.
 
 ### Domain conventions worth knowing
 

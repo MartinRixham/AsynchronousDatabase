@@ -15,9 +15,13 @@
 # unaffected, because a read does not write and the other zones hold their copies anyway.
 #
 # This is the most invasive experiment in the suite — a full root volume is a docker daemon and
-# an SSM agent with nowhere to write either — so it is last of the SSM tier and its percentage
-# is deliberately short of the whole disk. The fault goes in through the SSM agent, as the note
-# on the SSM faults in chaos/README.md describes.
+# an SSM agent with nowhere to write either — and it fills the whole disk, because anything short
+# of the whole disk is not this failure at all. AWSFIS-Run-Disk-Fill's Percent is a percentage of
+# the disk and not of what is free on it, so ninety per cent of a thirty gigabyte volume left
+# three gigabytes to write into and every write was taken. Only Percent 100 fills what is free,
+# and even that leaves three hundred kilobytes of slack, which is why the writes below carry a
+# megabyte each. The fault goes in through the SSM agent, as the note on the SSM faults in
+# chaos/README.md describes.
 
 source "$(dirname "$0")/harness.sh"
 
@@ -28,9 +32,9 @@ seed
 
 full=$(instances asyncdb | cut -f1 | head -1)
 seconds=${CHAOS_DISK_SECONDS:-240}
-percent=${CHAOS_DISK_PERCENT:-90}
+percent=${CHAOS_DISK_PERCENT:-100}
 
-echo "  Filling $percent% of the free space on $full."
+echo "  Filling the disk on $full to $percent%."
 
 cat > "$work/template.json" <<EOF
 {
@@ -64,11 +68,18 @@ fis_await_running || { verdict; exit 1; }
 
 # A write needs every copy, so a write of a key this node holds a copy of is a write this node
 # has to take — and it cannot. Roughly half of them, because a node holds half of its zone.
+#
+# Each one carries a megabyte, which is what makes it a write the disk cannot take rather than
+# one that fits in the slack the fill leaves behind. It is well inside the sixteen megabyte limit
+# in doc/database/reference.md, and the nodes that can take it take it.
+value=$work/value
+head -c $((1024 * 1024)) /dev/zero | tr '\0' 'x' > "$value"
+
 refused=0
 codes=
 
 for i in $(seq 1 30); do
-	body=$(curl --silent --max-time 20 --request PUT --data 'chaos' \
+	body=$(curl --silent --max-time 20 --request PUT --data-binary "@$value" \
 		--header 'Content-Type: application/octet-stream' \
 		--write-out '\n%{http_code}' "$base/table/$table/key/full-$i")
 
@@ -108,9 +119,20 @@ echo "  Waiting for the fault to be removed."
 
 fis_await_end $((seconds + 300))
 
+# A store that stopped for want of space does not notice the space coming back by itself: the
+# background error is sticky, and repository::rocksdb_repository::written is what resumes it, on
+# the next write that node is given. Without that, this is a node that refuses every write to
+# half the keyspace until somebody restarts it — which is not the recovery
+# doc/runbook/storage.md documents.
 await '(.nodes | length) == 6 and (.zones | length) == 3 and (.write_stalled | not)' "$settle" \
 	"the node is whole again and nothing is stalled"
 
 expect_writes 30 "every write is taken once there is room for it"
+
+# And the megabytes go, now that there is a store to take the delete: the disk they would be on
+# next is the one this experiment just filled.
+for i in $(seq 1 30); do
+	status --request DELETE "$base/table/$table/key/full-$i" > /dev/null
+done
 
 verdict

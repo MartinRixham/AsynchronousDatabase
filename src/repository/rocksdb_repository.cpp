@@ -105,14 +105,14 @@ void repository::rocksdb_repository::create_table(const table::table &table)
 	{
 		rocksdb::ColumnFamilyHandle *handle = NULL;
 
-		check(
+		written(
 			database->CreateColumnFamily(rocksdb::ColumnFamilyOptions(), table.name, &handle),
 			"Creating table \"" + table.name + "\"");
 
 		handles.insert({ table.name, handle });
 	}
 
-	check(
+	written(
 		database->Put(rocksdb::WriteOptions(), table_prefix + table.name, boost::json::serialize(table.json)),
 		"Writing table \"" + table.name + "\"");
 }
@@ -160,12 +160,12 @@ void repository::rocksdb_repository::delete_table(const std::string &table_name)
 	}
 
 	// Dropping the column family takes the data with it: no tombstones and no wait for compaction.
-	check(database->DropColumnFamily(handle->second), "Dropping table \"" + table_name + "\"");
+	written(database->DropColumnFamily(handle->second), "Dropping table \"" + table_name + "\"");
 
 	database->DestroyColumnFamilyHandle(handle->second);
 	handles.erase(handle);
 
-	check(
+	written(
 		database->Delete(rocksdb::WriteOptions(), table_prefix + table_name),
 		"Deleting table \"" + table_name + "\"");
 }
@@ -174,7 +174,7 @@ void repository::rocksdb_repository::write_record(const std::string &table_name,
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 
-	check(
+	written(
 		database->Put(rocksdb::WriteOptions(), table_handle(table_name), record.key, record.value),
 		"Writing a record to \"" + table_name + "\"");
 }
@@ -203,7 +203,7 @@ void repository::rocksdb_repository::delete_record(const std::string &table_name
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 
-	check(
+	written(
 		database->Delete(rocksdb::WriteOptions(), table_handle(table_name), key),
 		"Deleting a record from \"" + table_name + "\"");
 }
@@ -257,7 +257,7 @@ void repository::rocksdb_repository::delete_records(const std::string &table_nam
 
 	if (range.has_to)
 	{
-		check(database->DeleteRange(rocksdb::WriteOptions(), handle, range.from, range.to), what);
+		written(database->DeleteRange(rocksdb::WriteOptions(), handle, range.from, range.to), what);
 
 		return;
 	}
@@ -284,8 +284,28 @@ void repository::rocksdb_repository::delete_records(const std::string &table_nam
 
 	std::string last = it->key().ToString();
 
-	check(database->DeleteRange(rocksdb::WriteOptions(), handle, range.from, last), what);
-	check(database->Delete(rocksdb::WriteOptions(), handle, last), what);
+	written(database->DeleteRange(rocksdb::WriteOptions(), handle, range.from, last), what);
+	written(database->Delete(rocksdb::WriteOptions(), handle, last), what);
+}
+
+// Every write goes through here rather than through check() alone. A write that failed for want
+// of space leaves RocksDB refusing every write after it: the background error is sticky, and a
+// disk with room on it again is not something the store notices by itself. The next write is what
+// asks it to look, which is what makes doc/runbook/storage.md true — free the space and writes
+// carry on, with nothing restarted and no instance replaced.
+//
+// Back pressure is not that. Incomplete, Busy and TryAgain are a store that is working and saying
+// so, and there is nothing there to resume.
+void repository::rocksdb_repository::written(const rocksdb::Status &status, const std::string &what)
+{
+	if (!status.ok() && !status.IsIncomplete() && !status.IsBusy() && !status.IsTryAgain())
+	{
+		// Nothing at all when the database was never stopped, and what it cannot clear it leaves:
+		// check says what the status was either way, and the write that failed still failed.
+		database->Resume();
+	}
+
+	check(status, what);
 }
 
 bool repository::rocksdb_repository::is_write_stalled() const

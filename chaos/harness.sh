@@ -418,6 +418,38 @@ await()
 	return 1
 }
 
+# await_node <instance> <jq predicate> <timeout> <description> — the same, of one node over Run
+# Command rather than of the load balancer. It is what a fault that cuts nodes off needs: nothing
+# takes an isolated node out of the load balancer until its own health check has failed twice, so
+# until then a sample of /health through it is as likely to be the isolated side's answer as the
+# majority's — and a predicate about the membership then holds only when the sampling was lucky.
+# Asking a node that is on the side of the fault this is making a claim about needs no luck.
+await_node()
+{
+	local deadline=$((SECONDS + $3)) answer last=
+
+	while [ "$SECONDS" -lt "$deadline" ]; do
+		answer=$(node_health "$1")
+		[ -n "$answer" ] && last=$answer
+
+		if echo "$answer" | jq --exit-status "$2" > /dev/null 2>&1; then
+			result 0 "$4"
+			return 0
+		fi
+
+		sleep 5
+	done
+
+	if [ -z "$last" ]; then
+		result 1 "$4 — $1 could not be asked at all"
+	else
+		result 1 "$4 — $1 says $(echo "$last" \
+			| jq -c '{nodes: (.nodes | length), zones: (.zones | length), leads}' 2> /dev/null)"
+	fi
+
+	return 1
+}
+
 # The opposite: a state that must hold for a while rather than one that must arrive. It is what
 # says a node stayed in the membership while it was slow, which is the whole of "up but wrong".
 holds()
@@ -454,6 +486,55 @@ expect_not()
 }
 
 # ---------------------------------------------------------------------------- the fault
+
+# blackhole_parameters <seconds> <iptables match> — the documentParameters of an
+# aws:ssm:send-command action that stops a node answering, for the two experiments that need one.
+#
+# It is a script of our own and not AWSFIS-Run-Network-Blackhole-Port, because that document
+# writes its rules into INPUT and OUTPUT and asyncdb is a container behind a published port:
+# everything a peer sends it is DNATed and forwarded, so it goes through FORWARD and never INPUT,
+# and everything the container sends is forwarded too and never OUTPUT. The document ran, reported
+# success and blocked nothing — three nodes that were meant to be deaf answered a scan and refused
+# none of the writes, and a node that was meant to have lost etcd renewed its lease throughout.
+# DOCKER-USER is the chain docker leaves in FORWARD for exactly this, and it is the one that a
+# container's traffic passes through.
+#
+# It rejects rather than drops. A node waits thirty seconds on another node
+# (cluster::config::timeout_seconds), so a dropped packet is a node that hangs, and what these two
+# are about is a node that does not answer: a reset says so at once, the copy that does answer is
+# asked next, and node-latency is the experiment about waiting.
+blackhole_parameters()
+{
+	local seconds=$1 rule="$2 -j REJECT --reject-with tcp-reset"
+
+	jq -n --arg script "$(cat <<EOF
+set -o errexit
+
+rule='$rule'
+
+remove()
+{
+	iptables -D DOCKER-USER \$rule 2> /dev/null || true
+}
+
+# What the AWSFIS documents use 'at' for: the rule comes out whatever becomes of this script,
+# including a kill that no trap sees. It is later than the fault, and removing a rule that is
+# already gone is nothing.
+setsid nohup bash -c "sleep $((seconds + 120)); iptables -D DOCKER-USER \$rule 2> /dev/null" \
+	> /dev/null 2>&1 < /dev/null &
+
+trap 'remove; exit 0' INT TERM
+
+iptables -I DOCKER-USER \$rule
+echo "injected: DOCKER-USER \$rule"
+
+sleep $seconds
+
+remove
+echo "removed: DOCKER-USER \$rule"
+EOF
+)" '{ commands: [ $script ] } | tojson'
+}
 
 # fis_start <template file> — create the experiment template, start it, and remember both so
 # that the trap can stop and delete them whatever happens next.

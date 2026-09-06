@@ -80,11 +80,11 @@ there is nothing to translate: the addresses on the far side of it are the
 instance's own.
 
 There was a period with the endpoints, and what ended it was `chaos/`. Four of
-its seven experiments inject their fault with an `AWSFIS-Run-*` document, and
-those documents install `at` and `tc` from the distribution's repositories
-before they do anything. With no route off the instance they failed at that
-first step, so four of [the runbook's](/runbook/) failure modes had no test.
-They have one now.
+its seven experiments inject their fault through the SSM agent, and the two that
+run an `AWSFIS-Run-*` document install `at` and `tc` from the distribution's
+repositories before they do anything. With no route off the instance they failed
+at that first step, so four of [the runbook's](/runbook/) failure modes had no
+test. They have one now.
 
 **It is also the cheap answer**, which the endpoints were not: six interface
 endpoints in three availability zones was eighteen endpoint-hours an hour and

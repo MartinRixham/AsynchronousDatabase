@@ -58,6 +58,8 @@ namespace repository
 		std::string instance() const override;
 
 	private:
+		void written(const rocksdb::Status &status, const std::string &what);
+
 		rocksdb::ColumnFamilyHandle *table_handle(const std::string &table_name) const;
 	};
 }

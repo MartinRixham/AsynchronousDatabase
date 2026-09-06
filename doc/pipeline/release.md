@@ -127,9 +127,11 @@ is one, is the push.
 2. Push to `master`. The image builds, the tests run inside it, ECR is asked, and
    the commit is tagged.
 3. Put the `docker push` line back, or the image is not in ECR to be pulled.
-4. Bump `VERSION=` in the `LaunchTemplate` user data in `cloudformation.yaml` and
-   `make update-stack`. The stack does not pick the new tag up on its own, and
-   even then it reaches an instance only when that instance is
+4. `make update-stack`. There is nothing to edit: the `put-parameter` above
+   already wrote the tag to `/asyncdb/version`, and `Version` is an
+   `AWS::SSM::Parameter::Value<String>` that reads it, so the update is what
+   resolves it. The stack does not pick the new tag up on its own, and even then
+   it reaches an instance only when that instance is
    [replaced](/deployment/#rolling-out-a-new-version).
 
 Leaving `version` alone is a deliberate no-op release: the build still runs in

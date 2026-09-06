@@ -18,7 +18,10 @@
 # for everyone; here, one node is broken for etcd, and the rest of the cluster carries on
 # without it — which is what makes the recovery a re-registration rather than a repopulation.
 #
-# The fault goes in through the SSM agent. See the note on the SSM faults in chaos/README.md.
+# The fault goes in through the SSM agent, as a rule of our own in DOCKER-USER rather than one of
+# the AWSFIS documents — see blackhole_parameters in chaos/harness.sh for why a document that
+# blackholes a port leaves a containerised database talking to etcd throughout. The note on the
+# SSM faults in chaos/README.md is the rest of it.
 
 source "$(dirname "$0")/harness.sh"
 
@@ -32,6 +35,10 @@ echo "  Blackholing the path from $isolated to etcd."
 
 seconds=${CHAOS_ETCD_SECONDS:-240}
 
+# Nothing else on a database node is forwarded to port 2379, so the port alone is the etcd client
+# and no address is needed to name it. The node is left whole in every other direction: it serves
+# every request it is given and answers every peer, which is what makes this one node losing etcd
+# rather than one node losing the network.
 cat > "$work/template.json" <<EOF
 {
 	"description": "asyncdb chaos: one node cannot reach etcd",
@@ -50,8 +57,8 @@ cat > "$work/template.json" <<EOF
 			"actionId": "aws:ssm:send-command",
 			"parameters": {
 				"duration": "PT$((seconds / 60))M",
-				"documentArn": "arn:aws:ssm:$region::document/AWSFIS-Run-Network-Blackhole-Port",
-				"documentParameters": "{\"Port\":\"2379\",\"Protocol\":\"tcp\",\"TrafficType\":\"egress\",\"DurationSeconds\":\"$seconds\",\"InstallDependencies\":\"True\"}"
+				"documentArn": "arn:aws:ssm:$region::document/AWS-RunShellScript",
+				"documentParameters": $(blackhole_parameters "$seconds" "-p tcp --dport 2379")
 			},
 			"targets": { "Instances": "Node" }
 		}
@@ -63,15 +70,11 @@ fis_start "$work/template.json" || { verdict; exit 1; }
 fis_await_running || { verdict; exit 1; }
 
 # What the isolated node says about itself is the diagnosis, and only the node can be asked:
-# the load balancer picks whichever instance it likes, and five of the six are fine.
-own=$(node_health "$isolated")
-echo "  $isolated says: $(echo "$own" | jq -c '{nodes, zones, leads}' 2> /dev/null)"
-
-if echo "$own" | jq --exit-status '(.nodes | length) == 1' > /dev/null 2>&1; then
-	result 0 "the isolated node reports a membership of one, which is how this is recognised"
-else
-	result 1 "the isolated node reports a membership of one, which is how this is recognised"
-fi
+# the load balancer picks whichever instance it likes, and five of the six are fine. It is waited
+# for rather than asked once, because what it is waiting on is a renewal that has to fail before
+# there is anything to see, and the lease is ten seconds.
+await_node "$isolated" '(.nodes | length) == 1' "$settle" \
+	"the isolated node reports a membership of one, which is how this is recognised"
 
 # From the other five it is a node that stopped renewing, so it is gone within a lease. A sample
 # that hits the isolated node itself is the one that has no nodes field, and both answers are

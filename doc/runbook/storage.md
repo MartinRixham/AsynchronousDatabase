@@ -70,6 +70,14 @@ The status is the diagnosis, and the common ones are:
 | `Corruption` | Damaged SST files | **The store is not recoverable here.** Replace the node and rewrite the data |
 | `NotFound` on a column family | A table that was dropped mid-request | Declare the table again |
 
+A write that fails for want of space stops the store, and RocksDB does not
+notice the space coming back: the background error is sticky. **The next write
+is what resumes it** — `written` in `rocksdb_repository` asks the store to try
+again before it reports the failure — so a volume with room on it again is a
+node taking writes again, with nothing restarted and no instance replaced. The
+first write after the space came back may still be refused; the one after it is
+not.
+
 There is no repair tool wired in and no backup to restore from, so **the
 recovery for a genuinely broken store is to replace it and write the data
 again**, which is the same recovery as

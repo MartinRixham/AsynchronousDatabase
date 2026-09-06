@@ -13,7 +13,10 @@
 # It is also the state that is next to impossible to arrange by hand, which is the argument for
 # doing this with FIS at all: three targets, one instance each, filtered by availability zone.
 #
-# The fault goes in through the SSM agent. See the note on the SSM faults in chaos/README.md.
+# The fault goes in through the SSM agent, as a rule of our own in DOCKER-USER rather than one of
+# the AWSFIS documents — see blackhole_parameters in chaos/harness.sh for why a document that
+# blackholes a port leaves a containerised database answering. The note on the SSM faults in
+# chaos/README.md is the rest of it.
 
 source "$(dirname "$0")/harness.sh"
 
@@ -29,9 +32,15 @@ count=$(echo "$deaf" | wc -l)
 expect "$count" 3 "one node was picked in each of three zones"
 [ "$count" = 3 ] || { verdict; exit 1; }
 
-echo "  Blackholing port 8080 on $(echo "$deaf" | tr '\n' ' ')"
-
 seconds=${CHAOS_DEAF_SECONDS:-300}
+
+# Everything addressed to port 8080 that is not addressed to another instance is a peer's request
+# on its way into the container, because DOCKER-USER sees it after the address has been translated.
+# What the container sends to a peer's 8080 still carries that peer's address and is left alone, so
+# the node goes deaf without going blind: it answers no peer and still forwards for a client.
+cidr=$(aws ec2 describe-vpcs --vpc-ids "$vpc" --query 'Vpcs[0].CidrBlock' --output text)
+
+echo "  Blackholing port 8080 into the container on $(echo "$deaf" | tr '\n' ' ')"
 
 cat > "$work/template.json" <<EOF
 {
@@ -51,8 +60,8 @@ cat > "$work/template.json" <<EOF
 			"actionId": "aws:ssm:send-command",
 			"parameters": {
 				"duration": "PT$((seconds / 60))M",
-				"documentArn": "arn:aws:ssm:$region::document/AWSFIS-Run-Network-Blackhole-Port",
-				"documentParameters": "{\"Port\":\"8080\",\"Protocol\":\"tcp\",\"TrafficType\":\"ingress\",\"DurationSeconds\":\"$seconds\",\"InstallDependencies\":\"True\"}"
+				"documentArn": "arn:aws:ssm:$region::document/AWS-RunShellScript",
+				"documentParameters": $(blackhole_parameters "$seconds" "-p tcp --dport 8080 ! -d $cidr")
 			},
 			"targets": { "Instances": "Deaf" }
 		}
@@ -68,8 +77,15 @@ fis_await_running || { verdict; exit 1; }
 holds '(.nodes | length) == 6 and (.zones | length) == 3' 30 \
 	"a node that does not answer stays in the membership while its lease is renewed"
 
-# A read needs one copy and passes over a node that does not answer, so every key still reads.
-expect_reads 40 "every key read is answered by a copy that does answer"
+# A read needs one copy and passes over a node that does not answer, so every key still reads —
+# but not from everywhere, and that is the arithmetic the runbook leaves out. The copies of a
+# partition are one node per zone and one node per zone has gone deaf, so one partition in eight
+# has every copy of it deaf. Those keys are held by three nodes that no other node can reach and
+# that are still in the load balancer answering for what they hold, so they are read by a request
+# that lands on one of them and by nothing else. The attempts are the load balancer coming round
+# to them.
+expect_readable 40 8 "every key is read, from a copy that answers or from a deaf copy itself"
+printf '  ---- reads with a node deaf in every zone: %s\n' "$(codes)"
 
 # A scan is not that. Every zone is short a node, and there is no fourth zone.
 scan=$(scan_status)
