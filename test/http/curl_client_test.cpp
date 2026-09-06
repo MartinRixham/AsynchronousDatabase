@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include "http/http_client.h"
+#include "server/listening.h"
 #include "server/server.h"
 
 // A client with a real server to talk to, because what is worth testing here is what libcurl does
@@ -29,6 +30,11 @@ protected:
 		database_server = std::make_shared<server::server>(0, 2, "/tmp/asyncdb");
 		serving = true;
 		thread = std::thread([server = database_server]() { server->serve(); });
+
+		// The port is opened by serve() and not by the constructor, so it is waited for rather
+		// than assumed. A request that beats the serving thread to it is refused at once, which
+		// is a client that answers no answer rather than a server that is not there.
+		server::wait_until_listening(database_server->port());
 	}
 
 	void TearDown()
