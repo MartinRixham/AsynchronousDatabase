@@ -96,7 +96,9 @@ or a larger image eats it, and the failure looks like an instance that never
 comes up rather than like a timeout. There is room to raise it — nothing waits on
 the grace period except the first health check of a genuinely dead instance. The
 `yum -y update` and the install of AWS CLI v2 that used to be in here are
-[baked into the AMI](/pipeline/ami) and no longer cost anything at boot.
+[gone](/deployment/database#the-launch-template): Amazon Linux 2023 ships the
+CLI, and the base image is taken as AWS publishes it rather than patched at
+boot, so neither costs anything here any more.
 
 ## The group does not replace a failed application
 
@@ -160,7 +162,7 @@ resume. The usual causes are the pull and the grace period.
 | `ClusterALB` already exists | A stack is already standing. The name is fixed, so **there can be one of these per region** |
 | Parameter `/asyncdb/version` not found | The SSM parameter does not exist. CloudFormation cannot resolve it, so the operation fails outright |
 | The group reports a failed activity, not a template error | Something the launch template names is missing — the AMI, the instance profile or the image |
-| An etcd instance has no container | `EtcdAmi` does not carry `quay.io/coreos/etcd:v3.5.9`. There is [no route to quay.io any more](/deployment/network#why-the-instances-are-private), so the user data cannot pull it — or the node found a cluster it could not join, which is [a quorum failure](/runbook/membership#etcd-has-lost-quorum) and deliberate |
+| An etcd instance has no container | The tag `/asyncdb/etcd` names is not in this account's ECR. There is [no route to quay.io any more](/deployment/network#why-the-instances-are-private), so an instance can only pull [what the build mirrored](/pipeline/#mirroring-etcd) — or the node found a cluster it could not join, which is [a quorum failure](/runbook/membership#etcd-has-lost-quorum) and deliberate |
 | Either tier came up in a cluster of one | `ec2:DescribeInstances` did not answer. `Ec2Endpoint` has to be up before an instance boots, and the instance profile has to carry the `discovery` policy |
 | The database instances have no container | The ECR endpoints. `docker login` and `docker pull` go through `EcrApiEndpoint`, `EcrDockerEndpoint` and `S3Endpoint`, and all three have to be up before an instance boots |
 

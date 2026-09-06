@@ -6,20 +6,20 @@
       "Type": "String",
       "Default": "t3.micro"
     },
-    "DatabaseAmi": {
+    "BaseAmi": {
       "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
-      "Default": "/asyncdb/ami/database",
-      "Description": "The image the database tier launches from, resolved at deploy time from the SSM parameter the AMI workflow writes. It is the ECS-optimised Amazon Linux 2023 image with the packages the user data used to install at every boot already on it, and deliberately without the asyncdb image, which is still pulled from ECR below."
-    },
-    "EtcdAmi": {
-      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
-      "Default": "/asyncdb/ami/etcd",
-      "Description": "The image the etcd tier launches from, the same base with the etcd image already pulled into it. The tier is in a private subnet with no route to the internet and no endpoint to quay.io, so an image that does not hold that tag leaves the docker run below with nothing to pull."
+      "Default": "/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id",
+      "Description": "The image both tiers launch from, resolved at deploy time from the public parameter AWS keeps current. It is the ECS-optimised Amazon Linux 2023 image, taken for the Docker daemon already installed and running on it and not for ECS, and it carries neither tier's container: a database instance pulls asyncdb:$VERSION and an etcd instance pulls etcd:$ETCD_VERSION, both from this account's own registry."
     },
     "Version": {
       "Type": "AWS::SSM::Parameter::Value<String>",
       "Default": "/asyncdb/version",
       "Description": "The image tag to run, resolved at deploy time from the SSM parameter the build writes after it pushes to ECR. The repository's version file is what that build reads, so the tag deployed here is the one CI actually published rather than whatever happens to be checked out."
+    },
+    "EtcdVersion": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Default": "/asyncdb/etcd",
+      "Description": "The etcd tag to run, the same arrangement as Version: the repository's etcd-version file is what the build mirrors out of quay.io into this account's registry, and this is the parameter it writes afterwards. The tier is in a private subnet with no route to quay.io, so the mirror is how the tag reaches an instance at all."
     }
   },
   "Resources": {
@@ -409,7 +409,6 @@
           }
         ],
         "ManagedPolicyArns": [
-          "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role",
           "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
           "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
         ]
@@ -425,7 +424,7 @@
       "Type": "AWS::EC2::LaunchTemplate",
       "Properties": {
         "LaunchTemplateData": {
-          "ImageId": { "Ref": "DatabaseAmi" },
+          "ImageId": { "Ref": "BaseAmi" },
           "InstanceType": { "Ref": "InstanceType" },
           "BlockDeviceMappings": [
             {
@@ -453,6 +452,8 @@
                 "\n",
                 [
                   "#! /bin/bash",
+                  "systemctl enable --now docker",
+                  "mkdir -p /var/lib/asyncdb",
                   "REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com",
                   { "Fn::Join": [ "", [ "VERSION=", { "Ref": "Version" } ] ] },
                   "IMAGE=$REGISTRY_URL/asyncdb:$VERSION",
@@ -570,6 +571,7 @@
           }
         ],
         "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
           "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
         ]
       }
@@ -584,8 +586,18 @@
       "Type": "AWS::EC2::LaunchTemplate",
       "Properties": {
         "LaunchTemplateData": {
-          "ImageId": { "Ref": "EtcdAmi" },
+          "ImageId": { "Ref": "BaseAmi" },
           "InstanceType": { "Ref": "InstanceType" },
+          "BlockDeviceMappings": [
+            {
+              "DeviceName": "/dev/xvda",
+              "Ebs": {
+                "VolumeSize": 30,
+                "VolumeType": "gp3",
+                "DeleteOnTermination": true
+              }
+            }
+          ],
           "IamInstanceProfile": {
             "Name": { "Ref": "EtcdInstanceProfile" }
           },
@@ -602,8 +614,13 @@
                 "\n",
                 [
                 "#! /bin/bash",
+                "systemctl enable --now docker",
+                "mkdir -p /var/lib/etcd",
                 "REGION=eu-west-2",
-                "IMAGE=quay.io/coreos/etcd:v3.5.9",
+                "REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com",
+                { "Fn::Join": [ "", [ "IMAGE=$REGISTRY_URL/etcd:", { "Ref": "EtcdVersion" } ] ] },
+                "aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URL",
+                "docker pull $IMAGE",
                 { "Fn::Join": [ "", [ "VPC=", { "Ref": "VPC" } ] ] },
                 "SIZE=3",
                 "TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H \"X-aws-ec2-metadata-token-ttl-seconds: 60\")",

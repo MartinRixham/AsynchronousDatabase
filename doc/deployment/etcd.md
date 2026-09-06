@@ -64,18 +64,21 @@ Tuesday.
 
 ## The launch template
 
-`EtcdLaunchTemplate` is `EtcdAmi`, `InstanceType`, `EtcdSecurityGroup`,
-`EtcdInstanceProfile`, a `Name=etcd` tag — **which is what discovery filters on**
-— and user data. There is no `KeyName`, because
-[there is no SSH](/deployment/network#getting-onto-an-instance), and no block
-device mapping, because the [bake](/pipeline/ami) already asked for thirty
-gigabytes of gp3.
+`EtcdLaunchTemplate` is `BaseAmi`, `InstanceType`, thirty gigabytes of gp3,
+`EtcdSecurityGroup`, `EtcdInstanceProfile`, a `Name=etcd` tag — **which is what
+discovery filters on** — and user data. There is no `KeyName`, because
+[there is no SSH](/deployment/network#getting-onto-an-instance).
 
 ```bash
 #! /bin/bash
+systemctl enable --now docker
+mkdir -p /var/lib/etcd
 REGION=eu-west-2
-IMAGE=quay.io/coreos/etcd:v3.5.9
-VPC=vpc-0123456789abcdef0    # { "Ref": "VPC" }
+REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com
+IMAGE=$REGISTRY_URL/etcd:v3.5.9    # { "Ref": "EtcdVersion" } for the tag
+aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URL
+docker pull $IMAGE
+VPC=vpc-0123456789abcdef0          # { "Ref": "VPC" }
 SIZE=3
 TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
 SELF=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
@@ -87,6 +90,27 @@ read over [IMDSv2](/deployment/database#the-launch-template). A member is
 therefore `etcd-i-0abc…=http://10.0.1.37:2380`, and no two instances that ever
 existed can collide on it — which is the whole reason the old `etcd-1`,
 `etcd-2`, `etcd-3` could not be reused by a replacement.
+
+### Where the image comes from
+
+`quay.io/coreos/etcd` is where the tag originates and **not** where an instance
+gets it. The tier is in
+[a private subnet whose only route out is to the named AWS
+services](/deployment/network#why-the-instances-are-private), so quay.io is not
+reachable from it at all; the tag is
+[mirrored into ECR by the build](/pipeline/#mirroring-etcd), and the pull here is
+the same login and the same registry the
+[database tier](/deployment/database#the-launch-template) uses one endpoint over.
+That is why `EtcdRole` carries `AmazonEC2ContainerRegistryReadOnly` alongside its
+`DescribeInstances`.
+
+The tag is written by hand in exactly one place, the `etcd-version` file, which
+the build mirrors and then writes to `/asyncdb/etcd` for `EtcdVersion` to resolve
+at deploy time. `docker-compose.yml` pins the same version against quay.io
+directly, because a laptop has an internet connection and no ECR login.
+
+The `docker pull` is **not** redundant with the `docker run` at the end of this
+script: `etcdctl()` below runs out of the same image, and it runs first.
 
 ### The membership the instances imply
 

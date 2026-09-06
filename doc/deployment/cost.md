@@ -60,8 +60,8 @@ inputs are not.
 | Data out to the internet | $0.09 / GB | After 100 GB a month, free across the account |
 | Data between availability zones | $0.01 / GB | Charged **in each direction**, so $0.02 per GB that crosses |
 | Data in from the internet | free | Which is why [a write is cheaper than a read](#what-each-endpoint-costs) |
-| ECR storage | $0.10 / GB-month | One image, a few hundred megabytes |
-| SSM standard parameters | free | `/asyncdb/version` and the two `/asyncdb/ami/…` the tiers launch from |
+| ECR storage | $0.10 / GB-month | Two images — asyncdb and the mirrored etcd — a few hundred megabytes between them |
+| SSM standard parameters | free | `/asyncdb/version` and `/asyncdb/etcd`, the two tags the tiers pull |
 
 Assume a 730 hour month throughout.
 

@@ -7,20 +7,23 @@ scaling group, and the load balancer, its target group and its listener.
 
 ## The role
 
-`InstanceRole` is assumable by `ec2.amazonaws.com` and carries three AWS managed
+`InstanceRole` is assumable by `ec2.amazonaws.com` and carries two AWS managed
 policies and one inline policy of its own:
 
 | Policy | For |
 | --- | --- |
 | `AmazonEC2ContainerRegistryReadOnly` | `aws ecr get-login-password` and the `docker pull` that follows |
 | `AmazonSSMManagedInstanceCore` | Session Manager, which is [the only way onto an instance](/deployment/network#getting-onto-an-instance) |
-| `service-role/AmazonEC2ContainerServiceforEC2Role` | Nothing here — it is the policy the ECS agent needs, and there is no ECS cluster in this stack |
 | `discovery`, inline | `ec2:DescribeInstances`, which is how the user data below [finds the etcd tier](/deployment/etcd#how-the-database-tier-finds-it) |
 
-The third one comes with the ECS-optimised AMI by habit rather than by need,
-and it is the widest of the three. Removing it costs nothing.
+There **was** a fourth, `service-role/AmazonEC2ContainerServiceforEC2Role`. It is
+the policy the ECS agent needs, and it was here because the instances launch from
+the ECS-optimised image — which they are taken for
+[the Docker daemon on it and not for ECS](/deployment/#parameters). There is no
+cluster in this stack for an agent to register with, so the widest of the four
+grants was buying nothing, and it is gone.
 
-The fourth is the tier's own, and it is the same policy
+The inline one is the tier's own, and it is the same policy
 [the etcd tier carries](/deployment/etcd). `ec2:DescribeInstances` takes no
 resource, so `"Resource": "*"` is the only form it has — the `vpc-id` filter in
 the query is what narrows the answer, not the grant.
@@ -42,6 +45,8 @@ shell lines, run once as root at first boot:
 
 ```bash
 #! /bin/bash
+systemctl enable --now docker
+mkdir -p /var/lib/asyncdb
 REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com
 VERSION=0.0.3          # { "Ref": "Version" }, resolved from SSM at deploy time
 IMAGE=$REGISTRY_URL/asyncdb:$VERSION
@@ -73,19 +78,28 @@ that is restarted opens what the one before it wrote instead of coming back as a
 empty node. It is still the [root volume](#the-root-volume), so it goes when the
 instance does.
 
-Docker and the AWS CLI are both already there — that is what
-[the bake](/pipeline/ami) is for. The user data used to open with a `yum -y
-update` and a download-and-install of AWS CLI v2, because `get-login-password` is
-a v2 command and Amazon Linux ships v2 but not on every variant. Call it two
-minutes, inside a `HealthCheckGracePeriod` of 200 seconds, on every instance, at
-every launch. `DatabaseAmi` is that work done once, and what is left here is a
-login, a pull and a run.
+**Docker and the AWS CLI are both already on the image.** They come with
+[`BaseAmi`](/deployment/#parameters) — the ECS-optimised Amazon Linux 2023, taken
+for the daemon rather than for ECS — so the first two lines are an `enable` that
+is very nearly a no-op and a directory for the bind mount below, and what follows
+is a login, a pull and a run.
 
-The image is **not** in the AMI, deliberately. It moves every release, so baking
-it would put an AMI build on the release path; at a few tens of megabytes from a
-registry in the same region the pull it would save is seconds. `Version` still
-resolves `/asyncdb/version` at deploy time, so a release reaches an instance when
-that instance is replaced, and no AMI has to be built for it.
+That is the whole of the host preparation, and it is worth saying what used to be
+here instead. The user data once opened with a `yum -y update` and a
+download-and-install of AWS CLI v2, because `get-login-password` is a v2 command
+and Amazon Linux ships v2 but not on every variant — call it two minutes, inside
+a `HealthCheckGracePeriod` of 200 seconds, on every instance, at every launch.
+That is what a Packer bake was introduced to do once rather than six times, and
+then Amazon Linux 2023 turned out to ship the CLI, which left the bake holding a
+`dnf -y update` and a `mkdir`. **A patch level baked in March is staler in June
+than the base image AWS republished in May**, so the bake was removed and the
+two lines that survived it are these.
+
+The image is **not** on the AMI, and never was. It moves every release, so
+baking it would put an image build on the release path; at a few tens of
+megabytes from a registry in the same region the pull it would save is seconds.
+`Version` resolves `/asyncdb/version` at deploy time, so a release reaches an
+instance when that instance is replaced.
 
 The private address and the zone are read over **IMDSv2**. Amazon Linux 2023
 AMIs are registered as IMDSv2-only, so the token `PUT` is not belt and braces — the

@@ -46,8 +46,7 @@ export default defineConfig({
 				items: [
 					{ text: "Overview", link: "/pipeline/" },
 					{ text: "The image build", link: "/pipeline/image" },
-					{ text: "The release gate", link: "/pipeline/release" },
-					{ text: "The image bake", link: "/pipeline/ami" }
+					{ text: "The release gate", link: "/pipeline/release" }
 				]
 			},
 			{

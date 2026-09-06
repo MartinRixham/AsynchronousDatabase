@@ -53,9 +53,9 @@ They are private now, and the pulls go through **VPC endpoints instead of a NAT
 gateway**. The difference between the two is what a private subnet is allowed to
 reach: a NAT gateway is a route to all of the internet, and endpoints are a
 route to the named AWS services and nothing else. `quay.io` is not one of them,
-so it is off the boot path for good — which is
-[what the etcd AMI already bakes](/deployment/etcd#the-launch-template), and
-is now a requirement rather than a saving.
+so it is off the boot path for good — which is why the etcd tag is
+[mirrored into this account's ECR](/deployment/etcd#where-the-image-comes-from)
+and pulled over the same two endpoints the database image is.
 
 **It is not the cheap answer.** Six interface endpoints in three availability
 zones is eighteen endpoint-hours an hour, and
@@ -160,7 +160,10 @@ pair that cannot be used is a prerequisite the stack no longer needs.
 **Session Manager is the way in**, which is what the three `ssm` endpoints are
 for. The database tier already carried `AmazonSSMManagedInstanceCore` on
 `InstanceRole`; the etcd tier had no role at all and now has `EtcdRole`, which
-carries that policy and nothing else.
+carries that policy alongside the `ec2:DescribeInstances` it
+[finds its peers with](/deployment/etcd#the-membership-the-instances-imply) and
+the `AmazonEC2ContainerRegistryReadOnly` it
+[pulls etcd with](/deployment/etcd#where-the-image-comes-from).
 
 ```bash
 aws ssm start-session --target i-0123456789abcdef0

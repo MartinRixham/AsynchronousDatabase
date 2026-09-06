@@ -94,29 +94,35 @@ come up and pull nothing.**
 | Parameter | Default | Is |
 | --- | --- | --- |
 | `InstanceType` | `t3.micro` | Used for both groups — the database instances and the etcd instances |
-| `DatabaseAmi` | `/asyncdb/ami/database` | An SSM parameter of this account's, resolved at deploy time to the image [the bake](/pipeline/ami) built for the database tier |
-| `EtcdAmi` | `/asyncdb/ami/etcd` | The same, for the etcd tier |
-| `Version` | `/asyncdb/version` | An SSM parameter of this account's, resolved at deploy time to the image tag the instances pull |
+| `BaseAmi` | `/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id` | A **public** parameter of AWS's, resolved at deploy time to the image both tiers launch from |
+| `Version` | `/asyncdb/version` | An SSM parameter of this account's, resolved at deploy time to the asyncdb tag the database instances pull |
+| `EtcdVersion` | `/asyncdb/etcd` | The same, for the etcd tag the etcd instances pull out of this account's registry |
 
-Both AMIs are the **ECS-optimised Amazon Linux 2023** image with each tier's boot
-dependencies already installed. The ECS-optimised part is used **for Docker, not
-for ECS**: there is no ECS cluster in the template, no task definition and no
-agent doing anything; it is simply the Amazon Linux with a Docker daemon already
-installed and running, so the user data can go straight to `docker run`. It is
-**2023**: the 2 the stack used to run went end of life in June 2025, and what the
-move cost is an IMDSv2 token for the metadata read, since 2023's AMIs take no
-unauthenticated metadata request.
+`BaseAmi` is the **ECS-optimised Amazon Linux 2023** image, and the
+ECS-optimised part is used **for Docker, not for ECS**: there is no ECS cluster
+in the template, no task definition and no agent doing anything; it is simply the
+Amazon Linux with a Docker daemon already installed, so the user data can go
+straight to `docker run`. It is **2023**: the 2 the stack used to run went end of
+life in June 2025, and what the move cost is an IMDSv2 token for the metadata
+read, since 2023's AMIs take no unauthenticated metadata request.
 
-The template **used to resolve the ECS-optimised AMI itself**, at every deploy,
-through the public parameter
-`/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id`. That
-never went stale, and it cost the thing that matters more: two instances of the
-same auto scaling group launched a fortnight apart were two different operating
-systems, because an instance replacement picks up whatever is current. Naming
-this account's own parameters instead makes taking a newer Amazon Linux a
-deliberate act with [a workflow](/pipeline/ami) behind it — at the cost of the
-parameters having to [exist before the first
-deploy](/pipeline/ami#where-the-ids-go).
+**One parameter, for both tiers, and it is AWS's rather than this account's.**
+There was a Packer bake behind two parameters of our own for a while, and what
+it put into the images was a `dnf -y update`, a directory, and — for the etcd
+tier — the container it had no route to quay.io to pull. The
+[mirror](/pipeline/#mirroring-etcd) does the last of those better, because it
+takes the tag off the boot path *and* leaves it in one file rather than in a
+bake nothing on the release path runs; the other two are two lines of user data.
+What was left was a bake whose only remaining product was a patch level that went
+stale the day it was taken, against a base image AWS republishes.
+
+The cost of naming AWS's parameter is real and worth stating: **two instances of
+the same auto scaling group launched a fortnight apart can be two different
+operating systems**, because an instance replacement picks up whatever is current
+and nothing here pins it. That is accepted rather than overlooked — a node holds
+no state that outlives it, [the tier is replaced rather than
+patched](/deployment/database#the-root-volume), and pinning it again is one
+parameter override away.
 
 ## What is in the stack
 
@@ -129,7 +135,7 @@ deploy](/pipeline/ami#where-the-ids-go).
 
 ## Before the first deploy
 
-Three things the template needs and does not create. **A key pair is no longer
+Four things the template needs and does not create. **A key pair is no longer
 one of them**: the instances are in
 [private subnets with no SSH](/deployment/network#getting-onto-an-instance) and
 neither tier sets `KeyName` any more.
@@ -148,6 +154,13 @@ neither tier sets `KeyName` any more.
     --value "$(cat version)" --overwrite
   ```
 
+- **An ECR repository named `etcd` and an SSM parameter named `/asyncdb/etcd`**,
+  the same arrangement one tier down: `EtcdVersion` resolves the parameter at
+  deploy time and the etcd instances pull the tag it names. Neither is a thing to
+  create by hand in the ordinary case — [the build makes both](/pipeline/#mirroring-etcd)
+  before it deploys, on every push and not only on a release — so this is a
+  precondition only for a stack stood up before CI has ever run against the
+  account.
 - **The image tag itself**, pushed under that name. An instance that cannot pull
   simply has no container: `docker run` fails, the load balancer takes the
   instance out of service on the health check, and the group, whose health check

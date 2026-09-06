@@ -79,6 +79,36 @@ jobs:
           git push origin "$VERSION"
         fi
 
+    # The etcd tier is in a private subnet with no route to quay.io, so the tag it runs has to be
+    # in this account's registry before the stack that pulls it exists. Mirroring is idempotent
+    # and unconditional: it is the tag in `etcd-version` that decides whether there is anything
+    # to do, and not the `version` gate above, because the two move for different reasons.
+    - name: Mirror etcd into ECR
+      run: |
+        ETCD_VERSION=$(cat etcd-version)
+        REGISTRY=${{ steps.ecr-login.outputs.registry }}
+
+        aws ecr describe-repositories --repository-name etcd > /dev/null 2>&1 \
+          || aws ecr create-repository --repository-name etcd > /dev/null
+
+        if aws ecr describe-images \
+          --repository-name etcd \
+          --image-ids imageTag=$ETCD_VERSION > /dev/null 2>&1
+        then
+          echo "etcd:$ETCD_VERSION is mirrored already."
+        else
+          echo "Mirroring quay.io/coreos/etcd:$ETCD_VERSION."
+          docker pull quay.io/coreos/etcd:$ETCD_VERSION
+          docker tag quay.io/coreos/etcd:$ETCD_VERSION $REGISTRY/etcd:$ETCD_VERSION
+          docker push $REGISTRY/etcd:$ETCD_VERSION
+        fi
+
+        aws ssm put-parameter \
+          --name /asyncdb/etcd \
+          --type String \
+          --value "$ETCD_VERSION" \
+          --overwrite
+
     - name: Deploy the stack
       id: deploy
       run: |

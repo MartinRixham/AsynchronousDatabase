@@ -336,7 +336,9 @@ Built on [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum), not a m
 
 Pushing to `master` builds the Docker image and, **only if the tag in the `version` file does not already
 exist in ECR**, pushes it, writes that tag to the SSM parameter `/asyncdb/version` and git-tags the commit.
-It then `make create-stack`s the CloudFormation stack, waits for `/health` to name six nodes, runs the
+It then mirrors the etcd tag `etcd-version` names into ECR if it is not there already and writes
+`/asyncdb/etcd` — unconditionally, whatever the version gate decided — `make create-stack`s the
+CloudFormation stack, waits for `/health` to name six nodes, runs the
 Postman collection against the stack's `Url` output with `newman`, then the Playwright journeys and
 then `perf/write.sh` and `perf/read.sh` against that same address, and `make delete-stack`s it again —
 whether they passed or not, so a failing assertion, journey or load run fails the build and still
@@ -347,7 +349,8 @@ Bump `version` to cut a release; leaving it unchanged makes CI a no-op publish. 
 lives in `cloudformation.json`, driven by the `Makefile` (`make create-stack` / `update-stack` /
 `delete-stack`), and is documented in `doc/deployment/`.
 
-`version` is the only place the tag is written by hand. The template's `Version` parameter is an
+`version` is the only place the asyncdb tag is written by hand (`etcd-version` is the same thing for
+the mirrored etcd tag — see [Machine images](#machine-images)). The template's `Version` parameter is an
 `AWS::SSM::Parameter::Value<String>` defaulting to `/asyncdb/version`, so `make update-stack` resolves
 the tag at deploy time from what CI actually published rather than from the working tree — which is why
 the Makefile passes no parameter, and why passing one means passing the *parameter name* and never the
@@ -380,18 +383,30 @@ add printed. A node that finds a cluster it cannot join (no quorum) exits rather
 second one. `ASYNCDB_ETCD` is the same query without the join, read **once at boot**, so replacing
 every etcd instance without rolling the database tier strands it. `doc/deployment/etcd.md` is the page.
 
-### Machine images (`ami/`)
+### Machine images
 
-`.github/workflows/ami.yaml` is run **by hand** from the Actions tab and bakes one AMI per tier with
-Packer, from `ami/asyncdb.pkr.hcl`: `ami/database.sh` (the `dnf` update and `/var/lib/asyncdb`) and `ami/etcd.sh`
-(`quay.io/coreos/etcd:v3.5.9`, pinned to the same tag the launch template runs — and **required**,
-because a private subnet has no route to quay.io to pull it at boot), each followed by
-"amazon-parameterstore"` block; the id of the result is written to `/asyncdb/ami/{database,etcd}`
-out of Packer's `manifest.json`, and `cloudformation.json` resolves those two as its `DatabaseAmi`
-and `EtcdAmi` parameters — so **they have to exist before a deploy**, exactly as `/asyncdb/version`
-does, and taking a newer Amazon Linux is a bake rather than something an instance replacement does
-on its own. **The asyncdb image is deliberately not baked** — an instance still pulls
-`asyncdb:$VERSION` from ECR at boot, so a release needs no AMI behind it. The scripts run as root
-and `set -euo pipefail`, so a failed install is a failed bake rather than an image missing half of
-itself. `packer fmt` disagrees with the template's tabs and nothing runs it. `doc/pipeline/ami.md`
-is the page.
+**There are none, deliberately.** Both tiers launch from `BaseAmi`, the public parameter
+`/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id`, resolved by
+CloudFormation at deploy time — the ECS-optimised Amazon Linux 2023, taken for the Docker daemon
+already on it and **not** for ECS: there is no cluster, no task definition and no agent doing
+anything. Each tier's user data does its own host preparation, which is `systemctl enable --now
+docker` and one `mkdir`, and then pulls its container from ECR.
+
+There was a Packer bake here (`ami/`, `.github/workflows/ami.yaml`, `/asyncdb/ami/{database,etcd}`)
+and it is gone. Its one load-bearing product was the etcd container, which a private subnet has
+[no route to quay.io](#release) to pull: **the build now mirrors that tag into this account's ECR
+instead**, which takes quay.io off the boot path the same way and puts the tag on the pipeline that
+already runs rather than on one somebody has to remember to run. What was left of the bake
+afterwards was a `dnf -y update` that goes stale the day it is taken, against a base image AWS
+republishes patched. The cost of the change is that two instances of one auto scaling group
+launched a fortnight apart can be two different operating systems; that is accepted, and pinning it
+again is one parameter override away.
+
+**The etcd tag is written by hand in one place, `etcd-version`.** The build reads it, mirrors
+`quay.io/coreos/etcd:$ETCD_VERSION` into ECR if it is not there already, and writes
+`/asyncdb/etcd`, which the template's `EtcdVersion` parameter resolves — exactly the arrangement
+`version` and `/asyncdb/version` have for the asyncdb image. That step is **not** guarded by the
+version gate: a push that publishes nothing still leaves the registry and the parameter correct,
+because the two tags move for different reasons. `docker-compose.yml` names the same version
+against quay.io directly, because a laptop has an internet connection. `doc/pipeline/index.md` is
+the page.

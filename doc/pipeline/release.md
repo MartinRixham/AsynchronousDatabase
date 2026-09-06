@@ -58,36 +58,40 @@ commit gets a git tag saying a version shipped that never left the runner.
 ## Tagging and pushing
 
 ```yaml
-- name: Tag Docker image for ECR
+- name: Tag and push Docker image to ECR
   if: steps.check_version.outputs.publish == 'true'
   run: |
     IMAGE_URI=${{ steps.ecr-login.outputs.registry }}/asyncdb:$VERSION
     docker tag asyncdb:latest $IMAGE_URI
+    docker push $IMAGE_URI
 
-- name: Push Docker image to ECR
+- name: Record published version in SSM
   if: steps.check_version.outputs.publish == 'true'
   run: |
-    IMAGE_URI=${{ steps.ecr-login.outputs.registry }}/asyncdb:$VERSION
-    # docker push $IMAGE_URI
+    aws ssm put-parameter \
+      --name /asyncdb/version \
+      --type String \
+      --value "$VERSION" \
+      --overwrite
 ```
 
-Each step is its own shell, so `IMAGE_URI` is built twice. In the second one it
-is built and then not used, because **the `docker push` is commented out**. As
-the pipeline stands it publishes nothing: the image exists on the runner, is
-tagged for the registry there, and disappears with the runner.
+The tag and the push are **one step**, which they once were not: the `docker
+push` lived in a second step of its own and was commented out, so a release
+tagged a commit as shipped and left the registry with nothing new in it. The
+second-order effect of that is worth remembering because it is what the gate
+does when it is lied to: the gate's memory *is* the ECR tag, so a version that
+was never pushed is a version `describe-images` keeps failing to find, `publish`
+stays `true` on every subsequent push, and the git tag step then fails on a tag
+that already exists — the same commit, the same version, going red for a reason
+that has nothing to do with the code.
 
-Nothing else in the workflow knows that. The git tag below is still pushed, and
-the instances still expect [an image in ECR to
-pull](/deployment/#before-the-first-deploy) — so today a release marks a commit
-as shipped and leaves the deployment with nothing new to deploy.
-
-There is a second-order effect worth spelling out. The gate's memory *is* the
-ECR tag, so with the push commented out the gate can never close on a version
-first built after the line was commented: `describe-images` keeps failing to
-find it, `publish` stays `true`, and every push to `master` takes the tagging
-path again. The final step then tries to push a git tag that already exists and
-the run goes red — the same commit, the same version, failing on the second
-attempt for a reason that has nothing to do with the code.
+**The `put-parameter` is the other half of publishing**, and it is guarded by the
+same `publish`. `/asyncdb/version` is what
+[the template resolves at deploy time](/deployment/#parameters), so this line and
+not the `docker push` is what decides which tag the next instance to launch will
+run. A push that publishes nothing leaves it pointing at the previous release,
+which is exactly what [the deploy step in the same
+run](/pipeline/#the-job) then stands up.
 
 ## Tagging the commit
 
