@@ -2,7 +2,7 @@ name: Build AMIs
 
 # Run by hand from the Actions tab, and by nothing else. What it bakes is the first boot of
 # the two tiers `cloudformation.json` stands up: the packages a database instance downloads
-# before it can talk to ECR, and the etcd image three instances otherwise pull from quay.io
+# before it can talk to ECR, and the etcd image three instances in private subnets cannot pull for themselves
 # at the moment they are trying to find each other. The asyncdb image is in neither — a
 # database instance still pulls the tag `/asyncdb/version` names — so an image outlives
 # every release and is rebuilt only when a dependency moves.

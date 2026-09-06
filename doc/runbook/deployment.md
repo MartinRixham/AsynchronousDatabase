@@ -61,7 +61,13 @@ aws elbv2 describe-target-health --target-group-arn "$(
     --output text)" --output table
 ```
 
-Then go onto an instance and look at the container:
+Then go onto an instance and look at the container. The instances are in
+[private subnets with no SSH](/deployment/network#getting-onto-an-instance), so
+the way in is Session Manager:
+
+```bash
+aws ssm start-session --target i-0123456789abcdef0
+```
 
 ```bash
 sudo docker ps -a
@@ -138,7 +144,7 @@ aws autoscaling suspend-processes --auto-scaling-group-name <name> \
 ```
 
 Then read `cloud-init-output.log` on one of the survivors, fix the cause, and
-resume. The usual causes are the pull, the grace period and the key pair.
+resume. The usual causes are the pull and the grace period.
 
 ## The stack will not create
 
@@ -146,12 +152,14 @@ resume. The usual causes are the pull, the grace period and the key pair.
 | --- | --- |
 | `ClusterALB` already exists | A stack is already standing. The name is fixed, so **there can be one of these per region** |
 | Parameter `/asyncdb/version` not found | The SSM parameter does not exist. CloudFormation cannot resolve it, so the operation fails outright |
-| The group reports a failed activity, not a template error | The key pair `asyncdb` does not exist |
-| An etcd instance times out | Created before its subnet had a route to the internet gateway, so its user data pulled nothing |
+| The group reports a failed activity, not a template error | Something the launch template names is missing — the AMI, the instance profile or the image |
+| An etcd instance has no container | `EtcdAmi` does not carry `quay.io/coreos/etcd:v3.5.9`. There is [no route to quay.io any more](/deployment/network#why-the-instances-are-private), so the user data cannot pull it |
+| The database instances have no container | The ECR endpoints. `docker login` and `docker pull` go through `EcrApiEndpoint`, `EcrDockerEndpoint` and `S3Endpoint`, and all three have to be up before an instance boots |
 
-Four things the template needs and does not create: **the key pair `asyncdb`**,
+Three things the template needs and does not create:
 **an ECR repository `asyncdb` in `eu-west-2`**, **the SSM parameter
-`/asyncdb/version`**, and **the image tag itself pushed under that name**.
+`/asyncdb/version`**, and **the image tag itself pushed under that name**. A key
+pair is not one of them any more.
 
 ```bash
 aws ssm put-parameter --name /asyncdb/version --type String \

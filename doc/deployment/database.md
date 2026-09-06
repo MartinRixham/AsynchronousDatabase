@@ -7,16 +7,17 @@ scaling group, and the load balancer, its target group and its listener.
 
 ## The role
 
-`InstanceRole` is assumable by `ec2.amazonaws.com` and carries two AWS managed
+`InstanceRole` is assumable by `ec2.amazonaws.com` and carries three AWS managed
 policies:
 
 | Policy | For |
 | --- | --- |
 | `AmazonEC2ContainerRegistryReadOnly` | `aws ecr get-login-password` and the `docker pull` that follows |
+| `AmazonSSMManagedInstanceCore` | Session Manager, which is [the only way onto an instance](/deployment/network#getting-onto-an-instance) |
 | `service-role/AmazonEC2ContainerServiceforEC2Role` | Nothing here — it is the policy the ECS agent needs, and there is no ECS cluster in this stack |
 
-The second one comes with the ECS-optimised AMI by habit rather than by need,
-and it is the wider of the two. Removing it costs nothing.
+The third one comes with the ECS-optimised AMI by habit rather than by need,
+and it is the widest of the three. Removing it costs nothing.
 
 `InstanceProfile` wraps the role, and `LaunchTemplateData.IamInstanceProfile`
 names it by `Ref` — the profile's generated name — which is why the stack needs
@@ -25,9 +26,9 @@ names it by `Ref` — the profile's generated name — which is why the stack ne
 ## The launch template
 
 `ImageId` and `InstanceType` come from the [parameters](/deployment/#parameters),
-the security group is `InstanceSecurityGroup`, the key pair is the `asyncdb` one
-that has to exist already, the root volume is [thirty gigabytes of
-gp3](#the-root-volume), `TagSpecifications` names every instance the group
+the security group is `InstanceSecurityGroup`, there is no key pair because
+[there is no SSH](/deployment/network#getting-onto-an-instance), the root volume
+is [thirty gigabytes of gp3](#the-root-volume), `TagSpecifications` names every instance the group
 launches `asyncdb` — which is what
 [`Name=tag:Name,Values=asyncdb`](/runbook/deployment) finds, and what tells the
 six of them from the three `etcd-n` in the console — and the rest is user data — a base64 `Fn::Join` of
@@ -161,9 +162,12 @@ persistent, and it is not the instance-local NVMe a write-heavy store would want
 
 ## The auto scaling group
 
-`AutoScalingGroup` spans all three subnets, launches from the launch template at
-`LatestVersionNumber`, registers into `ALBTargetGroup`, and is
-`DesiredCapacity: 6` between `MinSize: 1` and `MaxSize: 7`.
+`AutoScalingGroup` spans all three **private** subnets, launches from the launch
+template at `LatestVersionNumber`, registers into `ALBTargetGroup`, and is
+`DesiredCapacity: 6` between `MinSize: 1` and `MaxSize: 7`. It carries a
+`DependsOn` naming `S3Endpoint`, `EcrApiEndpoint` and `EcrDockerEndpoint`,
+because [the pull goes through them](/deployment/network#the-endpoints) and
+nothing in the launch template says so.
 
 Six is three zones of two, and the group is what makes it so: an auto scaling
 group balances its capacity across the subnets it is given, so six instances
@@ -207,7 +211,7 @@ There is also no `UpdatePolicy`, so
 
 | Resource | Is |
 | --- | --- |
-| `ApplicationLoadBalancer` | Named `ClusterALB`, `internet-facing`, in the three public subnets, in `ALBSecurityGroup` |
+| `ApplicationLoadBalancer` | Named `ClusterALB`, `internet-facing`, in the three public subnets — [the only thing in them](/deployment/network) — in `ALBSecurityGroup` |
 | `ALBTargetGroup` | HTTP, port 80, `TargetType: instance`, health check `GET /asyncdb/health` |
 | `ALBListener` | HTTP on port 80, one default action forwarding to the target group |
 

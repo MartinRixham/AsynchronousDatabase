@@ -359,6 +359,14 @@ cannot resolve it otherwise, and an instance that cannot pull its tag has no con
 ALB health check on `/asyncdb/health`, and is replaced by another that cannot pull either — the load
 balancer answers 502 throughout.
 
+**Both tiers are in private subnets**, and where a NAT gateway would be there are six VPC endpoints:
+`S3Endpoint` (a gateway endpoint on `PrivateRouteTable`) plus interface endpoints for `ecr.api`,
+`ecr.dkr`, `ssm`, `ssmmessages` and `ec2messages`, all three private subnets each. **No instance has
+a public address, and there is no route to the internet from either tier** — so a pull reaches ECR
+and nothing else, there is no SSH and no key pair (Session Manager is the way onto an instance), and
+the three public subnets hold the ALB alone. The interface endpoints are charged per AZ and are
+about half the stack's fixed cost; `doc/deployment/network.md` is the page.
+
 The database tier is **six** instances, `DesiredCapacity: 6` across three subnets, which an auto
 scaling group balances into two per availability zone — three copies of the keyspace (one per zone,
 because `ASYNCDB_ZONE` is the instance's real AZ), each split in half between that zone's two nodes.
@@ -373,7 +381,8 @@ into a cluster.
 `.github/workflows/ami.yaml` is run **by hand** from the Actions tab and bakes one AMI per tier with
 Packer, from `ami/asyncdb.pkr.hcl`: `ami/database.sh` (the `dnf` update, `unzip` and AWS CLI v2 the
 launch template's user data used to install at every boot) and `ami/etcd.sh`
-(`quay.io/coreos/etcd:v3.5.9`, pinned to the same tag `Etcd1..3` run), each followed by
+(`quay.io/coreos/etcd:v3.5.9`, pinned to the same tag `Etcd1..3` run — and **required**, because a
+private subnet has no route to quay.io to pull it at boot), each followed by
 `ami/clean.sh`. The base is the ECS-optimised AL2023 image, read by a `data
 "amazon-parameterstore"` block; the id of the result is written to `/asyncdb/ami/{database,etcd}`
 out of Packer's `manifest.json`, and `cloudformation.json` resolves those two as its `DatabaseAmi`

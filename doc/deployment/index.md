@@ -12,7 +12,7 @@ zone — and three instances running etcd for them to find each other through.
                     ┌────┴────┐  ClusterALB, HTTP/80, internet facing
                     │   ALB   │  health check GET /asyncdb/health
                     └────┬────┘
-        ┌────────────────┼────────────────┐        one public subnet per AZ
+        ┌────────────────┼────────────────┐        one private subnet per AZ
         │                │                │
    ┌────┴────┐      ┌────┴────┐      ┌────┴────┐   AutoScalingGroup, desired 6
    │ asyncdb │      │ asyncdb │      │ asyncdb │   nginx :80, API :8080
@@ -120,19 +120,18 @@ deploy](/pipeline/ami#where-the-ids-go).
 
 | Page | Resources |
 | --- | --- |
-| [The network](/deployment/network) | `VPC`, `InternetGateway`, `AttachGateway`, `PublicSubnet1`–`3`, `PublicRouteTable`, `PublicRoute`, `SubnetRouteTableAssociation1`–`3`, `ALBSecurityGroup`, `InstanceSecurityGroup`, `EtcdSecurityGroup`, `InstanceApiIngress`, `EtcdPeerIngress` |
+| [The network](/deployment/network) | `VPC`, `InternetGateway`, `AttachGateway`, `PublicSubnet1`–`3`, `PrivateSubnet1`–`3`, `PublicRouteTable`, `PublicRoute`, `PrivateRouteTable`, `PublicSubnetRouteTableAssociation1`–`3`, `PrivateSubnetRouteTableAssociation1`–`3`, `S3Endpoint`, `EcrApiEndpoint`, `EcrDockerEndpoint`, `SsmEndpoint`, `SsmMessagesEndpoint`, `Ec2MessagesEndpoint`, `ALBSecurityGroup`, `InstanceSecurityGroup`, `EtcdSecurityGroup`, `VpcEndpointSecurityGroup`, `InstanceApiIngress`, `EtcdPeerIngress` |
 | [The database tier](/deployment/database) | `InstanceRole`, `InstanceProfile`, `LaunchTemplate`, `AutoScalingGroup`, `ApplicationLoadBalancer`, `ALBTargetGroup`, `ALBListener` |
-| [The etcd tier](/deployment/etcd) | `Etcd1`, `Etcd2`, `Etcd3`, and the `Etcd` mapping their addresses live in |
+| [The etcd tier](/deployment/etcd) | `EtcdRole`, `EtcdInstanceProfile`, `Etcd1`, `Etcd2`, `Etcd3`, and the `Etcd` mapping their addresses live in |
 | [What it costs](/deployment/cost) | All of the above, priced — and what a read, a write and a scan add to it |
 
 ## Before the first deploy
 
-Four things the template needs and does not create:
+Three things the template needs and does not create. **A key pair is no longer
+one of them**: the instances are in
+[private subnets with no SSH](/deployment/network#getting-onto-an-instance) and
+neither tier sets `KeyName` any more.
 
-- **A key pair named `asyncdb`.** Both launch templates set
-  `KeyName: asyncdb`, and an instance launch with a key pair that does not exist
-  fails, which the auto scaling group reports as a failed activity rather than
-  as a template error.
 - **An ECR repository named `asyncdb`**, in `eu-west-2`, holding the tag the
   user data asks for. The repository is where
   [the release](#the-image-the-instances-pull) pushes, and it is not part of

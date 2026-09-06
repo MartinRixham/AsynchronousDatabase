@@ -54,9 +54,9 @@ worth recording why, because the shape is a common one:
 
 | Node | Subnet | CIDR | Address |
 | --- | --- | --- | --- |
-| `etcd-1` | `PublicSubnet1` | `10.0.0.0/24` | `10.0.0.10` |
-| `etcd-2` | `PublicSubnet2` | `10.0.1.0/24` | `10.0.1.10` |
-| `etcd-3` | `PublicSubnet3` | `10.0.2.0/24` | `10.0.2.10` |
+| `etcd-1` | `PrivateSubnet1` | `10.0.0.0/24` | `10.0.0.10` |
+| `etcd-2` | `PrivateSubnet2` | `10.0.1.0/24` | `10.0.1.10` |
+| `etcd-3` | `PrivateSubnet3` | `10.0.2.0/24` | `10.0.2.10` |
 
 `.10` is arbitrary but not free: AWS reserves the first four addresses of a
 subnet and the last, so anything from `.4` up will do.
@@ -78,28 +78,34 @@ in its number, its subnet and its address:
 ```json
 "Etcd1": {
   "Type": "AWS::EC2::Instance",
-  "DependsOn": [ "PublicRoute", "SubnetRouteTableAssociation1" ],
+  "DependsOn": [ "PrivateSubnetRouteTableAssociation1" ],
   "Properties": {
     "ImageId": { "Ref": "EtcdAmi" },
     "InstanceType": { "Ref": "InstanceType" },
-    "SubnetId": { "Ref": "PublicSubnet1" },
+    "SubnetId": { "Ref": "PrivateSubnet1" },
     "PrivateIpAddress": "10.0.0.10",
     "SecurityGroupIds": [ { "Ref": "EtcdSecurityGroup" } ],
-    "KeyName": "asyncdb",
+    "IamInstanceProfile": { "Ref": "EtcdInstanceProfile" },
     "Tags": [ { "Key": "Name", "Value": "etcd-1" } ],
     "UserData": { "...": "below" }
   }
 }
 ```
 
-The `DependsOn` is there because the user data used to pull an image at first
-boot: an instance created before its subnet has a route to the internet gateway
-comes up with nothing on it and says nothing about why. An auto scaling group hid
-that by launching late; three instances do not. `EtcdAmi` now carries
-`quay.io/coreos/etcd:v3.5.9` already, so the `docker run` below finds it locally
-and quay.io is off the boot path — but the dependency stays, because an image
-that does not hold the tag the user data names pulls it exactly as before, and
-because an etcd with no route out is not a cluster in any case.
+The `DependsOn` is what an instance created before its subnet is routed at all
+needs: it names the association rather than a route, because
+[the private route table has no route out](/deployment/network#why-the-instances-are-private)
+to wait for. It used to name `PublicRoute` too, and the reason it did has gone
+with it — **the user data can no longer pull anything.** There is no NAT gateway
+and no endpoint to `quay.io`, so `EtcdAmi` carrying
+`quay.io/coreos/etcd:v3.5.9` is the only way the `docker run` below finds an
+image: an image that does not hold that tag used to fall back to a pull and now
+leaves the instance with no container at all.
+
+`IamInstanceProfile` is the other thing that changed. The tier had no role
+before, because a key pair and a public address were how you reached it; it now
+carries `EtcdRole`, which is `AmazonSSMManagedInstanceCore` and nothing else, so
+that [Session Manager can](/deployment/network#getting-onto-an-instance).
 
 ```bash
 #! /bin/bash
@@ -123,8 +129,8 @@ rest are plain strings. Four things about it:
 - **It advertises private addresses.** Peers and clients are told to come in over
   the VPC, which is what lets both ports be closed to everything but the two
   security groups — see [the network](/deployment/network#the-security-groups).
-  The instances still have public addresses, because they are in public subnets
-  and have to reach `quay.io`, but nothing is invited in over them.
+  There is nothing else to advertise: the instances are in
+  [private subnets](/deployment/network) and have no public address at all.
 - **`/usr/local/bin/etcd` is named explicitly**, as `docker-compose.yml` names
   it: the image has no entrypoint of its own, and the flags are the v3 ones
   (`--name`, not `-name`) on the v3.5.9 that serves the

@@ -2,8 +2,7 @@
 
 `.github/workflows/ami.yaml` builds one AMI per tier — the packages a database
 instance would otherwise download before it can reach ECR, and the etcd image
-three instances would otherwise pull from quay.io while they are trying to find
-each other. It is **manual**: `workflow_dispatch` and nothing else, because
+three instances have no route to quay.io to pull for themselves. It is **manual**: `workflow_dispatch` and nothing else, because
 nothing in it moves when `version` moves.
 
 The workflow is five steps around one command. `ami/asyncdb.pkr.hcl` is the
@@ -46,10 +45,13 @@ would save is seconds from a registry in the same region. The user data in
 an instance picks up when it is replaced rather than something an AMI carries.
 
 The etcd image is the other way round: its tag is pinned in
-`cloudformation.json` and does not move with a release, and it is the one third
-party either tier reaches at start-up. Baking it takes quay.io off the boot path
-entirely — and an AMI that does not hold it is not broken, because `docker run`
-pulls it exactly as before. **The bake is an optimisation, never a dependency.**
+`cloudformation.json` and does not move with a release, and it was the one third
+party either tier reached at start-up. Baking it takes quay.io off the boot path
+entirely — and since the tiers moved into
+[private subnets reaching AWS services and nothing else](/deployment/network#why-the-instances-are-private),
+that is no longer an optimisation: there is no route to quay.io, so **an etcd
+AMI that does not hold the tag is an etcd instance with no container.** The
+database bake is still only a saving; this half of it is a dependency.
 
 Both scripts `set -euo pipefail` and assert what they installed —
 `aws --version | grep '^aws-cli/2\.'`, `docker info` — so a missing dependency is
