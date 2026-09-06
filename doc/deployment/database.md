@@ -40,8 +40,8 @@ the security group is `InstanceSecurityGroup`, there is no key pair because
 is [thirty gigabytes of gp3](#the-root-volume), `TagSpecifications` names every instance the group
 launches `asyncdb` — which is what
 [`Name=tag:Name,Values=asyncdb`](/runbook/deployment) finds, and what tells the
-six of them from the three `etcd-n` in the console — and the rest is user data — a base64 `Fn::Join` of
-shell lines, run once as root at first boot:
+six of them from the three `etcd-n` in the console — and the rest is user data — a base64 `Fn::Sub`
+of a shell script, run once as root at first boot:
 
 ```bash
 #! /bin/bash
@@ -155,17 +155,13 @@ asks for.
 
 ## The root volume
 
-```json
-"BlockDeviceMappings": [
-  {
-    "DeviceName": "/dev/xvda",
-    "Ebs": {
-      "VolumeSize": 30,
-      "VolumeType": "gp3",
-      "DeleteOnTermination": true
-    }
-  }
-]
+```yaml
+BlockDeviceMappings:
+  - DeviceName: /dev/xvda
+    Ebs:
+      VolumeSize: 30
+      VolumeType: gp3
+      DeleteOnTermination: true
 ```
 
 There was no `BlockDeviceMappings` here at all, and an instance took whatever the

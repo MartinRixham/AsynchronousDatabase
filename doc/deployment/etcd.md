@@ -260,20 +260,18 @@ Four things about it, three of which have not changed:
 
 ## The group
 
-```json
-"EtcdAutoScalingGroup": {
-  "Type": "AWS::AutoScaling::AutoScalingGroup",
-  "DependsOn": [ "PrivateRoute", "EtcdClientIngress", "EtcdPeerIngress" ],
-  "Properties": {
-    "VPCZoneIdentifier": [ "…PrivateSubnet1", "…2", "…3" ],
-    "LaunchTemplate": { "…": "EtcdLaunchTemplate at LatestVersionNumber" },
-    "DesiredCapacity": 3,
-    "MinSize": "1",
-    "MaxSize": "3",
-    "HealthCheckType": "EC2",
-    "HealthCheckGracePeriod": 300
-  }
-}
+```yaml
+EtcdAutoScalingGroup:
+  Type: AWS::AutoScaling::AutoScalingGroup
+  DependsOn: [PrivateRoute, EtcdClientIngress, EtcdPeerIngress]
+  Properties:
+    VPCZoneIdentifier: […PrivateSubnet1, …2, …3]
+    LaunchTemplate: { …: EtcdLaunchTemplate at LatestVersionNumber }
+    DesiredCapacity: 3
+    MinSize: "1"
+    MaxSize: "3"
+    HealthCheckType: EC2
+    HealthCheckGracePeriod: 300
 ```
 
 Three subnets and three instances is one per availability zone, arrived at by

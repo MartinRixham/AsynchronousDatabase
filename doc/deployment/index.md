@@ -1,6 +1,6 @@
 # Deploying to AWS
 
-`cloudformation.json` in the root of the repository is the whole of the
+`cloudformation.yaml` in the root of the repository is the whole of the
 infrastructure: one template, one stack, no modules and no state file. It builds
 a VPC across three availability zones, an application load balancer, an auto
 scaling group of six instances running the asyncdb image from ECR — two in each
@@ -50,7 +50,7 @@ make describe-stack   # the stack events, which is where a failure says why
 make delete-stack     # everything above, gone
 ```
 
-Each of them names `--template-body file://cloudformation.json`, so the file in
+Each of them names `--template-body file://cloudformation.yaml`, so the file in
 the working tree is what is deployed — there is no bucket and no packaging step.
 `create-stack` and `update-stack` pass `--capabilities CAPABILITY_NAMED_IAM`
 because the template creates roles.

@@ -120,7 +120,7 @@ breaks the thing it is testing:
 
 ```bash
 make create-stack            # or the stack a build stood up
-make create-chaos-stack      # chaos/chaos.json: the FIS role and the permission to drive it
+make create-chaos-stack      # chaos/chaos.yaml: the FIS role and the permission to drive it
 chaos/validate.sh            # every template created and deleted, nothing started — seconds
 chaos/run.sh                 # all seven experiments, in order
 make delete-chaos-stack
@@ -147,7 +147,7 @@ assertions and nothing else. Everything is an environment variable — `CHAOS_EX
   (`aws:ec2:stop-instances`, `aws:network:disrupt-connectivity`) need nothing of the instances,
   which is why they are still first. `chaos/README.md` is the page.
 - `node-stops` is the only test anywhere of the rebuild in `doc/runbook/rebuild.md`.
-- **`chaos.json` grants the permission as well as the role.** `ChaosPolicy` attaches the `fis:`
+- **`chaos.yaml` grants the permission as well as the role.** `ChaosPolicy` attaches the `fis:`
   actions and a `PassRole` scoped to `ChaosRole` to the IAM groups in the `Operators` parameter
   (default `builders`, which holds the pipeline's identity). Nothing else in the account grants
   FIS anything, so outside a chaos run nobody here can start an experiment. `make
@@ -184,7 +184,7 @@ hashed once inside each group**, so every zone holds exactly one copy of every p
 copies of a partition are the same three nodes for every key in it, which is what lets one of them
 lead it. No zone named anywhere is one zone holding all the nodes, which
 is the one copy this always kept. `docker-compose.yml` runs two zones (nodes 1 and 2 in `one`,
-node 3 in `two`) so the compose cluster both partitions and replicates; `cloudformation.json` reads
+node 3 in `two`) so the compose cluster both partitions and replicates; `cloudformation.yaml` reads
 the real AZ out of IMDS, which is three zones of one node each.
 
 ## Libraries
@@ -346,7 +346,7 @@ merged scans are exercised over real sockets. Both have to stop the servers they
 
 **The store is one directory, named by `ASYNCDB_DATA`.** `server::data_directory()` reads it and
 defaults to `/var/lib/asyncdb`, which the image mounts a volume over — a named one per node in
-`docker-compose.yml`, a bind of the host's own in `cloudformation.json` — so an instance that is
+`docker-compose.yml`, a bind of the host's own in `cloudformation.yaml` — so an instance that is
 started again opens what the one before it wrote. The repository opens the directory **as it stands**
 rather than something random underneath it.
 
@@ -395,7 +395,7 @@ leaves nothing running. The teardown deletes only a stack that same run created,
 by hand makes `create-stack` fail and is then left alone (`ClusterALB` is a fixed name, so there can
 only be one).
 Bump `version` to cut a release; leaving it unchanged makes CI a no-op publish. AWS infrastructure
-lives in `cloudformation.json`, driven by the `Makefile` (`make create-stack` / `update-stack` /
+lives in `cloudformation.yaml`, driven by the `Makefile` (`make create-stack` / `update-stack` /
 `delete-stack`), and is documented in `doc/deployment/`.
 
 `version` is the only place the asyncdb tag is written by hand (`etcd-version` is the same thing for

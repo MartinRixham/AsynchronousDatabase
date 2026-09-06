@@ -543,7 +543,7 @@ EOF
 		case $answer in
 			*AccessDenied* | *not\ authorized*)
 				echo >&2
-				echo "The operator policy is part of chaos.json. If the chaos stack predates" >&2
+				echo "The operator policy is part of chaos.yaml. If the chaos stack predates" >&2
 				echo "it, 'make update-chaos-stack' attaches it, and it goes away with the" >&2
 				echo "stack." >&2
 				;;

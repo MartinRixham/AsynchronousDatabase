@@ -1,0 +1,573 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >-
+  asyncdb over three AZs: an auto scaling group behind an ALB, pulling from ECR, and a second group
+  of three etcd nodes that find each other with DescribeInstances, for them to partition the
+  keyspace through
+
+Parameters:
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+
+  BaseAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
+    Description: >-
+      The image both tiers launch from, resolved at deploy time from the public parameter AWS keeps
+      current. It is the ECS-optimised Amazon Linux 2023 image, taken for the Docker daemon already
+      installed and running on it and not for ECS, and it carries neither tier's container: a
+      database instance pulls asyncdb:$VERSION and an etcd instance pulls etcd:$ETCD_VERSION, both
+      from this account's own registry.
+
+  Version:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /asyncdb/version
+    Description: >-
+      The image tag to run, resolved at deploy time from the SSM parameter the build writes after it
+      pushes to ECR. The repository's version file is what that build reads, so the tag deployed here
+      is the one CI actually published rather than whatever happens to be checked out.
+
+  EtcdVersion:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /asyncdb/etcd
+    Description: >-
+      The etcd tag to run, the same arrangement as Version: the repository's etcd-version file is
+      what the build mirrors out of quay.io into this account's registry, and this is the parameter
+      it writes afterwards. The tier pulls out of this account's registry and never out of quay.io,
+      so the mirror is how the tag reaches an instance at all.
+
+Resources:
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  Ipv6CidrBlock:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      AmazonProvidedIpv6CidrBlock: true
+
+  EgressOnlyInternetGateway:
+    Type: AWS::EC2::EgressOnlyInternetGateway
+    Properties:
+      VpcId: !Ref VPC
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.12.0/24
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    DependsOn: Ipv6CidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.0.0/24
+      Ipv6CidrBlock: !Select [0, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 3, 64]]
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    DependsOn: Ipv6CidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      Ipv6CidrBlock: !Select [1, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 3, 64]]
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    DependsOn: Ipv6CidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      Ipv6CidrBlock: !Select [2, !Cidr [!Select [0, !GetAtt VPC.Ipv6CidrBlocks], 3, 64]]
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationIpv6CidrBlock: "::/0"
+      EgressOnlyInternetGatewayId: !Ref EgressOnlyInternetGateway
+
+  PublicSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTable
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Allow inbound HTTP from anywhere
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          CidrIpv6: "::/0"
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Allow inbound traffic from application load balancer
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          CidrIpv6: "::/0"
+
+  EtcdSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Allow etcd traffic
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2379
+          ToPort: 2379
+          SourceSecurityGroupId: !Ref InstanceSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          CidrIpv6: "::/0"
+
+  InstanceApiIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref InstanceSecurityGroup
+      Description: The API port, which is how the other nodes of the cluster reach this one
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      SourceSecurityGroupId: !Ref InstanceSecurityGroup
+
+  EtcdPeerIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EtcdSecurityGroup
+      Description: The peer port, which etcd nodes raft over
+      IpProtocol: tcp
+      FromPort: 2380
+      ToPort: 2380
+      SourceSecurityGroupId: !Ref EtcdSecurityGroup
+
+  EtcdClientIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EtcdSecurityGroup
+      Description: >-
+        The client port, from etcd itself, which is how a launching node asks the cluster to admit it
+      IpProtocol: tcp
+      FromPort: 2379
+      ToPort: 2379
+      SourceSecurityGroupId: !Ref EtcdSecurityGroup
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ec2.amazonaws.com]
+            Action: [sts:AssumeRole]
+      Policies:
+        - PolicyName: discovery
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ec2:DescribeInstances]
+                Resource: "*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref BaseAmi
+        InstanceType: !Ref InstanceType
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 30
+              VolumeType: gp3
+              DeleteOnTermination: true
+        IamInstanceProfile:
+          Name: !Ref InstanceProfile
+        SecurityGroupIds:
+          - !Ref InstanceSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: asyncdb
+        UserData:
+          Fn::Base64: !Sub |-
+            #! /bin/bash
+
+            systemctl enable --now docker
+            mkdir -p /var/lib/asyncdb
+            REGION=eu-west-2
+
+            # The subnet has no IPv4 route out, so every call to AWS goes over IPv6 to a dual stack endpoint.
+            export AWS_USE_DUALSTACK_ENDPOINT=true
+
+            [ -f /etc/amazon/ssm/amazon-ssm-agent.json ] || cp /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json
+
+            python3 -c "import json; f = '/etc/amazon/ssm/amazon-ssm-agent.json'; c = json.load(open(f)); c.setdefault('Agent', {}).update({'Region': '$REGION', 'UseDualStackEndpoint': True}); json.dump(c, open(f, 'w'), indent = 2)"
+
+            systemctl restart amazon-ssm-agent
+            REGISTRY_URL=332187735950.dkr-ecr.eu-west-2.on.aws
+            VERSION=${Version}
+            IMAGE=$REGISTRY_URL/asyncdb:$VERSION
+
+            aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URL
+            docker pull $IMAGE
+
+            TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+            PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+            VPC=${VPC}
+
+            for attempt in $(seq 12); do
+              ASYNCDB_ETCD=$(aws ec2 describe-instances --region $REGION \
+                --filters Name=tag:Name,Values=etcd Name=vpc-id,Values=$VPC Name=instance-state-name,Values=running \
+                --query 'Reservations[].Instances[].PrivateIpAddress' --output text \
+                | tr '\t' '\n' | grep . | sort | sed -e 's|^|http://|' -e 's|$|:2379|' | paste -sd,)
+              [ -n "$ASYNCDB_ETCD" ] && break
+              sleep 5
+            done
+
+            docker run -d --restart always -p 80:80 -p 8080:8080 \
+              -v /var/lib/asyncdb:/var/lib/asyncdb \
+              -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
+              -e ASYNCDB_NODE=http://$PRIVATE_IP:8080 \
+              -e ASYNCDB_ZONE=$ZONE \
+              $IMAGE
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: ClusterALB
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+        - !Ref PublicSubnet3
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /asyncdb/health
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: [PrivateRoute]
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      DesiredCapacity: 6
+      MinSize: "1"
+      MaxSize: "7"
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 200
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+
+  EtcdRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ec2.amazonaws.com]
+            Action: [sts:AssumeRole]
+      Policies:
+        - PolicyName: discovery
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ec2:DescribeInstances]
+                Resource: "*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  EtcdInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EtcdRole
+
+  EtcdLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref BaseAmi
+        InstanceType: !Ref InstanceType
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 30
+              VolumeType: gp3
+              DeleteOnTermination: true
+        IamInstanceProfile:
+          Name: !Ref EtcdInstanceProfile
+        SecurityGroupIds:
+          - !Ref EtcdSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: etcd
+        UserData:
+          Fn::Base64: !Sub |-
+            #! /bin/bash
+
+            systemctl enable --now docker
+            mkdir -p /var/lib/etcd
+            REGION=eu-west-2
+
+            # The subnet has no IPv4 route out, so every call to AWS goes over IPv6 to a dual stack endpoint.
+            export AWS_USE_DUALSTACK_ENDPOINT=true
+
+            [ -f /etc/amazon/ssm/amazon-ssm-agent.json ] || cp /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json
+
+            python3 -c "import json; f = '/etc/amazon/ssm/amazon-ssm-agent.json'; c = json.load(open(f)); c.setdefault('Agent', {}).update({'Region': '$REGION', 'UseDualStackEndpoint': True}); json.dump(c, open(f, 'w'), indent = 2)"
+
+            systemctl restart amazon-ssm-agent
+            REGISTRY_URL=332187735950.dkr-ecr.eu-west-2.on.aws
+            IMAGE=$REGISTRY_URL/etcd:${EtcdVersion}
+
+            aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URL
+            docker pull $IMAGE
+
+            VPC=${VPC}
+            SIZE=3
+            TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+            SELF=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            NAME=etcd-$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+
+            discover() {
+              aws ec2 describe-instances --region $REGION \
+                --filters Name=tag:Name,Values=etcd Name=vpc-id,Values=$VPC Name=instance-state-name,Values=pending,running \
+                --query 'Reservations[].Instances[].[InstanceId,PrivateIpAddress]' --output text \
+                | awk 'NF == 2 { print "etcd-" $1 "=http://" $2 ":2380" }' | sort | paste -sd,
+            }
+
+            etcdctl() {
+              docker run --rm --network host $IMAGE /usr/local/bin/etcdctl --endpoints=$PEERS "$@"
+            }
+
+            for attempt in $(seq 60); do
+              CLUSTER=$(discover)
+              [ $(echo $CLUSTER | tr ',' ' ' | wc -w) -ge $SIZE ] && break
+              sleep 5
+            done
+
+            ENTRIES=$(echo $CLUSTER | tr ',' '\n')
+            PEERS=$(echo "$ENTRIES" | grep -v "^$NAME=" | sed -e 's|.*=||' -e 's|2380$|2379|' | paste -sd,)
+            SELFENTRY=$NAME=http://$SELF:2380
+            STATE=new
+            INITIAL=$CLUSTER
+            MEMBERS=
+
+            for attempt in $(seq 12); do
+              [ -z "$PEERS" ] && break
+              MEMBERS=$(etcdctl member list) && break
+              MEMBERS=
+              sleep 5
+            done
+
+            if [ -n "$MEMBERS" ]; then
+              MEMBERS=$(echo "$MEMBERS" | tr -d ' ')
+              echo "$MEMBERS" | while IFS=, read -r ID STATUS MEMBER PEER REST; do
+                echo "$ENTRIES" | grep -qx "$MEMBER=$PEER" || etcdctl member remove $ID
+              done
+
+              if ! echo "$MEMBERS" | awk -F, '{ print $3 "=" $4 }' | grep -qx "$SELFENTRY"; then
+                for attempt in $(seq 12); do
+                  ADDED=$(etcdctl member add $NAME --peer-urls=http://$SELF:2380) && break
+                  ADDED=
+                  sleep 5
+                done
+
+                INITIAL=$(echo "$ADDED" | grep '^ETCD_INITIAL_CLUSTER=' | cut -d'"' -f2)
+                [ -z "$INITIAL" ] && exit 1
+                STATE=existing
+              fi
+            fi
+
+            docker run -d --restart always --name etcd -p 2379:2379 -p 2380:2380 \
+              -v /var/lib/etcd:/etcd-data \
+              $IMAGE /usr/local/bin/etcd \
+              --name $NAME \
+              --data-dir /etcd-data \
+              --advertise-client-urls http://$SELF:2379 \
+              --listen-client-urls http://0.0.0.0:2379 \
+              --initial-advertise-peer-urls http://$SELF:2380 \
+              --listen-peer-urls http://0.0.0.0:2380 \
+              --initial-cluster $INITIAL \
+              --initial-cluster-state $STATE \
+              --initial-cluster-token asyncdb
+
+  EtcdAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: [PrivateRoute, EtcdClientIngress, EtcdPeerIngress]
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+      LaunchTemplate:
+        LaunchTemplateId: !Ref EtcdLaunchTemplate
+        Version: !GetAtt EtcdLaunchTemplate.LatestVersionNumber
+      DesiredCapacity: 3
+      MinSize: "1"
+      MaxSize: "3"
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+
+Outputs:
+
+  Url:
+    Description: >-
+      The public address of the cluster. Every node answers for every key, so this one URL is the
+      whole API and the UI.
+    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"

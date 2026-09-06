@@ -188,7 +188,7 @@ worth knowing:
   of.
 
 The tag itself is written down **once**, in the `etcd-version` file, and
-`cloudformation.json` never reads a file: the `put-parameter` at the end is the
+`cloudformation.yaml` never reads a file: the `put-parameter` at the end is the
 bridge, and `EtcdVersion` resolves `/asyncdb/etcd` at deploy time exactly as
 `Version` resolves `/asyncdb/version`. The one other place the version appears is
 `docker-compose.yml`, which pulls from quay.io directly because a laptop can.

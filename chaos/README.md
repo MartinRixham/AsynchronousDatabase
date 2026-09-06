@@ -66,8 +66,8 @@ allowed for.
 
 ## The role, and the permission to use it
 
-`chaos.json` is a stack of its own holding two things, and it is separate from
-`cloudformation.json` deliberately: neither of them is a thing to leave standing beside a
+`chaos.yaml` is a stack of its own holding two things, and it is separate from
+`cloudformation.yaml` deliberately: neither of them is a thing to leave standing beside a
 database, and this way both are created for a run and deleted after it.
 
 | Resource | Is |
