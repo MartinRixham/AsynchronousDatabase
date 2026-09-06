@@ -1,7 +1,7 @@
 # The network
 
 One VPC, three private subnets holding both tiers, three public subnets holding
-nothing but the load balancer, and six VPC endpoints where a NAT gateway would
+nothing but the load balancer, and seven VPC endpoints where a NAT gateway would
 otherwise be. **No instance has a public address and neither tier has a route to
 the internet**: everything an instance needs at boot, it reaches inside the VPC.
 
@@ -15,7 +15,7 @@ VPC 10.0.0.0/16   DNS support and DNS hostnames on
  │
  ├─ PrivateSubnet1  10.0.0.0/24   AZ 0  ┐  six database instances,
  ├─ PrivateSubnet2  10.0.1.0/24   AZ 1  ├─ three etcd instances,
- ├─ PrivateSubnet3  10.0.2.0/24   AZ 2  ┘  five interface endpoints
+ ├─ PrivateSubnet3  10.0.2.0/24   AZ 2  ┘  six interface endpoints
        PrivateRouteTable    local only, plus the S3 gateway endpoint
 ```
 
@@ -26,9 +26,10 @@ least three availability zones**; in one with two, `Fn::Select` of index 2 fails
 at create time.
 
 The private subnets keep the low `/24`s — `10.0.0.0`, `10.0.1.0` and `10.0.2.0`
-— because [the etcd addresses are literals](/deployment/etcd#the-addresses) in
-the `Etcd` mapping and those instances are what moved. The public subnets took
-new blocks rather than the other way round.
+— and the public subnets took new blocks rather than the other way round. The
+reason was that the etcd addresses were literals in an `Etcd` mapping and those
+instances were what moved; [the addresses are gone](/deployment/etcd) and the
+CIDRs stayed, because renumbering a subnet replaces it.
 
 `PublicRoute` carries `"DependsOn": "AttachGateway"`, which is one of the three
 explicit dependencies in the template. It has to be there: a route to a gateway
@@ -53,11 +54,11 @@ gateway**. The difference between the two is what a private subnet is allowed to
 reach: a NAT gateway is a route to all of the internet, and endpoints are a
 route to the named AWS services and nothing else. `quay.io` is not one of them,
 so it is off the boot path for good — which is
-[what the etcd AMI already bakes](/deployment/etcd#the-instances), and
+[what the etcd AMI already bakes](/deployment/etcd#the-launch-template), and
 is now a requirement rather than a saving.
 
-**It is not the cheap answer.** Five interface endpoints in three availability
-zones is fifteen endpoint-hours an hour, and
+**It is not the cheap answer.** Six interface endpoints in three availability
+zones is eighteen endpoint-hours an hour, and
 [they are about half the fixed cost of the stack](/deployment/cost#standing-still)
 — more than a single NAT gateway would be, and more than the nine public
 addresses they replaced. What the money buys is that nothing in either tier can
@@ -79,20 +80,30 @@ names, and they resolve privately.
 | `EcrApiEndpoint` | Interface | `aws ecr get-login-password`, which is `ecr:GetAuthorizationToken` |
 | `EcrDockerEndpoint` | Interface | The `docker pull` itself |
 | `SsmEndpoint`, `SsmMessagesEndpoint`, `Ec2MessagesEndpoint` | Interface | Session Manager, which is [the only way onto an instance](#getting-onto-an-instance) now |
+| `Ec2Endpoint` | Interface | `aws ec2 describe-instances`, which is how [the etcd tier finds its peers](/deployment/etcd) and how the database tier finds the etcd tier |
 
 The gateway endpoint is a route rather than an address: it is free, it is named
-in `PrivateRouteTable`, and it works by prefix list. The five interface
+in `PrivateRouteTable`, and it works by prefix list. The six interface
 endpoints are ENIs, one in each private subnet, so an instance reaches the one
 in its own availability zone and pays nothing to cross a boundary.
 
+`Ec2Endpoint` is the newest of them and the one the stack could least do
+without: **an instance that cannot call `DescribeInstances` cannot find out what
+cluster it is in.** The etcd tier would not form, and the database tier would
+come up [owning the whole keyspace each](/database/cluster#turning-it-on).
+
 Two `DependsOn` follow from all of this:
 
-- **`AutoScalingGroup` depends on `S3Endpoint`, `EcrApiEndpoint` and
-  `EcrDockerEndpoint`.** Nothing in a launch template references an endpoint, so
-  CloudFormation would otherwise be free to launch six instances into a subnet
-  that cannot yet reach ECR, and each of them would boot with no container.
-- **Each `Etcd` instance depends on its `PrivateSubnetRouteTableAssociation`**,
-  which is what its dependency on `PublicRoute` became.
+- **`AutoScalingGroup` depends on `S3Endpoint`, `EcrApiEndpoint`,
+  `EcrDockerEndpoint` and `Ec2Endpoint`.** Nothing in a launch template
+  references an endpoint, so CloudFormation would otherwise be free to launch six
+  instances into a subnet that cannot yet reach ECR, and each of them would boot
+  with no container.
+- **`EtcdAutoScalingGroup` depends on `Ec2Endpoint`, `EtcdClientIngress` and
+  `EtcdPeerIngress`.** The endpoint for the same reason, and the two rules
+  because a launching etcd node asks the ones already running to admit it — over
+  2379, and then over 2380 for good. Neither is referenced by the launch template
+  either.
 
 `ServiceName` is `Fn::Sub` of `com.amazonaws.${AWS::Region}.…`, so the endpoints
 follow the stack. The ECR registry and `--region eu-west-2` in the user data do
@@ -108,7 +119,7 @@ not, which is
 | `EtcdSecurityGroup` | 2379/tcp from `InstanceSecurityGroup` | everything |
 | `VpcEndpointSecurityGroup` | 443/tcp from `InstanceSecurityGroup` and from `EtcdSecurityGroup` | everything |
 
-Two more rules cannot be written inline, because a group that names itself in
+Three more rules cannot be written inline, because a group that names itself in
 its own `SecurityGroupIngress` is a circular reference. They are separate
 `AWS::EC2::SecurityGroupIngress` resources instead:
 
@@ -116,14 +127,18 @@ its own `SecurityGroupIngress` is a circular reference. They are separate
 | --- | --- |
 | `InstanceApiIngress` | 8080/tcp on `InstanceSecurityGroup`, from `InstanceSecurityGroup` |
 | `EtcdPeerIngress` | 2380/tcp on `EtcdSecurityGroup`, from `EtcdSecurityGroup` |
+| `EtcdClientIngress` | 2379/tcp on `EtcdSecurityGroup`, from `EtcdSecurityGroup` |
 
-Everything is now addressed by source group rather than by CIDR, which is what
-keeps the rules right as instances come and go: the load balancer reaches port
-80 on the database instances, the database instances reach port 8080 on each
-other and 2379 on etcd, both tiers reach 443 on the endpoints, and the etcd
-instances reach 2380 on each other. Nothing else reaches any of it, and there is
-no rule anywhere that names `0.0.0.0/0` as a source except the load balancer's
-port 80.
+Everything is addressed by source group rather than by CIDR, which is what
+keeps the rules right as instances come and go — and with
+[both tiers now in groups](/deployment/etcd#the-group), every address in the
+stack is one that came from a launch. The load balancer reaches port 80 on the
+database instances, the database instances reach port 8080 on each other and
+2379 on etcd, both tiers reach 443 on the endpoints, and the etcd instances
+reach 2379 and 2380 on each other — the client port because that is where a
+launching node asks to be admitted, and the peer port because that is where the
+raft is. Nothing else reaches any of it, and there is no rule anywhere that
+names `0.0.0.0/0` as a source except the load balancer's port 80.
 
 One thing is still open, and is worth saying out loud: **etcd has no TLS and no
 authentication.** The port is closed to the internet, but within the VPC

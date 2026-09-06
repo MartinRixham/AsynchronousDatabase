@@ -97,7 +97,7 @@ source "amazon-ebs" "etcd" {
 	}
 
 	ami_name = "asyncdb-etcd-${local.timestamp}"
-	ami_description = "The etcd tier's boot dependencies, including the etcd image"
+	ami_description = "The etcd tier's boot dependencies, including the etcd image and the AWS CLI it discovers its peers with"
 	run_tags = { Name = "asyncdb-etcd-ami-builder", "asyncdb:run" = var.run_id }
 	tags = merge(local.tags, { Name = "asyncdb-etcd-${local.timestamp}", "asyncdb:role" = "etcd" })
 	snapshot_tags = merge(local.tags, { Name = "asyncdb-etcd-${local.timestamp}", "asyncdb:role" = "etcd" })
@@ -110,6 +110,11 @@ build {
 	provisioner "shell" {
 		execute_command = "sudo -E bash '{{ .Path }}'"
 		script = "${path.root}/database.sh"
+	}
+
+	provisioner "shell" {
+		execute_command = "sudo -E bash '{{ .Path }}'"
+		script = "${path.root}/awscli.sh"
 	}
 
 	provisioner "shell" {
@@ -130,6 +135,11 @@ build {
 	provisioner "shell" {
 		execute_command = "sudo -E bash '{{ .Path }}'"
 		script = "${path.root}/etcd.sh"
+	}
+
+	provisioner "shell" {
+		execute_command = "sudo -E bash '{{ .Path }}'"
+		script = "${path.root}/awscli.sh"
 	}
 
 	provisioner "shell" {

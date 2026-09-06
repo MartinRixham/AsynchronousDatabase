@@ -4,7 +4,8 @@
 infrastructure: one template, one stack, no modules and no state file. It builds
 a VPC across three availability zones, an application load balancer, an auto
 scaling group of six instances running the asyncdb image from ECR — two in each
-zone — and three instances running etcd for them to find each other through.
+zone — and a second group of three running etcd for them to find each other
+through.
 
 ```
                      internet
@@ -19,12 +20,13 @@ zone — and three instances running etcd for them to find each other through.
    │ asyncdb │──────│ asyncdb │──────│ asyncdb │   two per zone, holding half
    └────┬────┘      └────┬────┘      └────┬────┘   the keyspace each
         └────────────────┼────────────────┘
-                         │  ASYNCDB_ETCD names all three
+                         │  ASYNCDB_ETCD names all three, found at boot
         ┌────────────────┼────────────────┐
         │                │                │
-   ┌────┴────┐      ┌────┴────┐      ┌────┴────┐   Etcd1..3, fixed addresses
+   ┌────┴────┐      ┌────┴────┐      ┌────┴────┐   EtcdAutoScalingGroup, 3
    │  etcd   │──────│  etcd   │──────│  etcd   │   :2379 clients, :2380 peers
-   └─────────┘      └─────────┘      └─────────┘   10.0.0.10 .1.10 .2.10
+   └─────────┘      └─────────┘      └─────────┘   DescribeInstances, no fixed
+                                                   addresses either side
 ```
 
 The shape is the one [the cluster](/database/cluster) describes — several
@@ -120,9 +122,9 @@ deploy](/pipeline/ami#where-the-ids-go).
 
 | Page | Resources |
 | --- | --- |
-| [The network](/deployment/network) | `VPC`, `InternetGateway`, `AttachGateway`, `PublicSubnet1`–`3`, `PrivateSubnet1`–`3`, `PublicRouteTable`, `PublicRoute`, `PrivateRouteTable`, `PublicSubnetRouteTableAssociation1`–`3`, `PrivateSubnetRouteTableAssociation1`–`3`, `S3Endpoint`, `EcrApiEndpoint`, `EcrDockerEndpoint`, `SsmEndpoint`, `SsmMessagesEndpoint`, `Ec2MessagesEndpoint`, `ALBSecurityGroup`, `InstanceSecurityGroup`, `EtcdSecurityGroup`, `VpcEndpointSecurityGroup`, `InstanceApiIngress`, `EtcdPeerIngress` |
+| [The network](/deployment/network) | `VPC`, `InternetGateway`, `AttachGateway`, `PublicSubnet1`–`3`, `PrivateSubnet1`–`3`, `PublicRouteTable`, `PublicRoute`, `PrivateRouteTable`, `PublicSubnetRouteTableAssociation1`–`3`, `PrivateSubnetRouteTableAssociation1`–`3`, `S3Endpoint`, `EcrApiEndpoint`, `EcrDockerEndpoint`, `SsmEndpoint`, `SsmMessagesEndpoint`, `Ec2MessagesEndpoint`, `Ec2Endpoint`, `ALBSecurityGroup`, `InstanceSecurityGroup`, `EtcdSecurityGroup`, `VpcEndpointSecurityGroup`, `InstanceApiIngress`, `EtcdPeerIngress`, `EtcdClientIngress` |
 | [The database tier](/deployment/database) | `InstanceRole`, `InstanceProfile`, `LaunchTemplate`, `AutoScalingGroup`, `ApplicationLoadBalancer`, `ALBTargetGroup`, `ALBListener` |
-| [The etcd tier](/deployment/etcd) | `EtcdRole`, `EtcdInstanceProfile`, `Etcd1`, `Etcd2`, `Etcd3`, and the `Etcd` mapping their addresses live in |
+| [The etcd tier](/deployment/etcd) | `EtcdRole`, `EtcdInstanceProfile`, `EtcdLaunchTemplate`, `EtcdAutoScalingGroup` |
 | [What it costs](/deployment/cost) | All of the above, priced — and what a read, a write and a scan add to it |
 
 ## Before the first deploy
@@ -218,18 +220,21 @@ It is a small template, and it is worth being plain about where it stops.
   API carries crosses the internet in the clear.
 - **Nothing scales anything.** The application group is `DesiredCapacity: 6`
   between 1 and 7 with no scaling policy, no alarm and no target tracking, and
-  the etcd tier is three fixed instances. The bounds are there for a hand to
+  the etcd group is 3 pinned between 1 and 3. The bounds are there for a hand to
   move — and growing the group is
   [a thing to do deliberately](/database/cluster#what-this-is-not), because a
   key that changes owner is a key the new owner does not have.
-- **Nothing replaces a dead etcd instance**, which is the price of fixing their
-  addresses. [What that costs](/deployment/etcd#what-a-failure-looks-like) is
-  one instance recreated by hand, against a tier whose data rewrites itself in
-  seconds.
+- **Losing two etcd instances at once is still a hand on the keyboard.** A group
+  replaces a dead instance and the replacement
+  [admits itself to the cluster](/deployment/etcd#the-member-dance-automated),
+  which heals the common failure — but a cluster with no quorum cannot admit
+  anybody, and the replacements
+  [refuse to start rather than split the membership](/deployment/etcd#what-a-failure-looks-like).
 - **Nothing caps the CPU bill.** `t3.micro` is burstable and the template sets no
   `CreditSpecification`, so both tiers take the T3 default of `unlimited`: an
   instance that runs out of credits keeps running at full speed and charges for
   the surplus. Three saturated database instances cost more in credits than
   [the whole stack costs standing still](/deployment/cost#cpu-credits).
-- **The description is stale.** It says "Minimal 2-AZ EC2 cluster"; the template
-  builds three subnets in three availability zones.
+- **`ec2:DescribeInstances` is granted on `"Resource": "*"`** to both tiers,
+  because the action takes no resource. The `vpc-id` filter in the query is what
+  makes the answer this stack's; the permission is the account's.

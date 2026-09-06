@@ -8,16 +8,22 @@ scaling group, and the load balancer, its target group and its listener.
 ## The role
 
 `InstanceRole` is assumable by `ec2.amazonaws.com` and carries three AWS managed
-policies:
+policies and one inline policy of its own:
 
 | Policy | For |
 | --- | --- |
 | `AmazonEC2ContainerRegistryReadOnly` | `aws ecr get-login-password` and the `docker pull` that follows |
 | `AmazonSSMManagedInstanceCore` | Session Manager, which is [the only way onto an instance](/deployment/network#getting-onto-an-instance) |
 | `service-role/AmazonEC2ContainerServiceforEC2Role` | Nothing here — it is the policy the ECS agent needs, and there is no ECS cluster in this stack |
+| `discovery`, inline | `ec2:DescribeInstances`, which is how the user data below [finds the etcd tier](/deployment/etcd#how-the-database-tier-finds-it) |
 
 The third one comes with the ECS-optimised AMI by habit rather than by need,
 and it is the widest of the three. Removing it costs nothing.
+
+The fourth is the tier's own, and it is the same policy
+[the etcd tier carries](/deployment/etcd). `ec2:DescribeInstances` takes no
+resource, so `"Resource": "*"` is the only form it has — the `vpc-id` filter in
+the query is what narrows the answer, not the grant.
 
 `InstanceProfile` wraps the role, and `LaunchTemplateData.IamInstanceProfile`
 names it by `Ref` — the profile's generated name — which is why the stack needs
@@ -44,7 +50,15 @@ docker pull $IMAGE
 TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
 PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
-ASYNCDB_ETCD=http://10.0.0.10:2379,http://10.0.1.10:2379,http://10.0.2.10:2379
+VPC=vpc-0123456789abcdef0                  # { "Ref": "VPC" }
+for attempt in $(seq 12); do
+  ASYNCDB_ETCD=$(aws ec2 describe-instances --region eu-west-2 \
+    --filters Name=tag:Name,Values=etcd Name=vpc-id,Values=$VPC Name=instance-state-name,Values=running \
+    --query 'Reservations[].Instances[].PrivateIpAddress' --output text \
+    | tr '\t' '\n' | grep . | sort | sed -e 's|^|http://|' -e 's|$|:2379|' | paste -sd,)
+  [ -n "$ASYNCDB_ETCD" ] && break
+  sleep 5
+done
 docker run -d --restart always -p 80:80 -p 8080:8080 \
   -v /var/lib/asyncdb:/var/lib/asyncdb \
   -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
@@ -89,9 +103,16 @@ really only deployable into one account's `eu-west-2`.
 The last five lines are what make the instance a member of a cluster rather than
 a database of its own:
 
-- **`ASYNCDB_ETCD`** is `Fn::FindInMap` of the etcd tier's
-  [`ClientEndpoints`](/deployment/etcd#the-addresses) — all three, comma
-  separated, which is the form that survives one of them being down.
+- **`ASYNCDB_ETCD`** is every running etcd instance's private address on 2379,
+  comma separated, which is the form that survives one of them being down. It
+  used to be `Fn::FindInMap` of three fixed addresses; the etcd tier is
+  [a group that discovers itself](/deployment/etcd) now, so there are no
+  addresses to write down and this tier asks the same question the etcd tier
+  asks — `DescribeInstances`, filtered to `Name=etcd` in this VPC. The retry is
+  for the order the two groups come up in, and **the answer is read once**: an
+  etcd instance replaced later leaves this node with one stale endpoint of three,
+  which the client passes over, and
+  [replacing all three without rolling this tier strands it](/deployment/etcd#how-the-database-tier-finds-it).
 - **`ASYNCDB_NODE`** is this instance's own private address on 8080, read from
   the metadata service at boot. It is the **API port**, not the nginx in front
   of it: nodes talk to each other directly and do not go through the `/asyncdb`
@@ -165,9 +186,10 @@ persistent, and it is not the instance-local NVMe a write-heavy store would want
 `AutoScalingGroup` spans all three **private** subnets, launches from the launch
 template at `LatestVersionNumber`, registers into `ALBTargetGroup`, and is
 `DesiredCapacity: 6` between `MinSize: 1` and `MaxSize: 7`. It carries a
-`DependsOn` naming `S3Endpoint`, `EcrApiEndpoint` and `EcrDockerEndpoint`,
-because [the pull goes through them](/deployment/network#the-endpoints) and
-nothing in the launch template says so.
+`DependsOn` naming `S3Endpoint`, `EcrApiEndpoint`, `EcrDockerEndpoint` and
+`Ec2Endpoint`, because [the pull goes through them](/deployment/network#the-endpoints)
+— and the etcd discovery through the last of them — and nothing in the launch
+template says so.
 
 Six is three zones of two, and the group is what makes it so: an auto scaling
 group balances its capacity across the subnets it is given, so six instances

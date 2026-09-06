@@ -22,7 +22,9 @@ needed. Keys and values are base64 in both directions, and a prefix range ends
 at the prefix with its last byte raised — `/asyncdb/node/` to `/asyncdb/node0`:
 
 ```bash
-ETCD=http://10.0.0.10:2379
+ETCD=http://$(aws ec2 describe-instances --filters Name=tag:Name,Values=etcd \
+  Name=instance-state-name,Values=running \
+  --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text):2379
 
 # the membership
 curl -s $ETCD/v3/kv/range -d "{
@@ -80,8 +82,13 @@ the next, and the node stays with whichever answered. Naming one member makes
 that member a single point of failure for the membership.
 
 ```
-ASYNCDB_ETCD=http://10.0.0.10:2379,http://10.0.1.10:2379,http://10.0.2.10:2379
+ASYNCDB_ETCD=http://10.0.0.37:2379,http://10.0.1.204:2379,http://10.0.2.19:2379
 ```
+
+The addresses are whatever the etcd instances had **when this node booted** —
+[`DescribeInstances` reads them once](/deployment/etcd#how-the-database-tier-finds-it)
+— so an entry that answers nothing is an etcd instance that has since been
+replaced, and two of the three answering is the tier working as intended.
 
 A member that *refuses* a request rather than failing to answer is not a reason
 to try the next one: it has given the answer the whole cluster would give.
@@ -92,40 +99,65 @@ Two of three members gone. The survivor answers reads of already-committed keys
 but takes no writes, so leases stop being renewed, membership keys expire, and
 every node falls back to the cluster-of-one behaviour above within ten seconds.
 
-**Do:** get quorum back before anything else. Because the data is a few leased
-keys that rewrite themselves in seconds, **replacing the whole tier is the
-correct answer here**, and it is only correct because the data is disposable:
-delete all three etcd instances and let `make update-stack` recreate them at
-their fixed addresses. It costs one lease of stale membership.
+**This is the one etcd failure [the group](/deployment/etcd#the-group) does not
+heal**, and it fails loudly rather than quietly. The replacements it launches ask
+the survivor to admit them, `member add` needs a quorum to agree and there is
+none, and they **exit without starting etcd** rather than bootstrap a cluster of
+their own — which would leave the survivor running a second one and the database
+tier holding endpoints for both. An instance with no container is the symptom.
 
-## An etcd member was recreated and will not rejoin
+**Do:** replace the whole tier, which is the right answer only because the data
+is a few leased keys that rewrite themselves in seconds:
 
-Fixed addresses are what make the tier deterministic, and this is what they
-cost. `make update-stack` recreates the instance at the same address, but with an
-empty data directory and a **new member id**, and the two survivors still hold
-the old id for `etcd-1`. It will not simply rejoin, and `--initial-cluster-state
-new` is read only at bootstrap of an empty data directory, so nothing about the
-user data fixes it.
+```bash
+aws ec2 describe-instances --filters Name=tag:Name,Values=etcd \
+  Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].InstanceId' --output text \
+  | xargs aws ec2 terminate-instances --instance-ids
+```
 
-Two ways out, and the first is usually right:
+The group launches three more, none of them finds a cluster to join, and they
+bootstrap one from the instances `DescribeInstances` shows them. It costs one
+lease of stale membership.
 
-- **Replace the tier.** Delete all three, recreate, accept one lease of stale
-  membership.
-- **The member dance**, on a survivor:
+**Then roll the database tier**, and this is the part that is easy to forget:
+`ASYNCDB_ETCD` is
+[read once at boot](/deployment/etcd#how-the-database-tier-finds-it), so after
+all three etcd instances have been replaced, every running asyncdb node holds
+three addresses that answer nothing and is
+[a cluster of one](#etcd-cannot-be-reached). One database instance at a time,
+letting each come back before the next goes.
 
-  ```bash
-  etcdctl member list
-  etcdctl member remove <old id>
-  etcdctl member add etcd-1 --peer-urls=http://10.0.0.10:2380
-  ```
+## A replacement etcd instance did not join
 
-  then start the new node with `--initial-cluster-state existing` and the member
-  list the add printed.
+The group launched one and there is no container on it, or `member list` still
+names a member that no instance answers for. The
+[boot script](/deployment/etcd#the-launch-template) writes what it did to
+cloud-init's log, and that is the first thing to read:
 
-Nothing replaces a dead etcd instance automatically: they are three
-`AWS::EC2::Instance` resources, not a group. That is the trade for determinism —
-a group heals an instance and cannot heal a *member*, which is the thing that is
-actually broken.
+```bash
+aws ssm start-session --target i-0123456789abcdef0
+sudo tail -50 /var/log/cloud-init-output.log
+```
+
+| In the log | Is |
+| --- | --- |
+| `member add` refused, and the script exited | No quorum. The section above is the recovery |
+| `UnauthorizedOperation` on `DescribeInstances` | The instance profile, or the [EC2 endpoint](/deployment/network#the-endpoints) it goes through |
+| The cluster string names fewer than three | The other instances were not visible within five minutes — check they carry `Name=etcd` |
+| Nothing at all after the docker run | etcd started and exited. `docker logs etcd` says why; a cluster ID mismatch means the data directory was not empty |
+
+**The member dance is still there to do by hand**, on a member that answers:
+
+```bash
+etcdctl member list
+etcdctl member remove <the id with no instance>
+etcdctl member add etcd-i-0abc… --peer-urls=http://10.0.1.37:2380
+```
+
+then start the new node with `--initial-cluster-state existing` and the member
+list the add printed. It is the same three commands the boot script runs; doing
+them by hand is for when it did not get to.
 
 ## The membership is wrong
 
@@ -197,7 +229,9 @@ consecutive slow answers to be dropped.
 from that node to each etcd member:
 
 ```bash
-for e in 10.0.0.10 10.0.1.10 10.0.2.10; do
+for e in $(aws ec2 describe-instances --filters Name=tag:Name,Values=etcd \
+    Name=instance-state-name,Values=running \
+    --query 'Reservations[].Instances[].PrivateIpAddress' --output text); do
   curl -s -o /dev/null -w "$e %{time_total}\n" --max-time 5 \
     http://$e:2379/v3/kv/range -d '{"key":"AA=="}'
 done

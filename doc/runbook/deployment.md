@@ -1,7 +1,8 @@
 # The deployment
 
 The AWS stack is one template, one load balancer, six database instances in an
-auto scaling group and three etcd instances at fixed addresses. Most of what
+auto scaling group and three etcd instances in a group of their own, each tier
+finding the other with `DescribeInstances`. Most of what
 fails here fails at *launch* — an instance that never comes up — and it fails
 quietly, because an instance with no container says nothing about why.
 
@@ -81,15 +82,21 @@ login` actually appears. Nothing else records it.
 ## An instance never comes up
 
 The user data has to finish inside `HealthCheckGracePeriod`, which is **200
-seconds**, measured from the launch and not from the first check. Into that has
-to fit a `yum -y update`, a download and install of AWS CLI v2, a `docker login`
-and a cold `docker pull` of the image.
+seconds** on the database tier and 300 on the etcd tier, measured from the launch
+and not from the first check. Into the 200 has to fit a `docker login`, a cold
+`docker pull` of the image, and the
+[`DescribeInstances` that finds etcd](/deployment/etcd#how-the-database-tier-finds-it)
+— which answers at once when the etcd tier is up and waits **up to a minute**
+when it is not.
 
-**Three and a bit minutes is not a generous margin for that sequence.** It holds
-because the pull is from ECR in the same region, but a slow mirror or a larger
-image eats it, and the failure looks like an instance that never comes up rather
-than like a timeout. There is room to raise it — nothing waits on the grace
-period except the first health check of a genuinely dead instance.
+**Three and a bit minutes is not a generous margin for that sequence**, and the
+minute is the part that is new. It holds because the pull is from ECR in the same
+region and the discovery call normally returns immediately, but a slow endpoint
+or a larger image eats it, and the failure looks like an instance that never
+comes up rather than like a timeout. There is room to raise it — nothing waits on
+the grace period except the first health check of a genuinely dead instance. The
+`yum -y update` and the install of AWS CLI v2 that used to be in here are
+[baked into the AMI](/pipeline/ami) and no longer cost anything at boot.
 
 ## The group does not replace a failed application
 
@@ -153,7 +160,8 @@ resume. The usual causes are the pull and the grace period.
 | `ClusterALB` already exists | A stack is already standing. The name is fixed, so **there can be one of these per region** |
 | Parameter `/asyncdb/version` not found | The SSM parameter does not exist. CloudFormation cannot resolve it, so the operation fails outright |
 | The group reports a failed activity, not a template error | Something the launch template names is missing — the AMI, the instance profile or the image |
-| An etcd instance has no container | `EtcdAmi` does not carry `quay.io/coreos/etcd:v3.5.9`. There is [no route to quay.io any more](/deployment/network#why-the-instances-are-private), so the user data cannot pull it |
+| An etcd instance has no container | `EtcdAmi` does not carry `quay.io/coreos/etcd:v3.5.9`. There is [no route to quay.io any more](/deployment/network#why-the-instances-are-private), so the user data cannot pull it — or the node found a cluster it could not join, which is [a quorum failure](/runbook/membership#etcd-has-lost-quorum) and deliberate |
+| Either tier came up in a cluster of one | `ec2:DescribeInstances` did not answer. `Ec2Endpoint` has to be up before an instance boots, and the instance profile has to carry the `discovery` policy |
 | The database instances have no container | The ECR endpoints. `docker login` and `docker pull` go through `EcrApiEndpoint`, `EcrDockerEndpoint` and `S3Endpoint`, and all three have to be up before an instance boots |
 
 Three things the template needs and does not create:
