@@ -114,11 +114,6 @@ build {
 
 	provisioner "shell" {
 		execute_command = "sudo -E bash '{{ .Path }}'"
-		script = "${path.root}/awscli.sh"
-	}
-
-	provisioner "shell" {
-		execute_command = "sudo -E bash '{{ .Path }}'"
 		script = "${path.root}/clean.sh"
 	}
 
@@ -135,11 +130,6 @@ build {
 	provisioner "shell" {
 		execute_command = "sudo -E bash '{{ .Path }}'"
 		script = "${path.root}/etcd.sh"
-	}
-
-	provisioner "shell" {
-		execute_command = "sudo -E bash '{{ .Path }}'"
-		script = "${path.root}/awscli.sh"
 	}
 
 	provisioner "shell" {

@@ -25,8 +25,6 @@ cmk run             # build then run build/bin/asyncdb
 All test sources link into the single gtest binary `build/test/test_main`, so a single test or suite is
 run directly after `cmk test`:
 
-```bash
-build/test/test_main --gtest_filter='router_test.*'
 build/test/test_main --gtest_filter='table_test.fail_to_deserialise_table_with_no_name'
 ```
 
@@ -388,8 +386,6 @@ every etcd instance without rolling the database tier strands it. `doc/deploymen
 Packer, from `ami/asyncdb.pkr.hcl`: `ami/database.sh` (the `dnf` update and `/var/lib/asyncdb`) and `ami/etcd.sh`
 (`quay.io/coreos/etcd:v3.5.9`, pinned to the same tag the launch template runs — and **required**,
 because a private subnet has no route to quay.io to pull it at boot), each followed by
-`ami/awscli.sh` — `unzip` and AWS CLI v2, which both tiers need now that both discover with it — and
-then `ami/clean.sh`. The base is the ECS-optimised AL2023 image, read by a `data
 "amazon-parameterstore"` block; the id of the result is written to `/asyncdb/ami/{database,etcd}`
 out of Packer's `manifest.json`, and `cloudformation.json` resolves those two as its `DatabaseAmi`
 and `EtcdAmi` parameters — so **they have to exist before a deploy**, exactly as `/asyncdb/version`

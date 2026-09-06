@@ -19,7 +19,6 @@ build, and Packer is what makes the workflow short.
               │ packer build -only=<role>.*                          │
               │   launch a builder, from the ECS-optimised AL2023 id │
               │   ami/<role>.sh   as root, over SSH                  │
-              │   ami/awscli.sh   as root, over SSH                  │
               │   ami/clean.sh    as root, over SSH                  │
               │   stop, image, terminate, take the key pair and      │
               │   the security group away again                      │
@@ -30,23 +29,14 @@ build, and Packer is what makes the workflow short.
 
 ## What is in them, and what is not
 
-`ami/database.sh` and `ami/etcd.sh` are the provisioning, `ami/awscli.sh` is the
-part both of them need, and each build is the first boot of its tier moved off
+`ami/database.sh` and `ami/etcd.sh` are the provisioning
+and each build is the first boot of its tier moved off
 the boot path:
 
 | | Baked | Still done at boot |
 | --- | --- | --- |
 | database | `dnf -y update`, `/var/lib/asyncdb`, `unzip` and AWS CLI v2 | `docker login`, `docker pull` of `asyncdb:$VERSION`, [finding etcd](/deployment/etcd#how-the-database-tier-finds-it), `docker run` |
 | etcd | `dnf -y update`, `quay.io/coreos/etcd:v3.5.9`, `unzip` and AWS CLI v2 | [finding its peers and joining them](/deployment/etcd), `docker run` |
-
-**The AWS CLI is in both of them now, and it is `ami/awscli.sh` rather than a
-copy in each.** The database tier has always needed it for
-`ecr get-login-password`; the etcd tier needs it because
-[the tier discovers itself with `ec2:DescribeInstances`](/deployment/etcd) rather
-than launching at three addresses the template writes down. An etcd AMI baked
-before that change carries no CLI at all, and an instance from it comes up with
-no cluster — so **this bake has to run before the deploy that expects it**, in
-the same way `EtcdAmi` has always had to hold the etcd image.
 
 **The asyncdb image is deliberately not baked.** It moves every release, so an
 AMI holding it would put an image build on the release path, and the pull it
@@ -137,8 +127,7 @@ a time.
   not because an instance was replaced on a Tuesday.
 - When the etcd tag in `cloudformation.json` changes. The tag is written twice —
   there and in `ami/etcd.sh` — and nothing makes them agree.
-- When either tier's boot dependencies change — which now means both bakes, since
-  `ami/awscli.sh` is in both.
+- When either tier's boot dependencies change.
 
 Not on a release. `version` changing has nothing to do with these images.
 
