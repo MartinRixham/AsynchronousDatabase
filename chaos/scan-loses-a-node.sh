@@ -88,7 +88,7 @@ printf '  ---- %s of 20 writes were refused while three nodes were deaf\n' "$(wr
 
 echo "  Waiting for the fault to be removed."
 
-fis_await_end $((seconds + 300)) > /dev/null
+fis_await_end $((seconds + 300))
 
 await '(.nodes | length) == 6 and (.zones | length) == 3' "$settle" \
 	"every node is answering again"

@@ -52,8 +52,8 @@ cat > "$work/template.json" <<EOF
 			"actionId": "aws:ssm:send-command",
 			"parameters": {
 				"duration": "PT$((seconds / 60))M",
-				"documentArn": "arn:aws:ssm:$region::document/AWSFIS-Run-Network-Latency",
-				"documentParameters": "{\"Interface\":\"eth0\",\"DelayMilliseconds\":\"$delay\",\"JitterMilliseconds\":\"100\",\"Sources\":\"$cidr\",\"DurationSeconds\":\"$seconds\",\"InstallDependencies\":\"True\"}"
+				"documentArn": "arn:aws:ssm:$region::document/AWSFIS-Run-Network-Latency-Sources",
+				"documentParameters": "{\"Interface\":\"DEFAULT\",\"TrafficType\":\"egress\",\"DelayMilliseconds\":\"$delay\",\"JitterMilliseconds\":\"100\",\"Sources\":\"$cidr\",\"DurationSeconds\":\"$seconds\",\"InstallDependencies\":\"True\"}"
 			},
 			"targets": { "Instances": "Node" }
 		}
@@ -83,7 +83,7 @@ printf '  ---- a read through the load balancer now takes %ss\n' \
 
 echo "  Waiting for the fault to be removed."
 
-fis_await_end $((seconds + 300)) > /dev/null
+fis_await_end $((seconds + 300))
 
 await '(.nodes | length) == 6 and (.zones | length) == 3' "$settle" \
 	"the membership never changed and is still six nodes in three zones"

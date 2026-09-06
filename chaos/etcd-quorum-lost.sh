@@ -111,7 +111,7 @@ printf '  ---- %s of 60 reads of seeded records answered something other than 2x
 
 echo "  Waiting for the members to come back."
 
-fis_await_end $((recovery / 2)) > /dev/null
+fis_await_end $((recovery / 2))
 
 # Both keys etcd holds for asyncdb are leased, so neither outlived the members that wrote them
 # and neither had to. The cluster writes itself back into an empty etcd within a lease.

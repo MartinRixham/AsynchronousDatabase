@@ -90,7 +90,7 @@ printf '  ---- %s of 60 reads answered something other than 2xx\n' "$missed"
 
 echo "  Waiting for the fault to be removed."
 
-fis_await_end $((seconds + 300)) > /dev/null
+fis_await_end $((seconds + 300))
 
 # It re-registers from scratch on the pass after a renewal fails rather than believing it is
 # still a member, which is why nothing has to be restarted.

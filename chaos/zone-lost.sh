@@ -102,7 +102,7 @@ done
 
 echo "  Waiting for the fault to be removed."
 
-fis_await_end $((recovery / 2)) > /dev/null
+fis_await_end $((recovery / 2))
 
 await '(.zones | length) == 3 and (.nodes | length) == 6' "$recovery" \
 	"the zone rejoined and the third copy is back"

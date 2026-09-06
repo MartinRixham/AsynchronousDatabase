@@ -106,7 +106,7 @@ expect_reads 40 "every read is answered while one node cannot write"
 
 echo "  Waiting for the fault to be removed."
 
-fis_await_end $((seconds + 300)) > /dev/null
+fis_await_end $((seconds + 300))
 
 await '(.nodes | length) == 6 and (.zones | length) == 3 and (.write_stalled | not)' "$settle" \
 	"the node is whole again and nothing is stalled"

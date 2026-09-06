@@ -142,6 +142,6 @@ expect_readable 40 5 "every seeded record can still be read once the replacement
 printf '  ---- reads once the replacement joined: %s\n' "$(codes)"
 expect_writes 20 "every write is taken once the replacement has joined"
 
-fis_await_end 120 > /dev/null
+fis_await_end 120
 
 verdict
