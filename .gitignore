@@ -5,3 +5,4 @@ ui/dist/
 *.pem
 doc/.vitepress/dist/
 doc/.vitepress/cache/
+manifest.json

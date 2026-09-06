@@ -367,3 +367,17 @@ Capacity is worth moving three at a time so that no zone holds a larger share th
 The etcd tier is three instances at addresses fixed in the template's `Etcd` mapping, not a discovery
 service: `ASYNCDB_ETCD` is `Fn::FindInMap` of that same mapping, which is what joins the database tier
 into a cluster.
+
+### Machine images (`ami/`)
+
+`.github/workflows/ami.yaml` is run **by hand** from the Actions tab and bakes one AMI per tier with
+Packer, from `ami/asyncdb.pkr.hcl`: `ami/database.sh` (the `dnf` update, `unzip` and AWS CLI v2 the
+launch template's user data installs at every boot) and `ami/etcd.sh` (`quay.io/coreos/etcd:v3.5.9`,
+pinned to the same tag `Etcd1..3` run), each followed by `ami/clean.sh`. The base image is the same
+ECS-optimised AL2023 parameter `ECSAMI` resolves, read by a `data "amazon-parameterstore"` block; the
+resulting id is written to `/asyncdb/ami/{database,etcd}` out of Packer's `manifest.json`.
+**The asyncdb image is deliberately not baked** — a database instance still pulls `asyncdb:$VERSION`
+from ECR at boot, so a release needs no AMI behind it. `cloudformation.json` does not read those
+parameters yet; both tiers still launch from `ECSAMI`. The scripts run as root and `set -euo
+pipefail`, so a failed install is a failed bake rather than an image missing half of itself.
+`packer fmt` disagrees with the template's tabs and nothing runs it. `doc/pipeline/ami.md` is the page.
