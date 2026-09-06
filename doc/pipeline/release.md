@@ -47,10 +47,15 @@ what the condition is a test of: **not "is this a new version" but "did that
 command fail"**. Anything that makes `describe-images` exit non-zero reads as a
 release —
 
-- the repository `asyncdb` does not exist in the account, or not in
-  `eu-west-2`;
 - the credentials are wrong, expired, or lack `ecr:DescribeImages`;
 - ECR is briefly unavailable.
+
+The one of these that used to be routine — **the repository not being there at
+all**, on a fresh account or in the wrong region — is now handled by
+[the step above the gate](/pipeline/#making-the-repositories), which creates
+`asyncdb` if a `describe-repositories` says it is missing. That is why it is
+above the gate and not next to the push: it turns "the repository does not
+exist" from an answer this gate misreads into one that cannot arise.
 
 In each of those the run goes green, `docker tag` succeeds locally, and the
 commit gets a git tag saying a version shipped that never left the runner.

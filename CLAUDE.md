@@ -334,7 +334,9 @@ Built on [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum), not a m
 
 ## Release
 
-Pushing to `master` builds the Docker image and, **only if the tag in the `version` file does not already
+Pushing to `master` builds the Docker image, creates the ECR repository `asyncdb` if the account has
+none (which is also what makes the gate below answerable, since a missing repository fails
+`describe-images` and reads as a release) and, **only if the tag in the `version` file does not already
 exist in ECR**, pushes it, writes that tag to the SSM parameter `/asyncdb/version` and git-tags the commit.
 It then mirrors the etcd tag `etcd-version` names into ECR if it is not there already and writes
 `/asyncdb/etcd` — unconditionally, whatever the version gate decided — `make create-stack`s the

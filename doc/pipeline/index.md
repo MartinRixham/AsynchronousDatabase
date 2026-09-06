@@ -1,7 +1,7 @@
 # The build pipeline
 
 `.github/workflows/build.yaml` is the push side of CI: one workflow, one job,
-twenty-one steps, no matrix and no reusable workflow. It builds the Docker image,
+twenty-two steps, no matrix and no reusable workflow. It builds the Docker image,
 asks ECR whether the version in the `version` file has been published already and
 publishes it if it has not — and then **stands the whole AWS stack up, runs every
 test that needs a running server against it, and deletes it again**. The other
@@ -19,6 +19,9 @@ half of CI is `.github/workflows/pull-request.yaml`, which is
                  └──────┬──────┘
                  ┌──────┴──────┐
                  │docker build │  ← cppcheck, the compile, gtest under valgrind, the UI
+                 └──────┬──────┘
+                 ┌──────┴──────┐
+                 │  make repo  │  create-repository asyncdb if it is not there
                  └──────┬──────┘
               ┌─────────┴─────────┐
               │ tag in ECR already? │  the version file
@@ -96,6 +99,7 @@ One job, `build-and-push`, on `ubuntu-latest`. Its steps in order:
 | Login to Amazon ECR | `aws-actions/amazon-ecr-login@v2`; its `outputs.registry` is the account's registry host, used by the push and by the mirror |
 | Build Docker image | `docker build -t asyncdb:latest .` — [the image build](/pipeline/image) |
 | Read version | `cat version` into `$GITHUB_ENV` |
+| Create the asyncdb repository | `aws ecr describe-repositories` or else `create-repository` — [below](#making-the-repositories) |
 | Check if version exists in ECR | `aws ecr describe-images`, setting the `publish` output — [the release gate](/pipeline/release) |
 | Tag and push Docker image to ECR | `docker tag` and `docker push`, only if `publish == 'true'` |
 | Record published version in SSM | `put-parameter /asyncdb/version`, only if `publish == 'true'` — this is what [the template resolves at deploy time](/deployment/#parameters) |
@@ -114,6 +118,28 @@ The region is a literal in two places — the credentials step here, and, outsid
 this file, the [user data](/deployment/database#the-launch-template) of both
 tiers, which also writes out the registry host. They all say `eu-west-2` and
 nothing makes them agree.
+
+## Making the repositories
+
+Neither ECR repository is a thing anybody creates by hand. `asyncdb`'s is made
+by one step above the version gate:
+
+```bash
+aws ecr describe-repositories --repository-name asyncdb > /dev/null 2>&1 \
+  || aws ecr create-repository --repository-name asyncdb > /dev/null
+```
+
+and `etcd`'s by the same two lines inside [the mirror](#mirroring-etcd). Both
+are idempotent — the `describe` is the whole test, and on every run after the
+first there is nothing to do.
+
+**Where it sits matters more than that it exists.** It is not enough to create
+the repository before the `docker push`, because the step in between is
+[the release gate](/pipeline/release), and that gate is a test of whether
+`describe-images` exited non-zero. A missing repository does not make it answer
+"no such tag"; it makes it fail, which the gate reads as a release. Creating the
+repository first is what gives the question an answer, and it is why this step
+is above the gate rather than beside the push.
 
 ## Mirroring etcd
 
@@ -150,10 +176,10 @@ worth knowing:
   usually never, so the two are asked separately. A push that publishes nothing
   still leaves the registry and `/asyncdb/etcd` correct, which is what the
   `make create-stack` two steps later depends on.
-- **It creates the repository.** `asyncdb`'s repository is a
-  [precondition of the first deploy](/deployment/#before-the-first-deploy) and
-  this one is not, because there is no reason to make a person create by hand a
-  thing the build knows the name of.
+- **It creates the repository**, the same way [the step above the version gate
+  does for `asyncdb`](#making-the-repositories), and for the same reason: there
+  is no reason to make a person create by hand a thing the build knows the name
+  of.
 
 The tag itself is written down **once**, in the `etcd-version` file, and
 `cloudformation.json` never reads a file: the `put-parameter` at the end is the
@@ -203,7 +229,7 @@ it creates and deletes the stack:
 | For | Needs |
 | --- | --- |
 | The release | `ecr:GetAuthorizationToken`, `ecr:DescribeImages`, and the layer-upload actions behind `docker push` |
-| [The mirror](#mirroring-etcd) | `ecr:DescribeRepositories` and `ecr:CreateRepository` as well |
+| [The repositories](#making-the-repositories) | `ecr:DescribeRepositories` and `ecr:CreateRepository`, for `asyncdb` and for [the mirror](#mirroring-etcd) alike |
 | Both parameters | `ssm:PutParameter` on `/asyncdb/*` |
 | The deploy | `cloudformation:*` on the stack, plus **every action the template's own resources need** — VPC, subnets, endpoints, security groups, load balancer, auto scaling, and `iam:CreateRole` / `PassRole` for the two instance roles |
 | The diagnosis | `ec2:DescribeInstances`, `ec2:GetConsoleOutput`, `ssm:SendCommand` and `ssm:GetCommandInvocation` |

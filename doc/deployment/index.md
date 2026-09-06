@@ -135,15 +135,15 @@ parameter override away.
 
 ## Before the first deploy
 
-Four things the template needs and does not create. **A key pair is no longer
+Three things the template needs and does not create. **A key pair is no longer
 one of them**: the instances are in
 [private subnets with no SSH](/deployment/network#getting-onto-an-instance) and
-neither tier sets `KeyName` any more.
+neither tier sets `KeyName` any more. Neither is the `asyncdb` repository: it is
+in `eu-west-2`, it is where [the release](#the-image-the-instances-pull) pushes,
+it is no part of this stack — and
+[the build creates it](/pipeline/#making-the-repositories) if it is not there,
+on every push and not only on a release.
 
-- **An ECR repository named `asyncdb`**, in `eu-west-2`, holding the tag the
-  user data asks for. The repository is where
-  [the release](#the-image-the-instances-pull) pushes, and it is not part of
-  this stack.
 - **An SSM parameter named `/asyncdb/version`**, in `eu-west-2`, holding that
   tag. The `Version` parameter resolves it at deploy time, so a stack operation
   fails outright if it does not exist. The release writes it; before the first
