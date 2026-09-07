@@ -111,6 +111,12 @@ printf '  ---- %s of 60 reads of seeded records answered something other than 2x
 
 echo "  Waiting for the members to come back."
 
+# fis_await_end and not fis_stop_now, which is the one place in the suite that still pays for a
+# fault it is no longer watching, and deliberately. What starts these members again is the
+# action's own startInstancesAfterDuration, and whether stopping the experiment early honours it
+# or leaves two etcd instances stopped is not a thing to find out on the last experiment of a run
+# against a stack the pipeline deletes next. CHAOS_ETCD_DURATION is therefore a real duration
+# here rather than a ceiling, and shortening it is what makes this one cheaper.
 fis_await_end $((recovery / 2))
 
 # Both keys etcd holds for asyncdb are leased, so neither outlived the members that wrote them

@@ -116,9 +116,7 @@ for isolated in $cut_off; do
 	echo "  $isolated says: $(node_health "$isolated" | jq -c '{nodes, zones, leads}' 2> /dev/null)"
 done
 
-echo "  Waiting for the fault to be removed."
-
-fis_await_end $((recovery / 2))
+fis_stop_now $((recovery / 2))
 
 await '(.zones | length) == 3 and (.nodes | length) == 6' "$recovery" \
 	"the zone rejoined and the third copy is back"

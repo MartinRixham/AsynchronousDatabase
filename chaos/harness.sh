@@ -698,6 +698,57 @@ fis_await_end()
 	return 1
 }
 
+# fis_stop_now [timeout] — the assertions are done, so take the fault away rather than sit and
+# watch it expire. Every experiment that calls this follows it with the recovery it asserts on.
+#
+# **This is what makes a duration a ceiling rather than the bill.** FIS charges per action-minute
+# of an action that actually ran, so an experiment stopped two minutes into a six minute template
+# is billed for two — where fis_await_end below pays the whole six for a fault nothing is looking
+# at any more. The durations stay long because a fault that expires mid-assertion is a false
+# failure, and they now cost nothing to keep long.
+#
+# A stopped experiment removes its own fault, by three different routes and never by being waited
+# out: the agentless actions undo what they installed, the AWSFIS-Run-* documents roll back when
+# their command is cancelled, and the script in blackhole_parameters traps the TERM that the
+# cancellation sends and deletes its rule — which is what that trap is there for. Its detached
+# safety net still fires later regardless, and removing a rule that is already gone is nothing.
+# Nothing here takes that on trust: the recovery assertion after every call is the check.
+fis_stop_now()
+{
+	local deadline state
+
+	if [ -z "$experiment" ]; then
+		echo "  There is no experiment to stop."
+		return 0
+	fi
+
+	echo "  The assertions are done. Stopping the fault rather than waiting it out."
+
+	# It can have ended on its own between the last assertion and here — a body that ran longer
+	# than the fault — and that is not a failure, it is the old behaviour. Watch for the end.
+	if ! aws fis stop-experiment --id "$experiment" > /dev/null 2>&1; then
+		echo "  It could not be stopped, so waiting for it to end instead."
+		fis_await_end "${1:-300}"
+		return $?
+	fi
+
+	deadline=$((SECONDS + ${1:-300}))
+
+	while [ "$SECONDS" -lt "$deadline" ]; do
+		state=$(fis_status)
+
+		case $state in
+			stopped | completed) echo "  The fault has been removed — $state."; return 0 ;;
+			failed) echo "  The experiment failed: $(fis_reason)"; return 1 ;;
+		esac
+
+		sleep 5
+	done
+
+	echo "  The experiment is still $(fis_status)."
+	return 1
+}
+
 fis_finish()
 {
 	[ -n "$experiment" ] && aws fis stop-experiment --id "$experiment" > /dev/null 2>&1

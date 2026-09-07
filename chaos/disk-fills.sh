@@ -179,9 +179,7 @@ fi
 # A read does not write, and the record is in every zone.
 expect_reads 40 "every read is answered while one node cannot write"
 
-echo "  Waiting for the fault to be removed."
-
-fis_await_end $((seconds + 300))
+fis_stop_now
 
 # A store that stopped for want of space does not notice the space coming back by itself: the
 # background error is sticky, and repository::rocksdb_repository::written is what resumes it, on

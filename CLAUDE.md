@@ -142,6 +142,24 @@ assertions and nothing else. Everything is an environment variable — `CHAOS_EX
 `CHAOS_SETTLE`, `CHAOS_RECOVERY` — and a failed assertion is a non-zero exit, which is what lets
 `build.yaml` run it after the load tests and fail the build on it.
 
+**A duration is a ceiling and not the bill.** FIS charges per action-minute of an action that actually
+ran, and `fis_stop_now` takes each fault away as soon as that experiment's assertions are done rather
+than watching it expire — so five of the seven are billed for what they used, and shortening one of
+those saves nothing. That is what lets the durations stay generous: **a fault that expires
+mid-assertion is a false failure and not a weaker test**, because `scan-loses-a-node` asserts that a
+scan *fails* while a node is deaf. A stopped experiment removes its own fault three ways — the
+agentless actions undo what they installed, the `AWSFIS-Run-*` documents roll back when their command
+is cancelled, and the script in `blackhole_parameters` traps the `TERM` that cancelling sends and
+deletes its rule, which is what that trap is for. None of it is taken on trust: the recovery assertion
+every experiment runs next is the check that the fault went.
+
+**Two still pay their whole duration.** `node-stops`' action carries no duration, so it is one
+action-minute however long its assertions take. `etcd-quorum-lost` keeps `fis_await_end` because what
+starts the etcd members again is the action's own `startInstancesAfterDuration`, and whether an early
+stop honours it is not a thing to discover on the last experiment of a run against a stack the
+pipeline deletes next — so `CHAOS_ETCD_DURATION` is a real duration there, and `build.yaml` sets it to
+`PT3M`. A duration in seconds becomes `PT$((seconds / 60))M`, so keep it a whole number of minutes.
+
 - **The suite refuses to start** against a cluster that is not already six nodes in three zones
   with nothing stalled, and stops early if an experiment's damage did not heal — everything
   after that would be measuring the previous fault.

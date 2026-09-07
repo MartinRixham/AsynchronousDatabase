@@ -91,9 +91,7 @@ printf '  ---- %s of 60 reads answered something other than 2xx\n' "$missed"
 [ "$missed" -gt 0 ] \
 	&& echo "  ---- a node that has lost etcd but is still taking client traffic, exactly as documented"
 
-echo "  Waiting for the fault to be removed."
-
-fis_await_end $((seconds + 300))
+fis_stop_now
 
 # It re-registers from scratch on the pass after a renewal fails rather than believing it is
 # still a member, which is why nothing has to be restarted.

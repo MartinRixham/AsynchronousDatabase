@@ -204,6 +204,31 @@ As in [`perf/`](../perf).
 Each experiment has one or two of its own — the length of its fault, the size of its latency —
 named at the top of the script that uses it.
 
+**A duration is a ceiling, not the bill.** FIS charges per action-minute of an action that
+actually ran, and `fis_stop_now` takes each fault away as soon as that experiment's assertions are
+done rather than watching it expire — so five of the seven are billed for what they used. That is
+what lets the durations stay generous: a fault that expires mid-assertion is a *false failure*
+rather than a weaker test, because `scan-loses-a-node` asserts that a scan **fails** while a node
+is deaf and goes red if the node comes back early. Shortening one of those five saves nothing now.
+
+A stopped experiment removes its own fault, and by three different routes. The agentless actions
+undo what they installed; the `AWSFIS-Run-*` documents roll back when their command is cancelled;
+and the script in `blackhole_parameters` traps the `TERM` that the cancellation sends and deletes
+its rule, which is what that trap is for — its detached safety net still fires later regardless,
+and removing a rule that is already gone is nothing. None of it is taken on trust: the recovery
+assertion that every experiment runs immediately afterwards is the check that the fault went.
+
+**Two still pay their whole duration.** `node-stops` has no duration on its action at all — it
+completes when the instance stops, and is one action-minute whatever the assertions do.
+`etcd-quorum-lost` stays on `fis_await_end` deliberately: what starts the etcd members again is
+the action's own `startInstancesAfterDuration`, and whether an early stop honours it is not a
+thing to discover on the last experiment of a run. `CHAOS_ETCD_DURATION` is therefore a real
+duration rather than a ceiling, and the pipeline sets it to `PT3M`.
+
+A duration in seconds becomes the FIS action's own duration as `PT$((seconds / 60))M`, so **keep it
+a whole number of minutes**: 150 is a document told to run for 150 seconds inside an action billed
+and stopped at `PT2M`.
+
 ## Reading a run
 
 ```

@@ -253,7 +253,26 @@ jobs:
     - name: Validate the experiment templates
       run: chaos/validate.sh
 
+    # FIS bills per action-minute of an action that actually ran, and `fis_stop_now` in
+    # chaos/harness.sh takes each fault away as soon as that experiment's assertions are done —
+    # so for five of the seven a duration is now a **ceiling** and not the bill, and there is
+    # nothing to be saved by shortening one. They are deliberately left long: a fault that
+    # expires mid-assertion is a false failure and not a weaker test, because `scan-loses-a-node`
+    # asserts that a scan *fails* while a node is deaf.
+    #
+    # The exceptions are the two that still pay their whole duration, and only one of them can be
+    # made cheaper. `node-stops` has no duration on its action at all — it completes when the
+    # instance stops. `etcd-quorum-lost` stays on its timer because what starts the etcd members
+    # again is the action's own startInstancesAfterDuration, which an early stop may or may not
+    # honour; its comment has the reasoning. Its assertions are an `await` bounded by
+    # CHAOS_SETTLE, 10 writes and 60 reads against a cluster of one that answers fast either way
+    # — about 120 seconds — so PT3M is above even the worst case and saves the minute.
+    #
+    # A duration in seconds becomes PT$((seconds / 60))M, so keep any of these a whole number of
+    # minutes: 150 would be a document told to run 150 seconds inside an action stopped at PT2M.
     - name: Run the chaos suite
+      env:
+        CHAOS_ETCD_DURATION: PT3M
       run: chaos/run.sh
 
     # The last thing before the teardown, and it carries no condition of its own: a step with no

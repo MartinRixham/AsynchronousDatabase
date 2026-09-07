@@ -81,9 +81,7 @@ printf '  ---- a read through the load balancer now takes %ss\n' \
 	"$(curl --silent --output /dev/null --max-time 40 --write-out '%{time_total}' \
 		"$base/table/$table/key/1")"
 
-echo "  Waiting for the fault to be removed."
-
-fis_await_end $((seconds + 300))
+fis_stop_now
 
 await '(.nodes | length) == 6 and (.zones | length) == 3' "$settle" \
 	"the membership never changed and is still six nodes in three zones"

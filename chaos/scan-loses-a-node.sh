@@ -102,9 +102,7 @@ esac
 # writes in eight touch one, so this number is expected to be large.
 printf '  ---- %s of 20 writes were refused while three nodes were deaf\n' "$(write_check 20)"
 
-echo "  Waiting for the fault to be removed."
-
-fis_await_end $((seconds + 300))
+fis_stop_now
 
 await '(.nodes | length) == 6 and (.zones | length) == 3' "$settle" \
 	"every node is answering again"
