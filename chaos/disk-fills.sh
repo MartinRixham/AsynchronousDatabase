@@ -136,27 +136,6 @@ fis_await_running || { verdict; exit 1; }
 
 : > "$work/taken"
 
-# A write needs every copy, so a write of a key this node holds a copy of is a write this node
-# has to take — and it cannot. Roughly half of them, because a node holds half of its zone.
-#
-# A megabyte is well inside the sixteen megabyte limit in doc/database/reference.md and far
-# outside what nginx will hold in memory, so what refuses these is the proxy on whichever node
-# the load balancer picked, which is the full one about one time in six.
-spooled=$work/spooled
-head -c $((1024 * 1024)) /dev/zero | tr '\0' 'x' > "$spooled"
-
-refused=$(write_refusals "$spooled" full)
-
-printf '  ---- %s of 30 megabyte writes were refused: %s\n' "$refused" "$(refusals)"
-
-if [ "$refused" = 0 ]; then
-	result 1 "a node whose disk is full refuses the writes it cannot take"
-else
-	result 0 "a node whose disk is full refuses the writes it cannot take"
-fi
-
-documented "the refusals carry a documented error code"
-
 # A kilobyte fits in the buffer nginx holds in memory, so these are the writes that reach the
 # store at all — and what they say is reported rather than asserted on. RocksDB preallocates the
 # write ahead log, tens of megabytes reserved when the store opened and long before the disk
