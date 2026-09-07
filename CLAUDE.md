@@ -150,6 +150,13 @@ assertions and nothing else. Everything is an environment variable — `CHAOS_EX
   `FORWARD` and sends through it too, so the document reported success and injected nothing. The
   agentless three (`aws:ec2:stop-instances`, `aws:network:disrupt-connectivity`) need nothing of
   the instances, which is why they are still first. `chaos/README.md` is the page.
+- **`disk-fills` tests the proxy as much as the store.** nginx spools a request body over 8 KiB
+  to a temporary file, so a full volume answers `500 unavailable` out of `server/50x.json` before
+  the database is asked at all — which is why the experiment writes in two sizes, a megabyte the
+  proxy refuses and a kilobyte that reaches RocksDB. What the store does with the kilobytes is
+  reported and not asserted: the write ahead log is preallocated, so a node whose disk filled a
+  minute ago still has tens of megabytes reserved to write into. What it asserts instead is that
+  every write answered `2xx` while the disk was full is still there afterwards.
 - `node-stops` is the only test anywhere of the rebuild in `doc/runbook/rebuild.md`.
 - **`chaos.yaml` grants the permission as well as the role.** `ChaosPolicy` attaches the `fis:`
   actions and a `PassRole` scoped to `ChaosRole` to the IAM groups in the `Operators` parameter

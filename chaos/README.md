@@ -161,7 +161,19 @@ are not are worth naming so that nobody looks here for them:
 | [A delete during a rebuild](../doc/runbook/rebuild.md) | FIS can terminate the instance; the racing delete needs a harness timed against it |
 | [Everything about the release](../doc/runbook/deployment.md) | The version gate, the stack that will not create, the tag that never published. Not runtime faults |
 
-One thing it covers and reports rather than asserts: **the runbook overstates what survives**
+Two things it covers and reports rather than asserts. The first is that **a full disk breaks the
+proxy before it breaks the store**. nginx spools a request body over 8 KiB to a temporary file, so
+on a full volume it answers `500 unavailable` out of `50x.json` and the database is never asked —
+`disk-fills` therefore writes in two sizes, a megabyte that the proxy refuses and a kilobyte that
+reaches RocksDB, and asserts only that every refusal carries a code a client can branch on. What
+the store itself does with the kilobytes is printed, not asserted: RocksDB preallocates its write
+ahead log, so a node whose volume filled a minute ago still has tens of megabytes reserved to write
+into, and whether `No space left on device` arrives inside one fault is the deployment's timing
+rather than the database's behaviour. What is asserted instead is the part that matters and no
+error code can say: every write that answered `2xx` while the disk was full is still there
+afterwards.
+
+The second is that **the runbook overstates what survives**
 [a node that does not answer in every zone](../doc/runbook/nodes.md). It says reads and writes of
 individual keys are fine there, and neither is quite true. A write needs *every* copy, so roughly
 seven writes in eight touch one of the three deaf nodes and are refused; `scan-loses-a-node`

@@ -28,7 +28,7 @@ same list read the other way round: what to *do* about each one.
 | `invalid_cursor` | 400 | No — restart the scan | The cursor belongs to another instance |
 | `table_exists` | 409 | No | The table is there with different options |
 | everything else 4xx | 400, 413 | No | The request is wrong and will stay wrong |
-| `unavailable` | 502, 504 | **Yes** | nginx's, not the server's — the database is not up yet |
+| `unavailable` | 500, 502, 504 | **Yes** | nginx's, not the server's — the database is not up yet, or [its disk is full](/runbook/storage#the-disk-is-filling) |
 
 Every write in this API is idempotent — a key and a value, a key that is gone, a
 table with its options, a range that is deleted — so **running the whole request

@@ -48,7 +48,7 @@ status — is what a client should branch on.
 | `no_leader` | 503 | No node is [leading this key's partition](/database/cluster#one-leader-for-each-partition) yet. Run the write again |
 | `stale_leader` | 409 | The write was ordered by a node that has since been replaced. Run it again |
 | `storage_error` | 500 | RocksDB returned an error |
-| `unavailable` | 502, 504 | The database did not answer the nginx in front of it. This one is the proxy's, not the server's — it is what a client sees while an instance is starting, or once its container has stopped |
+| `unavailable` | 500, 502, 504 | The nginx in front of the database answered instead of it. This one is the proxy's, not the server's — it is what a client sees while an instance is starting, once its container has stopped, or when a body too large to hold in memory could not be [spooled onto a full disk](/runbook/storage#the-disk-is-filling) |
 
 ## Limits
 

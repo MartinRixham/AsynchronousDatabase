@@ -184,6 +184,27 @@ df -h /
 docker system df
 ```
 
+**What a client sees first is not the database.** nginx spools a request body
+larger than `client_body_buffer_size` — 8 KiB, and nothing here sets it — to a
+temporary file, so the first thing a full volume breaks is the proxy in front of
+the store rather than the store:
+
+> `[crit] pwrite() "/var/lib/nginx/tmp/client_body/0000000001" failed (28: No space left on device)`
+
+That is a `500 unavailable` out of `50x.json`, and the database is never asked at
+all. Only a write small enough to stay in nginx's memory buffer reaches RocksDB,
+so a full disk looks like `unavailable` on real values and `storage_error` on
+tiny ones — and both are on the one node the load balancer happened to pick,
+because the proxy that refused is that node's own.
+
+**And the store goes on taking writes for a while after the volume is full.**
+RocksDB preallocates the write ahead log when it opens the store, so there are
+tens of megabytes reserved on a disk with nothing left on it.
+`IO error: No space left on device` arrives when that is used up, or when a flush
+needs room for an SST — not on the first write after `df` reads 100%. A node
+whose disk filled a moment ago is a node still answering `200` to writes it will
+not be able to keep making room for.
+
 **Do:** delete what is not needed — a table, or a range — and let compaction
 catch up. Dropping a table frees the most, because the column family goes with
 it. Watch for
