@@ -556,23 +556,32 @@ without buying a copy.
 
 ## What the pipeline costs
 
-The [deploy job](/pipeline/#the-jobs) creates the whole stack, waits for six nodes,
-runs the Postman collection, the Playwright journeys and both load scripts, and
-deletes it again. At $0.182 an hour, **a stack standing for half an hour costs
-about eleven cents** — EC2 bills per second past a one minute minimum, and EBS
-and the public addresses are prorated the same way, but the load balancer is
-charged by the hour or part of one, so a short-lived stack pays a full hour of
-it and it is most of that eleven cents.
+The [three verify shares](/pipeline/#the-shares) each create a whole stack, run
+their share of the tests against it and delete it again. At $0.182 an hour a
+stack standing for three quarters of an hour costs about fourteen cents, so
+**a release is somewhere around forty cents of stack** — EC2 bills per second
+past a one minute minimum, and EBS and the public addresses are prorated the same
+way, but each load balancer is charged by the hour or part of one, so three
+short-lived stacks pay three full hours of it and that is most of the forty
+cents.
 
-Two footnotes on that:
+**Running them at once costs a little more than running them in turn and takes a
+third of the time.** The three loads of nine instances overlap where one used to
+follow another, and it is three load-balancer-hours rather than one; against that,
+the suite takes about forty minutes rather than nearly two hours, and a GitHub
+runner is billed by the minute too.
+
+Three footnotes on that:
 
 - The load scripts are the part that saturates the instances, so a release pays
   some CPU credits on top. Over half an hour it is cents.
-- A `create-stack` that fails because
-  [one is already standing](/deployment/#what-this-stack-does-not-do) leaves
-  that stack alone — and running. A stack forgotten after a failed build is
-  $133 a month, and the ALB's fixed name means you will find out the next time
-  a release tries to deploy.
+- A `create-stack` that fails because a stack of that share's name
+  [is already standing](/deployment/#what-this-stack-does-not-do) leaves that
+  stack alone — and running. A stack forgotten after a failed build is $133 a
+  month, and the fixed share names mean you will find out the next time a release
+  tries to deploy.
+- **Three at once is three VPCs**, against a default quota of five to a region.
+  The bill is not what stops a fourth share; the quota is.
 
 ECR holds one image per released tag at $0.10 a GB-month and nothing prunes
 them, so the repository grows by an image per release forever. It is small

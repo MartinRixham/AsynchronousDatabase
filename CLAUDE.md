@@ -509,36 +509,51 @@ Pushing to `master` builds the Docker image and uploads it as a workflow artifac
 `build`, has no condition on any step and asks AWS nothing: it builds, reads `version`, answers the
 gate and hands the image on.
 
-**Everything that publishes or costs anything is the second job, `deploy-and-verify`, gated as a
-whole on the tag in the `version` file not having passed the suite already, so it runs once per
-version rather than once per push.** It loads the artifact and pushes it to ECR, creating the
+**Everything that publishes or costs anything is downstream of the second job, `publish`, gated on
+the tag in the `version` file not having passed the suite already, so it runs once per version
+rather than once per push.** `publish` loads the artifact and pushes it to ECR, creating the
 repository `asyncdb` if the account has none, writes that tag to the SSM parameter
 `/asyncdb/version`, mirrors the etcd tag `etcd-version` names into ECR if it is not there already
-and writes `/asyncdb/etcd`. Then it `make create-stack`s the CloudFormation stack, waits for
-`/health` to name six nodes, runs the Postman collection against the stack's `Url` output with
-`newman`, then the Playwright journeys, then `perf/write.sh` and `perf/read.sh` against that same
-address, then `chaos/validate.sh` and `chaos/run.sh`, and `make delete-stack`s it again — whether they
-passed or not, so a failing assertion, journey, load run or experiment fails the build and still
-leaves nothing running. The teardown deletes only a stack that same run created, so a stack standing
-by hand makes `create-stack` fail and is then left alone (`ClusterALB` is a fixed name, so there can
-only be one).
+and writes `/asyncdb/etcd`, and `make create-chaos-stack`s the permission to inject a fault, once
+for every share below it.
 
-**There is one gate, and it is the `{version}` git tag.** It is the `if:` on `deploy-and-verify`
-and nowhere else — no step repeats it, and a step added to that job is gated by being in it — on
+**`verify` is then a matrix of three, one stack each, `fail-fast: false`.** Each share
+`make create-stack`s `asyncdb-{one,two,three}` — `STACK` and `CHAOS_STACK` come from the matrix —
+waits for `/health` to name six nodes, runs `chaos/validate.sh` and `chaos/run.sh` over the
+experiments the matrix names it in `CHAOS_EXPERIMENTS`, and `make delete-stack`s it again whether
+they passed or not. **The share carrying `matrix.suites` also runs the Postman collection, the
+Playwright journeys and `perf/write.sh` / `perf/read.sh` first**, before anything has broken its
+stack. The shares are balanced by measured time — one of the three resize experiments each, which
+are twenty minutes apiece against seventeen for everything else in the suite together — and
+`doc/pipeline/index.md` is the page. **An experiment nobody names in the matrix is an experiment
+nobody runs**: there is no default list in the workflow.
+
+`release` then pushes the git tag and `cleanup` deletes the chaos permissions. A share's teardown
+deletes only a stack that share created, so a stack standing under one of those three names makes
+`create-stack` fail and is then left alone — while a stack standing by hand as `asyncdb` collides
+with nothing and only costs quota. **Three stacks at once is three VPCs, three load balancers and
+twenty-seven `t3.micro`**, against a default of five VPCs to a region, which is what sizes the
+account.
+
+**There is one gate, and it is the `{version}` git tag.** It is the `if:` on `publish` and
+**nowhere else in the workflow** — no step repeats it, and every job that costs anything is
+downstream of `publish` by `needs:`, so a skipped `publish` skips them all. It is
 `git ls-remote --exit-code --tags origin refs/tags/$VERSION` finding nothing, carried across the job
-boundary as an output. The tag is pushed by that job's last step before the teardown. That step
-carries no `if:` of its own, which is the whole mechanism: a step with no condition runs only when
-every step before it succeeded. So a
-version that fails is published and retried on every push until it passes, and a version that has
-passed is neither republished nor stood up again — which is what keeps nine instances and an ALB
-off a push that only touched a comment. **A version tag means
+boundary as an output. The tag is pushed by `release`, which needs every share of `verify` and
+carries no `if:` of its own — the same mechanism one level up: a job with no condition runs only
+when every job it needs succeeded, as a step with no condition runs only when every step before it
+did. The `if:`s that do appear on steps are about something else — `matrix.suites` picks the share
+that runs the API, browser and load suites, and `always()` marks the teardowns — and none of them
+So a version that fails is published and retried on every push until it passes, and a version that
+has passed is neither republished nor stood up again — which is what keeps twenty-seven instances
+and three load balancers off a push that only touched a comment. **A version tag means
 passed, and never merely published**; the workflow asks git alone, and neither ECR nor
 `/asyncdb/version` is a question it puts.
 
 **The image tag in ECR is therefore overwritten**, for as long as the version has not passed — the
-repository is created mutable, which is the default. It has to be: the stack pulls the image it
-tests out of ECR, so the push is the first thing the deploy job does, and every commit carrying a
-red version has to be the one the suite then runs against. The window in which a version's bytes
+repository is created mutable, which is the default. It has to be: every stack pulls the image it
+tests out of ECR, so the push is what `publish` does before a share stands anything up, and every
+commit carrying a red version has to be the one the suite then runs against. The window in which a version's bytes
 move is exactly the window before it passes, so **do not pull a version that has no git tag**.
 
 **Nothing is held outside the repository to make that work**: `git tag -l` is the list of versions
@@ -613,7 +628,7 @@ accepted, and pinning it is one parameter override away.
 **The etcd tag is written by hand in one place, `etcd-version`.** The build reads it, mirrors
 `quay.io/coreos/etcd:$ETCD_VERSION` into ECR if it is not there already, and writes
 `/asyncdb/etcd`, which the template's `EtcdVersion` parameter resolves — exactly the arrangement
-`version` and `/asyncdb/version` have for the asyncdb image. It sits in `deploy-and-verify` beside
+`version` and `/asyncdb/version` have for the asyncdb image. It sits in `publish` beside
 that push, so it runs when a stack is about to pull the tag and not otherwise: **bumping
 `etcd-version` alone mirrors nothing**, and wants a `version` bump with it. `docker-compose.yml`
 names the same version against quay.io directly, because a laptop has an internet connection.

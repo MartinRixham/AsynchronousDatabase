@@ -1,6 +1,6 @@
 # Publishing
 
-Publishing is the first three steps of `deploy-and-verify`, after the login and
+Publishing is the first three steps of `publish`, after the login and
 before the stack: load the image the `build` job left as an artifact, push it to
 ECR, and write the tag to `/asyncdb/version`.
 
@@ -68,7 +68,7 @@ on, and neither its bytes nor its number mean anything yet.
 ```
 
 It runs in `build`, and its output is what
-[gates the whole `deploy-and-verify` job](/pipeline/#the-gate) — see there for
+[gates the whole `publish` job, and everything downstream of it](/pipeline/#the-gate) — see there for
 what it reads and how it fails. The publish is two of that job's steps, and
 neither carries a condition of its own:
 
@@ -115,7 +115,7 @@ the `docker push` needs and nothing more.
 1. Edit `version`. That is the release: nothing else in the repository names it,
    and the number is not read by the build, only by the workflow.
 2. Push to `master`. The image builds and the tests inside it run in `build`;
-   `deploy-and-verify` then publishes it to ECR and names it in
+   `publish` then pushes it to ECR and names it in
    `/asyncdb/version`.
 3. The stack goes up, [the suite runs against
    it](/pipeline/#the-gate), and the commit is tagged `0.0.2` if all of it
@@ -129,6 +129,6 @@ the `docker push` needs and nothing more.
    [replaced](/deployment/#rolling-out-a-new-version).
 
 Leaving `version` alone is a deliberate no-op release: the build still runs in
-full, and once that version has had one green run the whole `deploy-and-verify`
-job is skipped — publish included — so the push costs the image build and no AWS
-at all.
+full, and once that version has had one green run the whole `publish` job is
+skipped, and every job that needs it with it, so the push costs the image build
+and no AWS at all.

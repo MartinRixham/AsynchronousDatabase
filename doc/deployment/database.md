@@ -280,7 +280,7 @@ There is also no `UpdatePolicy`, so
 
 | Resource | Is |
 | --- | --- |
-| `ApplicationLoadBalancer` | Named `ClusterALB`, `internet-facing`, in the three public subnets — [the only thing in them](/deployment/network) — in `ALBSecurityGroup` |
+| `ApplicationLoadBalancer` | Named `${AWS::StackName}-alb`, `internet-facing`, in the three public subnets — [the only thing in them](/deployment/network) — in `ALBSecurityGroup`. The name is the stack's because a load balancer name is unique to a region, and [the pipeline stands up three stacks at once](/pipeline/#the-shares) |
 | `ALBTargetGroup` | HTTP, port 80, `TargetType: instance`, health check `GET /asyncdb/health` |
 | `ALBListener` | HTTP on port 80, one default action forwarding to the target group |
 

@@ -10,7 +10,7 @@ through.
 ```
                      internet
                          │
-                    ┌────┴────┐  ClusterALB, HTTP/80, internet facing
+                    ┌────┴────┐  {stack}-alb, HTTP/80, internet facing
                     │   ALB   │  health check GET /asyncdb/health
                     └────┬────┘
         ┌────────────────┼────────────────┐        one private subnet per AZ
@@ -225,10 +225,16 @@ It is a small template, and it is worth being plain about where it stops.
   is the [copy each other zone holds](/database/cluster#one-copy-in-every-zone),
   and nothing rebuilds the one that went with it; what survives the stack is
   nothing.
-- **The stack cannot be deployed twice in one region.** `ClusterALB` is a fixed
-  name, and so is the ECR repository the instances pull from. The
-  [`Url` output](#the-address) tells you where one stack is; a second one in the
-  same region fails to create the load balancer at all.
+- **The stack can be deployed more than once in a region, and the quotas are
+  what stop it.** Nothing in the template is named by hand except the load
+  balancer, which is named after the stack, so the name of the stack is the whole
+  of what makes two of them different. What they share is the ECR repository they
+  pull from and the two SSM parameters that name the tags — so two stacks run the
+  same version, and there is no way to stand up two versions at once. **Each one
+  is a VPC, a load balancer and nine `t3.micro`**, against a default quota of five
+  VPCs to a region; [the pipeline](/pipeline/#the-shares) runs three at a time and
+  that is what sizes the account. The [`Url` output](#the-address) is how to tell
+  them apart.
 - **There is no HTTPS.** The listener is HTTP on port 80, in and out. There is
   no certificate, no redirect and no `Scheme: internal` anywhere: everything the
   API carries crosses the internet in the clear.

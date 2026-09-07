@@ -55,10 +55,13 @@ jobs:
         compression-level: 0
         retention-days: 1
 
-  deploy-and-verify:
+  publish:
     runs-on: ubuntu-latest
     needs: build
     if: needs.build.outputs.verify == 'true'
+
+    outputs:
+      chaos: ${{ steps.chaos_policy.outputs.created }}
 
     env:
       VERSION: ${{ needs.build.outputs.version }}
@@ -130,14 +133,55 @@ jobs:
           --value "$ETCD_VERSION" \
           --overwrite
 
+    - name: The chaos permissions
+      id: chaos_policy
+      run: |
+        make create-chaos-stack
+        echo "created=true" >> $GITHUB_OUTPUT
+        aws cloudformation wait stack-create-complete --stack-name asyncdb-chaos
+
+  verify:
+    runs-on: ubuntu-latest
+    needs: [build, publish]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - stack: asyncdb-one
+            experiments: scan-loses-a-node etcd-unreachable disk-fills zone-retired
+          - stack: asyncdb-two
+            suites: 'true'
+            experiments: nodes-added
+          - stack: asyncdb-three
+            experiments: node-stops zone-lost node-latency nodes-removed etcd-quorum-lost
+
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      STACK: ${{ matrix.stack }}
+      CHAOS_STACK: ${{ matrix.stack }}
+      CHAOS_EXPERIMENTS: ${{ matrix.experiments }}
+
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-west-2
+
     - name: Deploy the stack
       id: deploy
       run: |
         make create-stack
         echo "created=true" >> $GITHUB_OUTPUT
-        aws cloudformation wait stack-create-complete --stack-name asyncdb
+        aws cloudformation wait stack-create-complete --stack-name $STACK
         URL=$(aws cloudformation describe-stacks \
-          --stack-name asyncdb \
+          --stack-name $STACK \
           --query "Stacks[0].Outputs[?OutputKey=='Url'].OutputValue" \
           --output text)
         echo "Stack is at $URL"
@@ -158,9 +202,11 @@ jobs:
         exit 1
 
     - name: Install newman
+      if: matrix.suites
       run: npm install -g newman
 
     - name: Run the API collection
+      if: matrix.suites
       run: |
         newman run api/asyncdb.postman_collection.json \
           -e api/asyncdb.aws.postman_environment.json \
@@ -170,17 +216,19 @@ jobs:
           --env-var node3=$URL/asyncdb
 
     - name: Install the browser tests
+      if: matrix.suites
       working-directory: automation
       run: |
         npm install
         npx playwright install --with-deps chromium
 
     - name: Run the browser tests
+      if: matrix.suites
       working-directory: automation
       run: ASYNCDB_URL=$URL npm test
 
     - name: The report of a failed browser run
-      if: failure()
+      if: failure() && matrix.suites
       uses: actions/upload-artifact@v7
       with:
         name: playwright-report
@@ -188,6 +236,7 @@ jobs:
         retention-days: 7
 
     - name: Run the load tests
+      if: matrix.suites
       env:
         THREADS: '8'
       run: |
@@ -199,34 +248,11 @@ jobs:
         REQUESTS=32 VALUE_BYTES=2097152 perf/write.sh
         REQUESTS=32 URL=$BASE/table/perf_load/key/0 perf/read.sh
 
-    - name: The chaos permissions
-      id: chaos_policy
-      if: steps.deploy.outputs.created == 'true'
-      run: |
-        make create-chaos-stack
-        echo "created=true" >> $GITHUB_OUTPUT
-        aws cloudformation wait stack-create-complete --stack-name asyncdb-chaos
-
     - name: Validate the experiments
       run: chaos/validate.sh
 
     - name: Run the chaos suite
       run: chaos/run.sh
-
-    - name: Record that this version passed
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git tag "$VERSION"
-        git push origin "$VERSION"
-
-        echo "Version $VERSION has passed. Subsequent pushes on it will deploy nothing."
-
-    - name: Tear down the chaos permissions
-      if: always() && steps.chaos_policy.outputs.created == 'true'
-      run: |
-        make delete-chaos-stack
-        aws cloudformation wait stack-delete-complete --stack-name asyncdb-chaos
 
     - name: Stack events
       if: failure() && steps.deploy.outputs.created == 'true'
@@ -241,7 +267,7 @@ jobs:
         curl -fsS --max-time 10 "$URL/asyncdb/health" | jq .
 
         aws ec2 describe-instances \
-          --filters "Name=tag:aws:cloudformation:stack-name,Values=asyncdb" \
+          --filters "Name=tag:aws:cloudformation:stack-name,Values=$STACK" \
                     "Name=instance-state-name,Values=running" \
           --query 'Reservations[].Instances[].[InstanceId,PrivateIpAddress,Placement.AvailabilityZone]' \
           --output text > instances.txt
@@ -278,4 +304,47 @@ jobs:
       if: always() && steps.deploy.outputs.created == 'true'
       run: |
         make delete-stack
-        aws cloudformation wait stack-delete-complete --stack-name asyncdb
+        aws cloudformation wait stack-delete-complete --stack-name $STACK
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [build, verify]
+
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Record that this version passed
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag "$VERSION"
+        git push origin "$VERSION"
+
+        echo "Version $VERSION has passed. Subsequent pushes on it will deploy nothing."
+
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: [publish, verify, release]
+    if: always() && needs.publish.outputs.chaos == 'true'
+
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-west-2
+
+    - name: Tear down the chaos permissions
+      run: |
+        make delete-chaos-stack
+        aws cloudformation wait stack-delete-complete --stack-name asyncdb-chaos

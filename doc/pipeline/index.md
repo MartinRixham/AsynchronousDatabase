@@ -1,14 +1,23 @@
 # The build pipeline
 
-`.github/workflows/build.yaml` is the push side of CI: one workflow, two jobs,
-thirty steps, no matrix and no reusable workflow. `build` builds the Docker image
-and hands it on as an artifact. `deploy-and-verify` then **publishes it, stands
-the whole AWS stack up, runs every test that needs a running server against it,
-and deletes it again**. That second job happens only for a version that has not
-passed the suite before, which is [the one gate](#the-gate) — and until it has,
-each push rewrites the version's image in ECR. The other half
-of CI is `.github/workflows/pull-request.yaml`, which is
+`.github/workflows/build.yaml` is the push side of CI: one workflow, five jobs
+and no reusable workflow. `build` builds the Docker image and hands it on as an
+artifact. `publish` pushes it to ECR and writes down what was published.
+`verify` is **a matrix of three, each standing up a stack of its own, running its
+share of the tests against it and deleting it again**. `release` tags the version
+once every share has passed, and `cleanup` takes the chaos permissions away.
+Everything from `publish` down happens only for a version that has not passed the
+suite before, which is [the one gate](#the-gate) — and until it has, each push
+rewrites the version's image in ECR. The other half of CI is
+`.github/workflows/pull-request.yaml`, which is
 [two jobs and no AWS at all](#the-pull-request-build).
+
+**Three stacks, because the chaos suite is the pipeline.** Eighty of the hundred
+and ten minutes a run used to take were `chaos/run.sh`, and sixty of those were
+the three experiments that resize the tier and then wait for an auto scaling group
+to do it. Nothing about them is parallel on one stack — an experiment has the
+cluster to itself by design — so the way to run them at once is to have three
+clusters. [The shares](#the-shares) are balanced by measured time.
 
 ```
               push to main or master                     concurrency: build-and-push
@@ -27,16 +36,17 @@ of CI is `.github/workflows/pull-request.yaml`, which is
                  │ save image  │  docker save | gzip, then upload-artifact, kept a day
                  └──────┬──────┘
                         │
-             ═══════════╪═══════════  job boundary: deploy-and-verify
+             ═══════════╪═══════════  job boundary: publish
                         │
             ┌───────────┴───────────┐
-            │    the same answer    │  needs.build.outputs.verify — the `if:` on the
-            │                       │  whole job, and on no step inside it
+            │    the same answer    │  needs.build.outputs.verify — the `if:` on this
+            │                       │  job, on no step inside it, and on no other job
             └────┬─────────────┬────┘
               yes│             │no
                  │             │
-                 │        (whole job
-                 │         is skipped)
+                 │        (publish is skipped, and
+                 │         everything below it with
+                 │         it, by needing it)
           ┌──────┴──────┐
           │  AWS login  │  static keys, eu-west-2, then ECR login
           └──────┬──────┘
@@ -48,21 +58,39 @@ of CI is `.github/workflows/pull-request.yaml`, which is
           │ mirror etcd │  and put-parameter /asyncdb/etcd
           └──────┬──────┘
           ┌──────┴──────┐
-          │create-stack │  and wait for /health to name six nodes
+          │chaos policy │  make create-chaos-stack, once for all three
           └──────┬──────┘
-          ┌──────┴──────┐
-          │   newman    │  the Postman collection
-          │  playwright │  the browser journeys
-          │    perf     │  write.sh then read.sh
-          │    chaos    │  the experiments, which break the stack   
-          └──────┬──────┘
+                 │
+      ═══════════╪═══════════  job boundary: verify, three at once, fail-fast: false
+                 │
+     ┌───────────┼───────────┐
+     │           │           │
+┌────┴────┐ ┌────┴────┐ ┌────┴────┐
+│asyncdb- │ │asyncdb- │ │asyncdb- │  create-stack, and wait for /health
+│  one    │ │  two    │ │ three   │  to name six nodes
+├─────────┤ ├─────────┤ ├─────────┤
+│         │ │ newman  │ │         │  the API, browser and load suites run
+│         │ │playwrgt │ │         │  on one share only — they need a stack
+│         │ │  perf   │ │         │  nothing has broken yet
+├─────────┤ ├─────────┤ ├─────────┤
+│  its    │ │  its    │ │  its    │  CHAOS_EXPERIMENTS, in the order given
+│ share   │ │ share   │ │ share   │
+├─────────┤ ├─────────┤ ├─────────┤
+│ delete  │ │ delete  │ │ delete  │  if: always() — a red share leaves
+└────┬────┘ └────┬────┘ └────┬────┘  nothing standing
+     │           │           │
+     └───────────┼───────────┘
+                 │
+      ═══════════╪═══════════  job boundary: release, needs every share
+                 │
           ┌──────┴──────┐
           │  git tag    │  $VERSION, pushed to origin — the one
           │             │  place it is tagged, and no `if:`, so
-          │             │  only on a green run
+          │             │  only when every share went green
           └──────┬──────┘
           ┌──────┴──────┐
-          │delete-stack │  if: always() — a red run leaves nothing standing
+          │ chaos policy│  cleanup, if: always() — but only if this
+          │  deleted    │  run created it
           └─────────────┘
 ```
 
@@ -73,10 +101,10 @@ cppcheck, the C++ compile, the gtest suite under valgrind, eslint and vitest —
 whether or not anything will be published; a push that does not bump `version` is
 not a skipped build but a complete build whose image is thrown away. And the
 publish, the API collection, the browser journeys, the load runs and the chaos
-suite are all inside the job the gate stands in front of — so the push still
-comes **before** the tests that need a stack to run against, which is why the git
-tag is at the end of them and not beside the push, and why the image tag they
-tested has to be rewritable until then. See [the sharp edges](#sharp-edges).
+suite are all downstream of the job the gate stands in front of — so the push
+still comes **before** the tests that need a stack to run against, which is why
+the git tag is in a job of its own that needs every share of them, and not beside
+the push, and why the image tag they tested has to be rewritable until then. See [the sharp edges](#sharp-edges).
 
 ## The gate
 
@@ -92,12 +120,19 @@ tested has to be rewritable until then. See [the sharp edges](#sharp-edges).
     fi
 ```
 
-<code v-pre>needs.build.outputs.verify == 'true'</code> is the condition on the whole
-`deploy-and-verify` job, which is why it is a job and not a run of steps: **a
-step added to it is gated by being in it**, rather than by somebody remembering
-to repeat the condition on it. That is the only place the condition is written.
-[The publish](/pipeline/release#where-the-gate-is) is in that job for the same
-reason, and `build` above it has no `if:` on any of its six steps.
+<code v-pre>needs.build.outputs.verify == 'true'</code> is the condition on the
+`publish` job, and **it is written once in the whole workflow**. Everything that
+costs anything is downstream of `publish` by `needs:`, and a job whose dependency
+was skipped is skipped: `verify` needs `publish`, `release` needs `verify`, and
+`cleanup` needs all three. So the gate is one condition and one edge each, rather
+than a condition somebody has to remember to repeat on each of four jobs.
+
+Inside `publish` and inside a `verify` share, **a step is gated by being in the
+job** rather than by a condition of its own. The `if:`s that do appear on steps
+there are about something else entirely — `matrix.suites` picks the one share
+that runs the API, browser and load suites, and `always()` marks the teardowns —
+and none of them mentions the version. `build` above it all has no `if:` on any
+of its six steps.
 
 The question it asks is deliberately about the **tests** and not about the
 registry, and it cannot be the other way round: the stack pulls the image it
@@ -157,8 +192,10 @@ The consequences worth knowing:
     git push origin "$VERSION"
 ```
 
-It carries **no `if:` of its own**, and that is the whole mechanism: a step with
-no condition runs only when every step before it in the job succeeded. The
+It carries **no `if:` of its own**, and it is the only step of a job that needs
+every share of `verify`. That is the whole mechanism, one level up from where it
+used to be: a job with no condition runs only when every job it needs succeeded,
+the way a step with no condition runs only when every step before it did. The
 teardown steps below it are `always()`, so they still run either way, and a step
 that is `always()` succeeding does not make a failed job look green to the steps
 after it.
@@ -185,9 +222,10 @@ concurrency:
 That is the only trigger of this workflow: no `workflow_dispatch`, so a run
 cannot be started by hand from the Actions tab, and no schedule. The
 `concurrency` group is what stops two pushes in quick succession racing for the
-same tag and, worse, for the same CloudFormation stack — `ClusterALB` is a fixed
-name, so there can only ever be one. `cancel-in-progress` is **false**
-deliberately: a cancelled run is one whose `delete-stack` never runs.
+same tag and, worse, for the same three CloudFormation stacks: the share names
+are fixed, so a second run would find `asyncdb-one` standing and fail to create
+it. `cancel-in-progress` is **false** deliberately: a cancelled run is one whose
+`delete-stack` never runs, and now there are three of those.
 
 ### The pull request build
 
@@ -204,7 +242,7 @@ anything that needs a server, because nothing is deployed for a pull request.
 
 ## The jobs
 
-Two jobs on `ubuntu-latest`. `build` first — six steps, no `if:` on any of them,
+Five jobs on `ubuntu-latest`. `build` first — six steps, no `if:` on any of them,
 and **no AWS credentials at all**:
 
 | Step | Does |
@@ -216,14 +254,14 @@ and **no AWS credentials at all**:
 | Save the image | `docker save asyncdb:latest \| gzip > image.tar.gz` |
 | Upload the image | `upload-artifact@v4` as `asyncdb-image`, `compression-level: 0` over an already gzipped tar, `retention-days: 1` — [below](#carrying-the-image) |
 
-Then `deploy-and-verify`, which `needs: build` and runs only when its `verify`
-output is `true`. It checks the repository out again — job outputs cross a job
-boundary, a workspace and a `$GITHUB_ENV` do not — and takes `$VERSION` from
-<code v-pre>needs.build.outputs.version</code>:
+Then `publish`, which `needs: build` and runs only when its `verify` output is
+`true`. It checks the repository out again — job outputs cross a job boundary, a
+workspace and a `$GITHUB_ENV` do not — and takes `$VERSION` from
+<code v-pre>needs.build.outputs.version</code>. It stands nothing up:
 
 | Step | Does |
 | --- | --- |
-| Checkout code | `actions/checkout@v7` again; the credentials it persists are what lets the tag step push |
+| Checkout code | `actions/checkout@v7` again |
 | Configure AWS credentials | `aws-actions/configure-aws-credentials@v6` with `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` from repository secrets, region `eu-west-2` |
 | Login to Amazon ECR | `aws-actions/amazon-ecr-login@v2`; its `outputs.registry` is the account's registry host, used by the push and by the mirror |
 | Download the image | `download-artifact@v4`, which puts `image.tar.gz` back in the workspace |
@@ -231,19 +269,63 @@ boundary, a workspace and a `$GITHUB_ENV` do not — and takes `$VERSION` from
 | Tag and push Docker image to ECR | `docker load`, then `docker tag` and `docker push` — [overwriting the tag](/pipeline/release#overwriting-the-tag) if this version has been published and not yet passed |
 | Record published version in SSM | `put-parameter /asyncdb/version` — this is what [the template resolves at deploy time](/deployment/#parameters) |
 | Mirror etcd into ECR | [below](#mirroring-etcd) |
-| Deploy the stack | `make create-stack`, `wait stack-create-complete`, and the `Url` output into `$GITHUB_ENV`; sets the `created` output every later step keys off |
+| The chaos permissions | `make create-chaos-stack` — the policy every share injects with, one stack for all of them, with a `created` output `cleanup` keys off |
+
+Then `verify`, three times over, `fail-fast: false` so that one share failing
+never cancels another's teardown. Each share is the same steps against a stack of
+its own, named by the matrix and passed to both the Makefile and the chaos
+harness as `STACK` and `CHAOS_STACK`:
+
+| Step | Does |
+| --- | --- |
+| Checkout code, Configure AWS credentials | as above |
+| Deploy the stack | `make create-stack`, `wait stack-create-complete`, and the `Url` output into `$GITHUB_ENV`; sets the `created` output the teardown keys off |
 | Wait for the cluster to come up | `/asyncdb/health` until `.nodes` is **six**, ninety attempts ten seconds apart |
-| Install newman, Run the API collection | [the Postman collection](https://github.com/MartinRixham/AsynchronousDatabase/tree/master/api) against `$URL/asyncdb` |
-| Install the browser tests, Run the browser tests | Playwright with `ASYNCDB_URL=$URL`, and an `upload-artifact@v4` of the report `if: failure()` |
-| Run the load tests | `perf/write.sh` then `perf/read.sh`, eight threads, 250 requests |
-| The chaos permissions | `make create-chaos-stack` — the policy the suite injects with, a stack of its own, with its own `created` output |
-| Validate the experiments | `chaos/validate.sh` — every experiment's preflight, nothing applied |
-| Run the chaos suite | `chaos/run.sh` — the ten experiments, in order |
-| Record that this version passed | `git tag $VERSION` and `git push origin` — [above](#recording-the-pass), and the reason the next push on this version publishes and deploys nothing |
-| Tear down the chaos permissions | `make delete-chaos-stack`, `if: always()` — but only if this run created it |
+| Install newman, Run the API collection | `if: matrix.suites` — [the Postman collection](https://github.com/MartinRixham/AsynchronousDatabase/tree/master/api) against `$URL/asyncdb` |
+| Install the browser tests, Run the browser tests | `if: matrix.suites` — Playwright with `ASYNCDB_URL=$URL`, and an `upload-artifact@v4` of the report `if: failure()` |
+| Run the load tests | `if: matrix.suites` — `perf/write.sh` then `perf/read.sh`, eight threads, 250 requests |
+| Validate the experiments | `chaos/validate.sh` — this share's preflights, nothing applied |
+| Run the chaos suite | `chaos/run.sh` — this share's experiments, in the order the matrix names them |
 | Stack events | `make describe-stack`, `if: failure()` |
 | What the nodes say for themselves | `if: failure()` — `docker logs` over SSM Run Command and `get-console-output`, per instance, every command best effort so that a diagnosis cannot fail the run |
-| Tear down the stack | `make delete-stack`, `if: always()` — but only if this run created it |
+| Tear down the stack | `make delete-stack`, `if: always()` — but only if this share created it |
+
+Then `release`, which `needs: verify` and so runs only when **every** share went
+green. One step and no condition on it: `git tag $VERSION` and `git push origin`
+— [above](#recording-the-pass), and the reason the next push on this version
+publishes and deploys nothing.
+
+And `cleanup`, which `needs: [publish, verify, release]` with
+<code v-pre>if: always() && needs.publish.outputs.chaos == 'true'</code>: it takes
+the chaos permissions away whatever became of the shares, and only when this run
+was the one that granted them.
+
+### The shares
+
+The matrix is three entries, and what is in each is a balance of measured time
+rather than a category:
+
+| Share | Runs | About |
+| --- | --- | --- |
+| `asyncdb-one` | `scan-loses-a-node`, `etcd-unreachable`, `disk-fills`, `zone-retired` | 30 min |
+| `asyncdb-two` | the API, browser and load suites, then `nodes-added` | 30 min |
+| `asyncdb-three` | `node-stops`, `zone-lost`, `node-latency`, `nodes-removed`, `etcd-quorum-lost` | 30 min |
+
+The three resizes are twenty minutes each and everything else in the suite is
+about seventeen between them, so one resize a share is what balances. Ordering
+still matters *inside* a share — `etcd-quorum-lost` last, because it is the only
+one that leaves a cluster wrong about itself — but not across them: a share has a
+cluster of its own and deletes it afterwards.
+
+The suites run on one share only, and on that share they run **before** its
+experiments: they need a stack nothing has broken yet, and both the browser tests
+and the Postman collection drop every table they find.
+
+**Adding an experiment means naming it in a share.** There is no default list in
+the workflow: `CHAOS_EXPERIMENTS` is set from the matrix on every share, so an
+experiment nobody named is an experiment nobody runs. The count in
+[`chaos/README.md`](https://github.com/MartinRixham/AsynchronousDatabase/tree/master/chaos)
+is what to check it against.
 
 The region is a literal in two places — the credentials step here, and, outside
 this file, the [user data](/deployment/database#the-launch-template) of both
@@ -270,7 +352,7 @@ mirror below creates its own repository beside its own push for the same reason.
 
 ## Carrying the image
 
-The `docker build` is in `build` and the `docker push` is in `deploy-and-verify`,
+The `docker build` is in `build` and the `docker push` is in `publish`,
 and a job gets its own runner, so the image is carried between them as an
 artifact:
 
@@ -297,7 +379,7 @@ passed pays for them and throws them away with the image — a minute or so on t
 of a build that is minutes of C++ and valgrind. That is the price of the gate
 being written once, on the job.
 
-The alternative is building the image in `deploy-and-verify` instead, and it is
+The alternative is building the image in `publish` instead, and it is
 worse: a push that deploys nothing would then run no build and no tests, and the
 image build is the only thing [that runs any](#what-ci-does-not-run).
 
@@ -391,18 +473,18 @@ Everything else in the repository is a thing a person runs:
 ## Secrets and permissions
 
 Two repository secrets, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: static,
-long-lived IAM user keys rather than an OIDC role the job assumes. **They are
-read by `deploy-and-verify` alone** — `build` configures no credentials, so a
-push on a version that has passed reaches AWS not at all. **What they need is
-close to everything**, because that job does not only publish an image — it
-creates and deletes the stack:
+long-lived IAM user keys rather than an OIDC role the job assumes. **`build` and
+`release` configure no credentials at all**, so a push on a version that has
+passed reaches AWS not at all, and the job that writes the git tag cannot touch
+the account. **What the other three need is close to everything**, because they
+do not only publish an image — they create and delete three stacks:
 
 | For | Needs |
 | --- | --- |
 | The release | `ecr:GetAuthorizationToken`, `ecr:DescribeImages`, and the layer-upload actions behind `docker push` |
 | [The repositories](#making-the-repositories) | `ecr:DescribeRepositories` and `ecr:CreateRepository`, for `asyncdb` and for [the mirror](#mirroring-etcd) alike |
 | Both parameters | `ssm:PutParameter` on `/asyncdb/*` |
-| The deploy | `cloudformation:*` on the stack, plus **every action the template's own resources need** — VPC, subnets, endpoints, security groups, load balancer, auto scaling, and `iam:CreateRole` / `PassRole` for the two instance roles |
+| The deploy | `cloudformation:*` on the stacks, plus **every action the template's own resources need** — VPC, subnets, endpoints, security groups, load balancer, auto scaling, and `iam:CreateRole` / `PassRole` for the two instance roles — three times over, at once |
 | The diagnosis | `ec2:DescribeInstances`, `ec2:GetConsoleOutput`, `ssm:SendCommand` and `ssm:GetCommandInvocation` |
 
 That is a wide key to hold statically in repository secrets, and moving it to an
@@ -414,10 +496,10 @@ lets it be answered in the job that holds no key.
 
 The workflow declares no `permissions` block, so the `GITHUB_TOKEN` gets the
 repository's default, and **one** step needs `contents: write` to push a tag —
-[the version tag](#recording-the-pass) at the end of `deploy-and-verify`. If the
-default is read-only, a run gets all the way through the suite and then fails on
-the push, which is a suite that passed and was not recorded, so the next push
-runs it all again.
+[the version tag](#recording-the-pass), which is now the whole of the `release`
+job. If the default is read-only, a run gets all the way through every share and
+then fails on the push, which is a suite that passed and was not recorded, so the
+next push runs it all again.
 
 ## Sharp edges
 
@@ -445,10 +527,18 @@ runs it all again.
   released image rewritten by a build that has not passed yet.
 - **A green run on a version is the last run on that version.** Once
   `{version}` is on the remote, no later push re-tests it against a cluster,
-  however much the working tree has changed underneath — the `deploy-and-verify`
-  job is skipped on the version number and nothing else. A change that needs the
+  however much the working tree has changed underneath — `publish` is skipped on
+  the version number and nothing else, and every job below it with it. A change that needs the
   suite needs a `version` bump, which is also the thing that publishes it.
-- **A stack left standing by hand fails the run.** The teardown only deletes a
-  stack this run created, and `ClusterALB` is a fixed name, so `create-stack`
-  fails outright while somebody else's stack exists — and is then correctly left
-  alone.
+- **A stack left standing by hand no longer fails the run, and costs quota
+  instead.** The pipeline's stacks are `asyncdb-one`, `-two` and `-three`, so a
+  stack somebody stood up by hand as `asyncdb` does not collide with any of them.
+  It does count against the same limits: **three stacks at once is three VPCs,
+  three load balancers and twenty-seven `t3.micro`**, and the default quota is
+  five VPCs to a region. A run that cannot create its VPC fails at `create-stack`
+  and tears nothing down, because it created nothing.
+- **A share left standing fails the next run's share.** The teardown only deletes
+  a stack that share created, and the stack names are fixed per share, so a
+  `create-stack` that finds `asyncdb-two` already there fails outright and
+  correctly leaves it alone. `concurrency: build-and-push` is what stops two runs
+  racing for the same three names.

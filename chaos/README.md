@@ -54,10 +54,16 @@ chaos/run.sh
 make delete-chaos-stack
 ```
 
-A subset, in the order given:
+A subset, in the order given — which is also how the pipeline shares the suite between stacks:
 
 ```bash
 CHAOS_EXPERIMENTS='zone-lost node-stops' chaos/run.sh
+```
+
+Against a stack that is not `asyncdb`:
+
+```bash
+CHAOS_STACK=asyncdb-two CHAOS_EXPERIMENTS=nodes-added chaos/run.sh
 ```
 
 One experiment on its own, which is how to read one while it runs:
@@ -68,14 +74,23 @@ chaos/node-stops.sh
 
 ### What it costs
 
-Roughly twenty minutes for the first three, most of it `node-stops` waiting for the auto
-scaling group to launch a replacement and for that replacement to rebuild itself, and about
-half an hour again for the four that go in through SSM — four or five minutes of fault each,
-and a settle after every one of them. **The three resizes are half an hour again**, and all of it
-is waiting: each of them is two stack updates, and an update that adds instances is a launch, a
-pull and a rebuild before the membership says anything has happened. `zone-retired` is the slowest
-of the three, because rebalancing out of a zone is one instance at a time — the group launches the
+**Eighty minutes for all ten, and the resizes are sixty of it.** Measured:
+
+| | |
+| --- | --- |
+| `zone-retired` | 24 min |
+| `nodes-added` | 20 min |
+| `nodes-removed` | 19 min |
+| the other seven, between them | 17 min |
+
+The three resizes are all waiting: each is two stack updates, and an update that adds instances is
+a launch, a pull and a rebuild before the membership says anything has happened. `zone-retired` is
+the slowest, because rebalancing out of a zone is one instance at a time — the group launches the
 replacement before terminating what it replaces, and `MaxSize` allows one spare.
+
+That arithmetic is why [the pipeline runs three stacks at once](../doc/pipeline/index.md#the-shares)
+rather than one, with a resize in each share: nothing here is parallel on a single stack, because an
+experiment has the cluster to itself by design.
 
 They also cost money for as long as they run: `nodes-added` is nine database instances rather than
 six for the length of it. Nothing is left behind — every one of them puts the shape back, and the

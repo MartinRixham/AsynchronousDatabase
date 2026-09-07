@@ -153,7 +153,8 @@ resume. The usual causes are the pull and the grace period.
 
 | Message | Is |
 | --- | --- |
-| `ClusterALB` already exists | A stack is already standing. The name is fixed, so **there can be one of these per region** |
+| `{stack}-alb` already exists | A stack of that name is already standing. Load balancer names are unique to a region and this one is the stack's, so **a stack cannot be created over itself** — a second stack under another name is fine |
+| `The maximum number of VPCs has been reached` | The region is full. Each stack is a VPC and the default quota is five; [the pipeline](/pipeline/#the-shares) uses three of them for the length of a run |
 | Parameter `/asyncdb/version` not found | The SSM parameter does not exist. CloudFormation cannot resolve it, so the operation fails outright |
 | The group reports a failed activity, not a template error | Something the launch template names is missing — the AMI, the instance profile or the image |
 | An etcd instance has no container | The tag `/asyncdb/etcd` names is not in this account's ECR. The boot script pulls [what the build mirrored](/pipeline/#mirroring-etcd) and never quay.io — or the node found a cluster it could not join, which is [a quorum failure](/runbook/membership#etcd-has-lost-quorum) and deliberate |
@@ -196,7 +197,7 @@ a larger share than the others.
 
 ## The version did not publish
 
-The push to ECR is in `deploy-and-verify`, which runs **only if the tag in
+The push to ECR is in `publish`, which runs **only if the tag in
 `version` has not passed the suite already** — that is, only if the remote has no
 `{version}` git tag. Leaving `version` unchanged makes CI a complete build whose
 result is thrown away, which is a no-op publish and not a failure.
@@ -215,10 +216,12 @@ the tag.
 
 ## The build failed after the stack came up
 
-`deploy-and-verify` publishes the image and then runs against the stack it stands
-up with it, in order: wait for `/health` to name six nodes, then `newman`, then
-the Playwright journeys, then `perf/write.sh` and `perf/read.sh`. The stack is deleted afterwards **whether they passed or
-not**, so a failure leaves nothing running and nothing to inspect.
+`publish` publishes the image, and the three `verify` shares each stand a stack
+up with it and run their share against it: wait for `/health` to name six nodes,
+then — on the one share that carries them — `newman`, the Playwright journeys and
+`perf/write.sh` and `perf/read.sh`, and on every share its own chaos experiments.
+A share deletes its stack afterwards **whether it passed or not**, so a failure
+leaves nothing running and nothing to inspect.
 
 | Step | A failure means |
 | --- | --- |
