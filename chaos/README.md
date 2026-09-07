@@ -22,8 +22,9 @@ broke came back, and an assertion that did not hold is a non-zero exit — which
 | `nodes-removed` | [No rebalancing](../doc/runbook/storage.md) | A stack update taking the tier to **three** instances, and back to six |
 | `zone-retired` | [Fewer zones than the deployment has](../doc/runbook/membership.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update giving the group **two** subnets instead of three, and back |
 
-The last three [assert two invariants the cluster does not hold yet](#the-two-invariants-they-assert)
-and are red until it does.
+The last three [assert the two invariants a resize has to leave behind](#the-two-invariants-they-assert),
+which is what the cluster's [reconcile](../doc/runbook/rebuild.md#when-ownership-moves) exists to
+hold.
 | `etcd-quorum-lost` | [etcd has lost quorum](../doc/runbook/membership.md) | `ec2:StopInstances`, two of the three members |
 
 The order is the order they run in, and it is not arbitrary. The three that need nothing of the
@@ -208,20 +209,18 @@ pipeline stood up, and carrying the checkout's template would be a second change
 
 ### The two invariants they assert
 
-> **These are red.** The two invariants below hold only if the cluster **moves records when
-> ownership moves**, in both directions. It does not, yet: growing pulls — a node fills itself in
-> before it joins — and nothing else does anything at all. Until both mechanisms exist the three
-> resize experiments fail, and so do the pipeline's chaos step and the version gate behind it. They
-> are the specification for that work, written as tests; `CHAOS_EXPERIMENTS` is how to run the other
-> seven meanwhile.
+These hold because the cluster **moves records when ownership moves**, in both directions — the
+[reconcile pass](../doc/runbook/rebuild.md#when-ownership-moves) every node runs when the membership
+changes. These three experiments are the test of it, and they were written before it existed: each
+assertion below names the half of the mechanism whose absence makes it fail.
 
 Every resize is asked the same two things once it has settled, and they come from
 [the cluster spec](../doc/database/cluster.md) rather than from what the code does today:
 
-| Invariant | Is | What it takes |
+| Invariant | Is | The half that holds it |
 | --- | --- | --- |
-| **Every zone holds the same keys** | A zone holds a copy of the whole keyspace, so two zones naming different keys is a copy that is short | A node that *gains* a partition fetches what it now owns |
-| **No key is held by two nodes of one zone** | A zone's nodes split the copy it holds, so a key in two of their stores is a node that kept what it stopped owning | A node that *loses* a partition clears down what it no longer owns |
+| **Every zone holds the same keys** | A zone holds a copy of the whole keyspace, so two zones naming different keys is a copy that is short | The **fetch**: a node that gains a partition takes what it now owns from a node that has it |
+| **No key is held by two nodes of one zone** | A zone's nodes split the copy it holds, so a key in two of their stores is a node that kept what it stopped owning | The **clear down**: a node that loses a partition gives up what it no longer owns, once the node that owns it has it |
 
 Both are **convergence** assertions, not instant ones. Moving records because ownership moved is
 work in the background rather than part of the update that caused it, so each is asked again until
@@ -245,9 +244,9 @@ node of a zone.
 into every seeded key while the tier is nine wide and reads them back once it is six again, and
 asserts that **none of them answers the older value**: a key handed back to a node that stopped
 owning it either has to be given it again or was never let go, and a stale answer is the second of
-those. The three numbers it prints beside that — fresh, stale, gone — are
-[the runbook's sentence](../doc/runbook/storage.md#what-there-is-not) measured: *growing a cluster is
-a thing to do deliberately, at a quiet moment, with the keys rewritten afterwards.*
+those. The three numbers it prints beside that — fresh, stale, gone — are what the clear down is
+worth in a line: before it existed, four keys in sixty came back holding a value that had been
+overwritten while the tier was wider.
 
 ### What is measured and never asserted
 

@@ -14,9 +14,14 @@ of an incident:
 - **A write needs a leader and every copy.** A partition with no leader, or a
   zone that is down, is a write that is refused — and refused rather than lost,
   because every write here is idempotent and the remedy is to run it again.
-- **Nothing repairs anything.** There is no read repair, no replication log, no
-  rebalancing and no backup. A copy that missed a write stays missing until the
-  record is written again, and a node that is replaced comes back empty.
+- **Nothing repairs anything.** There is no read repair, no replication log and
+  no backup. A copy that missed a write stays missing until the record is written
+  again, and a node that is replaced comes back empty.
+- **Records move when ownership moves.** A node that joins or leaves redraws the
+  split inside its zone, and the records
+  [follow it](/runbook/rebuild#when-ownership-moves) — fetched by the node that
+  gained them, given up by the node that lost them. It moves what some node
+  still has, which is why it is not the exception to the line above.
 
 That last one is the important one. Most of the recovery steps on these pages
 end in *write the data again*, because there is nothing else that can put it

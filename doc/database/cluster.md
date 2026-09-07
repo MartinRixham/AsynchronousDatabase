@@ -350,8 +350,11 @@ it ends.
   is no log, no quorum and nothing to reconcile against.
 - **Nothing repairs a copy that fell behind.** This is the one a leader does not
   fix. A write that one copy refused is answered as a failure, and the copies that
-  took it keep it; there is no log to catch a copy up with, no read repair, no
-  anti-entropy and no hinted handoff. Until the client runs the write again the
+  took it keep it; there is no log to catch a copy up with, no read repair and no
+  hinted handoff. What a membership change does move is
+  [the records whose owner moved with it](/runbook/rebuild#when-ownership-moves),
+  which is a different question: where a record belongs, not which of two values
+  is the current one. Until the client runs the write again the
   zones disagree, and a read may be answered by either of them. A scan is answered
   by one zone, so it answers what *that* zone holds — a record another zone has
   and this one does not is a record the scan does not return.

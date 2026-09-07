@@ -2,6 +2,8 @@
 #define SERVER_SERVER_H
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -34,6 +36,18 @@ namespace server
 	// because each thread keeps its own curl handles and so its own connections to each neighbour.
 	int thread_pool_size();
 
+	// How often the membership is read to see whether it moved, which is how soon a node starts
+	// moving the records whose owner changed. It is a poll rather than a signal because the
+	// membership is a moment: acting on the first reading of a change is acting on a view that may
+	// be a node registering or a lease that is about to be renewed, and the pass is deliberately
+	// one tick behind for that reason.
+	std::chrono::seconds reconcile_interval();
+
+	// How many passes a membership change buys. A pass that finds records waiting on another node
+	// runs again, because that node's own pass is what unblocks it, and this is the bound on
+	// waiting for a node whose pass is never coming — the copy it was waiting on is simply kept.
+	constexpr int reconcile_attempts = 12;
+
 	class session;
 
 	class server : public std::enable_shared_from_this<server>
@@ -65,6 +79,16 @@ namespace server
 
 		std::atomic<bool> stopping = false;
 
+		// Moving the records whose owner changed is work of its own and not part of serving, so it
+		// is a thread of its own — the one the membership is watched on.
+		std::thread reconciler;
+
+		std::mutex reconcile_mutex;
+
+		std::condition_variable reconcile_wake;
+
+		bool reconciling = false;
+
 	public:
 		explicit server(
 			boost::asio::ip::port_type port,
@@ -78,6 +102,10 @@ namespace server
 			int thread_count,
 			cluster::cluster &nodes,
 			const std::string &directory = data_directory());
+
+		// A thread that is still joinable when it goes would take the process with it, so a server
+		// that was never closed still stops watching the membership here.
+		~server();
 
 		void serve();
 
@@ -104,6 +132,12 @@ namespace server
 		void listen();
 
 		void accept();
+
+		// Watches the membership, and moves records when it moves. Started once this node has
+		// joined, because a node that is not a member owns nothing and would clear down the store.
+		void reconcile();
+
+		void stop_reconciling();
 	};
 }
 

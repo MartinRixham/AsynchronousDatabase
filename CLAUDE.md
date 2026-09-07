@@ -189,19 +189,11 @@ fails one.
   back** rather than as a fault of its own — and that half is what `zone-lost` cannot test, because
   a zone cut off comes back with its copy and a zone retired comes back with instances that have
   never held anything.
-- **The three resizes are red on purpose, and they are the specification for the work that makes
-  them green.** Each of them asserts two invariants of `doc/database/cluster.md` after every
+- **The three resizes are the test of `reconcile`.** Each asserts two invariants after every
   transition: **every zone holds the same keys** (a zone holds a copy of the whole keyspace, so two
   zones naming different keys is a copy that is short) and **no key is held by two nodes of one
-  zone** (a zone's nodes split the copy it holds). The first needs a node that *gains* a partition
-  to fetch what it now owns; the second needs a node that *loses* one to clear down what it no
-  longer owns. Today the cluster does neither — `rebuild` runs once, on an empty store — so the
-  suite fails, and with it the pipeline's chaos step and the version gate behind it.
-  `CHAOS_EXPERIMENTS` runs the other seven meanwhile. **Neither half is safe alone**: clearing down
-  without fetching is a shrink that loses records rather than staling them, and fetching without
-  clearing down is the disk never coming back and a stale value waiting for the membership to swing
-  again — which is why they are asserted as a pair, and why which one fails says which half is
-  missing.
+  zone** (a zone's nodes split the copy it holds). The first is the fetch half of a reconcile pass,
+  the second the clear down half, so which one fails says which half of the mechanism broke.
 - **Neither invariant can be seen through the load balancer**, which answers a read from whichever
   copy has the key and so says a record exists somewhere and never where. `holdings` in
   `chaos/harness.sh` asks each node what is in its own store, over Run Command, with a scan carrying
@@ -330,6 +322,10 @@ Request flow, one layer per directory under `src/`:
 
 and, off the router, `cluster::cluster` → `http::client` → the other nodes and etcd.
 
+Beside that, two passes that move records between nodes rather than serving anybody:
+`rebuild::rebuild` fills an empty store before the node joins, and `reconcile::reconcile` moves the
+records whose owner moved, on a thread of its own, whenever the membership changes.
+
 - **`server::server`** owns the `io_context`, the acceptor and a thread pool sized by
   `server::thread_pool_size()` — `ASYNCDB_THREADS`, defaulting to eight threads a core, bounded to
   between sixteen and a hundred and twenty-eight. **It is deliberately not `hardware_concurrency()`**: a thread here waits on
@@ -433,7 +429,23 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
   falling back to another zone when a node of that one does not answer. A forwarded request carries
   `X-Asyncdb-Forwarded` and is served where it lands, which is what stops two nodes bouncing it.
   `doc/database/cluster.md` is the spec, including what this deliberately does not do (no read
-  repair, no rebalancing, no replication log, and a write that needs both a leader and every copy).
+  repair, no replication log, and a write that needs both a leader and every copy).
+- **Records move when ownership moves, and only then.** A membership change redraws the split
+  inside a zone without moving a record, so `reconcile::reconcile` does: it **fetches** what this
+  node now owns and holds nothing for, from every other node, and **clears down** what it no longer
+  owns. `server::server` runs it on a thread of its own, one tick *after* the membership it saw
+  changed — a membership is a moment, and a store that matches the one it was left with is never
+  walked, which is why a test naming its own static cluster never runs a pass at all.
+  **What makes the delete safe is that it asks first**: a copy is given up only when the node that
+  owns that key *in this node's own zone* answers a HEAD saying it holds it. Not any copy — the
+  record here is this zone's copy, so deleting it because another zone has one is a zone left
+  holding nothing — and a node acting on a view that is a moment out of date is told no, keeps the
+  record, and asks again next pass. The count of those is `deferred`, and a pass with any is not
+  settled, so it runs again. **Neither half is safe alone**: clearing down without fetching is a
+  shrink that loses records rather than staling them; fetching without clearing down is a store
+  that only grows and a stale value waiting for the membership to swing back. Both are best effort
+  and caught like the rebuild, because a store that refuses a write must not take the process down
+  from a thread of its own. `doc/runbook/rebuild.md` is the page.
 - **A leader is claimed in etcd, not elected by votes.** `/asyncdb/leader/{partition}` is written
   with a transaction that only succeeds if nothing created the key, on the node's own membership
   lease — so a node that stops renewing stops leading. A node claims

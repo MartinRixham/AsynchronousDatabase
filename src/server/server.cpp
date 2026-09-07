@@ -11,6 +11,7 @@
 #include "error.h"
 #include "log.h"
 #include "rebuild/rebuild.h"
+#include "reconcile/reconcile.h"
 #include "server.h"
 #include "session.h"
 
@@ -26,6 +27,33 @@ namespace
 	// Each thread keeps its own curl handles, so a very large pool is more connections to every
 	// neighbour than a neighbour wants. A node that needs more is told so with ASYNCDB_THREADS.
 	constexpr int most_threads = 128;
+
+	// A third of the lease, as the membership is read on, because reading it more often than it is
+	// written is polling for an answer that cannot have changed.
+	constexpr int reconcile_seconds = 3;
+
+	// The membership as it stands against the one a node last acted on. Two readings naming the
+	// same nodes in the same zones are the same membership: the order is etcd's own, which is name
+	// order, so a difference here is a node that joined, left, or moved zone.
+	bool same_membership(
+		const std::vector<cluster::member> &before,
+		const std::vector<cluster::member> &after)
+	{
+		if (before.size() != after.size())
+		{
+			return false;
+		}
+
+		for (size_t i = 0; i < before.size(); i++)
+		{
+			if (before[i].node != after[i].node || before[i].zone != after[i].zone)
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
 }
 
 std::string server::data_directory()
@@ -54,6 +82,11 @@ int server::thread_pool_size()
 		static_cast<int>(std::thread::hardware_concurrency()) * threads_per_core,
 		fewest_threads,
 		most_threads);
+}
+
+std::chrono::seconds server::reconcile_interval()
+{
+	return std::chrono::seconds(reconcile_seconds);
 }
 
 server::server::server(
@@ -122,6 +155,11 @@ void server::server::listen()
 	DEBUG("Server listening on port: " + std::to_string(port_number) + ".");
 }
 
+server::server::~server()
+{
+	stop_reconciling();
+}
+
 void server::server::serve()
 {
 	// A node that came back empty is filled from a zone that still holds its records, and filled
@@ -154,6 +192,18 @@ void server::server::serve()
 	// Joining is nothing at all when no etcd is configured, which is how a single instance keeps
 	// the whole keyspace to itself.
 	own_nodes.start();
+
+	// Only once this node is a member. A node that has not joined owns every key it is asked
+	// about — replicas() answers a cluster of one — so a pass before this would find nothing to
+	// fetch and nothing to clear down, and a pass part way through joining would find the wrong
+	// thing to do about both.
+	{
+		std::lock_guard<std::mutex> lock(reconcile_mutex);
+
+		reconciling = true;
+	}
+
+	reconciler = std::thread([this]() { reconcile(); });
 
 	// The store is filled and the node has joined, so the port is opened to the connections that
 	// were refused while it was not ready to answer them.
@@ -242,11 +292,91 @@ void server::server::accept()
 		boost::beast::bind_front_handler(&server::on_accept, shared_from_this()));
 }
 
+void server::server::reconcile()
+{
+	std::unique_lock<std::mutex> lock(reconcile_mutex);
+
+	// What this node starts on is not a change. A store that matches the membership it was left
+	// with needs nothing done to it, and a node whose membership never moves — a test naming its
+	// own cluster, an instance standing alone — never runs a pass at all.
+	std::vector<cluster::member> seen = nodes.members();
+	int attempts = 0;
+
+	while (!reconcile_wake.wait_for(lock, reconcile_interval(), [this]() { return !reconciling; }))
+	{
+		lock.unlock();
+
+		std::vector<cluster::member> now = nodes.members();
+
+		if (!same_membership(seen, now))
+		{
+			DEBUG("The membership moved, so the records whose owner moved with it are next.");
+
+			seen = now;
+			attempts = reconcile_attempts;
+		}
+		else if (attempts > 0)
+		{
+			attempts--;
+
+			// As best effort as the rebuild is, and for the same reason: a store that refuses a
+			// write, or a neighbour that answers something unreadable, would otherwise take the
+			// process down over records that are a copy of records elsewhere. A pass that threw
+			// is a pass that did some of it, and the attempts left are what runs the rest.
+			try
+			{
+				// A pass that is waiting on nothing has done everything this membership asks
+				// for. One that is waiting keeps its remaining attempts, because what unblocks
+				// it is another node's own pass rather than anything this one can do again.
+				if (reconcile::reconcile(repository, nodes).settled())
+				{
+					attempts = 0;
+				}
+			}
+			catch (const std::exception &caught)
+			{
+				DEBUG(std::string("A reconcile did not finish: ") + caught.what());
+			}
+			catch (...)
+			{
+				DEBUG("A reconcile did not finish.");
+			}
+		}
+
+		lock.lock();
+	}
+}
+
+void server::server::stop_reconciling()
+{
+	{
+		std::lock_guard<std::mutex> lock(reconcile_mutex);
+
+		if (!reconciling)
+		{
+			return;
+		}
+
+		reconciling = false;
+	}
+
+	reconcile_wake.notify_all();
+
+	if (reconciler.joinable())
+	{
+		reconciler.join();
+	}
+}
+
 void server::server::close()
 {
 	// Leaving the cluster before the acceptor is closed means the other nodes stop sending keys
 	// here while this instance can still answer for the ones already in flight.
 	own_nodes.stop();
+
+	// A pass holds a thread and asks the other nodes questions, so it goes before the connections
+	// it would ask them over do.
+	stop_reconciling();
 
 	std::vector<std::weak_ptr<session>> live;
 

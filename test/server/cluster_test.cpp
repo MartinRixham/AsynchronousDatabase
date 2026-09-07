@@ -1,3 +1,4 @@
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -304,6 +305,48 @@ protected:
 
 		first_cluster.join(node(first), "one", members);
 		second_cluster.join(node(second), "two", members);
+	}
+
+	// The same two servers and the same split between them, said again. Nothing about who owns
+	// what moves — the hash is over the node addresses, and those have not changed — but the
+	// membership is a different one, which is what a node watches for and what starts it moving
+	// the records whose owner moved.
+	void name_the_zone(const std::string &zone)
+	{
+		std::vector<cluster::member> members {
+			cluster::member { node(first), zone },
+			cluster::member { node(second), zone }
+		};
+
+		first_cluster.join(node(first), zone, members);
+		second_cluster.join(node(second), zone, members);
+	}
+
+	// What a node holds in its own store, which a request that says it was forwarded is answered
+	// out of. Reading it through the cluster would find the copy on the other node instead.
+	bool holds(const std::shared_ptr<server::server> &server, const std::string &key)
+	{
+		return request(server, "GET", "/table/account/key/" + key, "", true).code == 200;
+	}
+
+	// A pass runs on a tick of its own and takes as long as the round trips in it, so what is
+	// waited for is that it happened rather than that it happened by now.
+	bool holds_within(const std::shared_ptr<server::server> &server, const std::string &key, bool held)
+	{
+		std::chrono::steady_clock::time_point deadline =
+			std::chrono::steady_clock::now() + std::chrono::seconds(30);
+
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			if (holds(server, key) == held)
+			{
+				return true;
+			}
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(200));
+		}
+
+		return false;
 	}
 
 	std::shared_ptr<server::server> &owner(const std::string &key)
@@ -649,4 +692,72 @@ TEST_F(cluster_test, a_write_is_unordered_when_no_node_leads_anything)
 	EXPECT_EQ(request(first, "PUT", "/table/account/key/4821", "a value").code, 204);
 	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
 	EXPECT_EQ(request(second, "GET", "/table/account/key/4821", "", true).body, "a value");
+}
+
+// The membership moved, so the records whose owner moved with it move too. Both halves are one
+// pass: a node fetches what it has been handed and gives up what has been taken from it, and the
+// second is gated on the first having happened somewhere else.
+
+TEST_F(cluster_test, a_node_gives_up_a_record_it_no_longer_owns)
+{
+	request(first, "PUT", "/table/account", "{}");
+
+	// Written where it stands rather than where it belongs, so that both nodes hold a key one of
+	// them owns. That is the state a cluster is left in by a node joining the zone.
+	request(first, "PUT", "/table/account/key/4821", "a value", true);
+	request(second, "PUT", "/table/account/key/4821", "a value", true);
+
+	ASSERT_TRUE(holds(owner("4821"), "4821"));
+	ASSERT_TRUE(holds(stranger("4821"), "4821"));
+
+	name_the_zone("one");
+
+	// The node that does not own it lets it go, and the node that does keeps it.
+	EXPECT_TRUE(holds_within(stranger("4821"), "4821", false));
+	EXPECT_TRUE(holds(owner("4821"), "4821"));
+}
+
+// Both halves of one zone's copy in the order they have to happen in. The record is on the node
+// that does not own it and nowhere else, so the copy that is given up is the one the fetch has
+// already made: a delete that ran first would be the record.
+TEST_F(cluster_test, a_record_moves_to_the_node_that_owns_it_and_then_off_the_one_that_does_not)
+{
+	request(first, "PUT", "/table/account", "{}");
+
+	request(stranger("4821"), "PUT", "/table/account/key/4821", "a value", true);
+
+	ASSERT_FALSE(holds(owner("4821"), "4821"));
+
+	name_the_zone("one");
+
+	EXPECT_TRUE(holds_within(owner("4821"), "4821", true));
+	EXPECT_EQ(request(owner("4821"), "GET", "/table/account/key/4821", "", true).body, "a value");
+
+	// And only then is the copy that is nobody's given up, which leaves the zone one copy, on the
+	// node that owns it.
+	EXPECT_TRUE(holds_within(stranger("4821"), "4821", false));
+}
+
+TEST_F(cluster_test, a_node_fetches_a_record_it_owns_and_holds_nothing_for)
+{
+	zone_the_cluster();
+
+	request(first, "PUT", "/table/account", "{}");
+
+	// One zone holds the record and the other does not, which is a copy short: every zone holds
+	// one node that owns this key, and here one of them has nothing behind it.
+	request(second, "PUT", "/table/account/key/4821", "a value", true);
+
+	ASSERT_FALSE(holds(first, "4821"));
+
+	std::vector<cluster::member> members {
+		cluster::member { node(first), "three" },
+		cluster::member { node(second), "four" }
+	};
+
+	first_cluster.join(node(first), "three", members);
+	second_cluster.join(node(second), "four", members);
+
+	EXPECT_TRUE(holds_within(first, "4821", true));
+	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
 }

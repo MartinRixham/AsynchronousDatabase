@@ -126,11 +126,11 @@ else
 fi
 
 # What the round trip of it cost the seed. The zones that were left shed a node each when the third
-# came back, and a node that goes takes what only it held: doc/runbook/storage.md's no rebalancing,
-# from the other direction, and reported for the same reason nodes-removed reports it.
+# came back, and what only that node held went with it — reported for the same reason nodes-removed
+# reports it: what no node has, no pass can fetch.
 absent=$(readable 60 3)
 
 printf '  ---- of 60 seeded keys once all three zones are back: %s are held by no copy\n' "$absent"
-expect_codes '^(2|404)' "a key the rebalance moved is refused as not found and not as an error"
+expect_codes '^(2|404)' "a key that went with an instance is refused as not found and not as an error"
 
 verdict

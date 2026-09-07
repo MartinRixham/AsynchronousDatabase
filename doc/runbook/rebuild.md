@@ -159,8 +159,9 @@ curl -s http://asyncdb-1:8080/health | jq '.nodes'
   afterwards stays behind.
 - **It is not a backup.** It needs a zone that still holds the data. Lose every
   zone's copy of a partition and there is nothing to read from.
-- **It does not move records when the membership changes.** Growing a cluster is
-  still [a thing to do deliberately](/database/cluster#what-this-is-not).
+- **It is not what moves records when the membership changes.** That is
+  [the pass below](#when-ownership-moves), which runs while the node is serving
+  and on every membership change rather than once on the way up.
 - **It is not free.** It reads every key and value this node will own across a
   zone boundary, and the node is not serving while it does. On a large store that
   is a slower start-up, and the load balancer will hold traffic off until it is
@@ -176,3 +177,70 @@ The window is smaller than it looks, because the rebuilding node is not in the
 membership — a delete during that window is not routed to it, and it is only the
 *source* zone's view going stale that matters. But it is real, and it is the same
 reason the docs say to grow a cluster at a quiet moment.
+
+## When ownership moves
+
+A rebuild fills a node that has nothing. The other half of the same problem is a
+node that has the wrong things, and that is a **reconcile**: a pass on a thread of
+its own, watching the membership, that runs when it moves.
+
+A key belongs to one node in each zone, and which node that is falls out of the
+membership. So a node joining or leaving redraws the split inside its zone
+without moving a single record, and the pass is what moves them:
+
+| | Is | Why it matters |
+| --- | --- | --- |
+| **Fetch** | Records this node now owns and holds nothing for, taken from a node that has them | Until it does, its zone is a copy short: the record is answered only by the zones that happen still to have it |
+| **Clear down** | Records this node no longer owns, deleted once the node that owns them now has them | Nothing reads that copy and it stops taking writes, so it comes back as a **stale answer** if the membership ever hands the partition back |
+
+**Neither half is safe without the other**, which is why one pass does both.
+Clearing down alone is a shrink that loses records rather than staling them.
+Fetching alone is a store that only grows and a stale value waiting for the next
+membership change.
+
+### What makes deleting safe
+
+A copy is given up only when **the node that owns the key in this node's own zone
+answers that it holds it**. Not any copy: the record here is this zone's copy of
+it, so deleting it because another zone still has one is a zone left holding
+nothing.
+
+That check is also what makes a wrong membership harmless. A node acting on a
+view that is a moment out of date asks a node that has not fetched anything, is
+told no, and deletes nothing — it keeps the record and asks again on the next
+pass.
+
+### What it does not do
+
+- **It is not a repair.** It moves what some node still has. A key whose owner in
+  every zone was terminated by the same update is gone, and this does not bring
+  it back.
+- **It does not choose between two values.** It never overwrites a record this
+  node already holds: a write reaches every copy, so another node's answer is the
+  same value or an older one.
+- **It is not triggered by anything but the membership.** A store that matches the
+  membership it was left with is never walked, so a node whose cluster does not
+  change never runs a pass at all.
+- **It is one tick behind, deliberately.** The membership is a moment; a pass runs
+  on the tick after the change, not on the reading of it.
+
+### Watching it
+
+It is on the `DEBUG` log, which the image has on:
+
+```bash
+docker logs asyncdb-1 2>&1 | grep -i reconcil
+```
+
+> `Reconciled 41 records fetched, 63 cleared, 0 deferred.`
+
+**`deferred` is the number to read.** It counts records this node kept because
+the node that owns them has not fetched them yet, and it is what makes the pass
+run again. A count that stays above zero for longer than a minute or two is a
+node whose peer is not running its own pass — check that peer's membership before
+anything else.
+
+`chaos/nodes-added`, `chaos/nodes-removed` and `chaos/zone-retired` are the test
+of all of this: each moves the tier's shape by a stack update and then asks every
+node what is in its store, asserting that every zone holds the same keys and that
+no key is held by two nodes of one zone.

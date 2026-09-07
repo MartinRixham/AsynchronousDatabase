@@ -142,10 +142,11 @@ seed()
 {
 	local i status
 
-	# The seed is written every run and not only the first. A key whose owner changed hands is
-	# a key the new owner does not hold — there is no rebalancing, by design — so a run that
-	# took the last run's seed on trust would start each experiment thinner than the one
-	# before it. Writing it again is two hundred idempotent requests and makes runs repeatable.
+	# The seed is written every run and not only the first. A key whose owner changed hands moves
+	# with it, but a key whose owner in every zone was terminated at once went with them and
+	# nothing puts it back, so a run that took the last run's seed on trust would start each
+	# experiment thinner than the one before it. Writing it again is two hundred idempotent
+	# requests and makes runs repeatable.
 	status=$(status --request PUT --header 'Content-Type: application/json' \
 		--data '{}' "$base/table/$table")
 
@@ -1228,9 +1229,10 @@ zone_heal()
 # splits the copy it holds, and the auto scaling group does the rest — it balances what it is given
 # over the subnets it spans, and an instance reads its own zone out of IMDS.
 #
-# Nothing about it is gentler than a fault an experiment injects. A node that joins rebuilds what it
-# will own before it registers, but a node that goes takes what it held with it: there is no
-# rebalancing, so the copies a resize moves between nodes are moved in one direction only.
+# Nothing about it is gentler than a fault an experiment injects. The records whose owner moves with
+# the membership are moved after it, on a pass of each node's own, and a node that is terminated
+# takes what only it held with it: what a resize costs is whatever went in the same update as every
+# copy of it.
 
 # stack_parameters <key=value>... — the parameter list for an update: these, and every other
 # parameter of the stack as it stands. UsePreviousValue keeps an SSM-typed parameter's name rather

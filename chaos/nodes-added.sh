@@ -3,7 +3,7 @@
 # The partition factor is increased, and then decreased again.
 #
 #   doc/runbook/rebuild.md                          a node fills itself in on the way up
-#   doc/runbook/storage.md#what-there-is-not        no rebalancing
+#   doc/runbook/rebuild.md#when-ownership-moves     and moves records when ownership moves
 #   doc/database/cluster.md                         a key belongs to one of 256 partitions
 #
 # The database tier goes from six instances to nine by a stack update, which is three zones of
@@ -11,16 +11,15 @@
 # there are still three zones — so what changes is how many ways each zone splits the copy it
 # holds, and that redraws the split inside every zone at once.
 #
-# A node that joins rebuilds what it is about to own from another zone before it registers, so
-# growing the tier moves the keys the new node took over. What growing does not do is take them
-# away from the node that had them: the old owner is never told and never deletes, so its copy stays
-# behind, is read by nobody, and goes stale from the first write the new owner takes.
+# A node that joins rebuilds what it is about to own before it registers, and the nodes it joined
+# then give up what it took over — the clear down half of a reconcile, which waits until the new
+# owner answers that it holds the key. **A leftover copy is what this experiment asserts against.**
+# A zone holds one copy of the keyspace and its nodes split it, so a key in two stores of one zone
+# is a node that kept what it stopped owning.
 #
-# **That leftover is what this experiment asserts against.** A zone holds one copy of the keyspace
-# and its nodes split it, so a key in two stores of one zone is a node that kept what it stopped
-# owning — and it stays invisible until the tier shrinks back, when the membership hands the
-# partition to the node still holding the value nobody has written to since. The shrink here is
-# what makes it visible: with nothing left behind there is no stale value to come back.
+# It would stay invisible if the tier stayed wide, because nothing reads that copy. The shrink is
+# what makes it visible: the membership hands the partition back to the node still holding the value
+# nobody has written to since, so the stale count after the shrink is the clear down, measured.
 #
 # The fault is the update and the heal is the update back. The assertions are asked of the nodes
 # themselves over Run Command, because what a resize moved is a question about a *store* and a read

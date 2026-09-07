@@ -220,9 +220,14 @@ Worth saying plainly, because most of the recovery steps above are shaped by it:
 - **No repair.** A corrupt store is replaced, not fixed.
 - **No rebuild of a copy.** A zone that lost its copy of a key does not get it
   back from the zones that still have it.
-- **No rebalancing.** A key that changes owner is a key the new owner does not
-  have and the old owner still does. A read still finds it, because a node asks
-  the other copies for what it holds nothing of, but a **write** lands on the
-  new owner and leaves the old one holding a value that is now stale. That is
-  why growing a cluster is a thing to do deliberately, at a quiet moment, with
-  the keys rewritten afterwards.
+- **No repair of a copy that fell behind.** A write one copy refused is not
+  caught up later; the zones disagree until the client runs the write again.
+
+What there *is*, and it is the one exception to all of the above:
+
+- **Records move when ownership moves.** A membership change redraws the split
+  inside a zone, and every node then
+  [fetches what it has been handed and gives up what has been taken from it](/runbook/rebuild#when-ownership-moves).
+  It moves what some node still has; it is not a repair of a copy that is gone,
+  and nothing brings back a key whose owner in every zone was terminated at
+  once.

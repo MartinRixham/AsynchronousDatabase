@@ -117,11 +117,12 @@ else
 fi
 
 # The replacement rebuilds what it will own, and what it will own is not what the instance it
-# replaced owned: the hash is over node addresses and the replacement has a new one, so the
-# split inside that zone is redrawn. A key that moved to the *other* node of the zone is one
-# that node never held and no rebuild fills in, because its store was never empty. That is
-# doc/runbook/storage.md's "no rebalancing", and it is why this asks whether the record can be
-# read rather than whether every route to it answers.
+# replaced owned: the hash is over node addresses and the replacement has a new one, so the split
+# inside that zone is redrawn. A key that moved to the *other* node of the zone is one that node
+# never held and no rebuild fills in, because its store was never empty — that one arrives on the
+# reconcile pass the membership change starts, which is a pass or two later than this. So what is
+# asked here is whether the record can be read, which is true throughout: a node asks the other
+# copies for what it holds nothing of.
 expect_readable 40 5 "every seeded record can still be read once the replacement has joined"
 printf '  ---- reads once the replacement joined: %s\n' "$(codes)"
 expect_writes 20 "every write is taken once the replacement has joined"

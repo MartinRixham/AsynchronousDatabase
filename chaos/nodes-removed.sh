@@ -2,8 +2,8 @@
 
 # The partition factor is decreased, and then increased again.
 #
-#   doc/runbook/storage.md#what-there-is-not        no rebalancing, and no rebuild of a copy
-#   doc/runbook/rebuild.md                          only an empty store rebuilds
+#   doc/runbook/rebuild.md#when-ownership-moves     a node fetches what it has been handed
+#   doc/runbook/storage.md#what-there-is-not        and nothing brings back a copy that is gone
 #   doc/database/cluster.md                         a read asks the other copies
 #
 # The database tier goes from six instances to three by a stack update, which is three zones of one
@@ -11,15 +11,15 @@
 # copies whatever each zone is split between, so this is the other axis on its own, and it is the
 # one that costs something.
 #
-# Each zone's survivor is handed the partitions the terminated node had, and holds nothing for any
-# of them. A read asks the other copies for what this node has nothing of, so the record is still
-# answered as long as *some* zone kept it — but the zone that was handed it is a copy short until it
-# goes and fetches what it now owns, and that is the assertion here. Until it does, a partition
-# whose other copies then go is a partition with nothing behind it.
+# Each zone's survivor is handed the partitions the terminated node had and holds nothing for any of
+# them, so it goes and fetches them. A read would find the record anyway — the other copies are
+# asked for what this node has nothing of — but the zone that was handed it is a copy short until it
+# does, and a partition whose other copies then go is a partition with nothing behind it. That is
+# the assertion here.
 #
 # The zones lose different halves, because the split inside a zone is hashed over that zone's own
-# node addresses, so a key is gone outright only where every zone lost it. That number is reported
-# and never asserted: every copy of it was terminated at once, and nothing here puts it back.
+# node addresses, so a key is beyond fetching only where every zone lost it at once. That number is
+# reported and never asserted: nothing here puts back a copy that no node has.
 #
 #   CHAOS_RESIZE   how long a resized group is given to reach the new shape   1200 seconds
 

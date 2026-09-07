@@ -236,18 +236,18 @@ is one instance per availability zone; `MinSize: 1` allows the group to be taken
 down to one by hand.
 
 Nothing moves either parameter on its own — there is no scaling policy and no
-alarm in the template — and moving one is a stack update. **Growing is safe and
-shrinking is not**: an instance that joins
-[fills itself in before it registers](/runbook/rebuild), so it holds what it is
-about to own by the time anything asks, while an instance that goes takes what it
-held with it, because [there is no rebalancing](/runbook/storage#what-there-is-not).
+alarm in the template — and moving one is a stack update. An instance that joins
+[fills itself in before it registers](/runbook/rebuild), and every node then
+[moves the records whose owner moved](/runbook/rebuild#when-ownership-moves) with
+the membership — fetching what it has been handed, giving up what has been taken
+from it. What no mechanism recovers is a key whose owner in *every* zone was
+terminated by the same update, which is why **capacity still moves three at a
+time and at a quiet moment**.
 
 `chaos/nodes-added`, `chaos/nodes-removed` and `chaos/zone-retired` move one of
-these parameters each and assert what a resize has to leave behind: every zone
-holding the same keys, and no key held by two nodes of one zone. Those hold only
-once records move when ownership moves, in both directions, which is not what the
-cluster does today — the three of them are red, on purpose, and are the
-specification for the work that makes them green.
+these parameters each and then ask every node what is in its store, asserting
+what a resize has to leave behind: every zone holding the same keys, and no key
+held by two nodes of one zone.
 
 `HealthCheckType` is `EC2`, the default, so the group replaces an instance whose
 *instance* has failed — a failed EC2 status check — and **not** one whose
