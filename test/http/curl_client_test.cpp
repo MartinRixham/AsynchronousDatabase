@@ -15,7 +15,7 @@
 class curl_client_test : public ::testing::Test
 {
 protected:
-	http::curl_client client { http::curl_client(10) };
+	http::curl_client client { http::curl_client(10, 2) };
 
 	std::shared_ptr<server::server> database_server;
 

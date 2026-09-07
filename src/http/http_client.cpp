@@ -123,7 +123,12 @@ namespace
 
 	// The options of a request, the same whether it runs on its own or beside others. The list of
 	// headers belongs to the caller, and the handle has to be told to forget it before it goes.
-	struct curl_slist *apply(CURL *curl, const http::request &request, std::string *body, long timeout)
+	struct curl_slist *apply(
+		CURL *curl,
+		const http::request &request,
+		std::string *body,
+		long timeout,
+		long connect_timeout)
 	{
 		struct curl_slist *headers = NULL;
 
@@ -142,7 +147,7 @@ namespace
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_body);
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, body);
 		curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
-		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, timeout);
+		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connect_timeout);
 		curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
 		if (request.method == "HEAD")
@@ -248,8 +253,9 @@ namespace
 	}
 }
 
-http::curl_client::curl_client(long timeout):
-	timeout_seconds(timeout)
+http::curl_client::curl_client(long timeout, long connect_timeout):
+	timeout_seconds(timeout),
+	connect_timeout_seconds(connect_timeout)
 {
 }
 
@@ -280,7 +286,7 @@ http::response http::curl_client::send(const request &request) const
 		return response;
 	}
 
-	struct curl_slist *headers = apply(curl, request, &response.body, timeout_seconds);
+	struct curl_slist *headers = apply(curl, request, &response.body, timeout_seconds, connect_timeout_seconds);
 
 	complete(curl, curl_easy_perform(curl), request.url, &response);
 
@@ -337,7 +343,7 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 			continue;
 		}
 
-		lists[i] = apply(easy, requests[i], &responses[i].body, timeout_seconds);
+		lists[i] = apply(easy, requests[i], &responses[i].body, timeout_seconds, connect_timeout_seconds);
 
 		// The answers are held still for the whole fan out, so a handle can carry a pointer to
 		// its own.

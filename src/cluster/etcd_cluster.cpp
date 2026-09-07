@@ -85,8 +85,8 @@ cluster::config cluster::from_environment()
 
 cluster::etcd_cluster::etcd_cluster(const config &cluster_config):
 	configuration(cluster_config),
-	node_curl(http::curl_client(cluster_config.timeout_seconds)),
-	etcd_curl(http::curl_client(cluster_config.etcd_timeout_seconds)),
+	node_curl(http::curl_client(cluster_config.timeout_seconds, cluster_config.connect_timeout_seconds)),
+	etcd_curl(http::curl_client(cluster_config.etcd_timeout_seconds, cluster_config.connect_timeout_seconds)),
 	http_client(node_curl),
 	etcd_client(etcd::client(etcd_curl, cluster_config.endpoints))
 {
@@ -94,8 +94,8 @@ cluster::etcd_cluster::etcd_cluster(const config &cluster_config):
 
 cluster::etcd_cluster::etcd_cluster(const config &cluster_config, const http::client &http):
 	configuration(cluster_config),
-	node_curl(http::curl_client(cluster_config.timeout_seconds)),
-	etcd_curl(http::curl_client(cluster_config.etcd_timeout_seconds)),
+	node_curl(http::curl_client(cluster_config.timeout_seconds, cluster_config.connect_timeout_seconds)),
+	etcd_curl(http::curl_client(cluster_config.etcd_timeout_seconds, cluster_config.connect_timeout_seconds)),
 	http_client(http),
 	etcd_client(etcd::client(http, cluster_config.endpoints))
 {

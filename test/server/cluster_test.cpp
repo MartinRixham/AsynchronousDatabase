@@ -43,7 +43,7 @@ namespace
 
 	public:
 		test_cluster():
-			curl(http::curl_client(10))
+			curl(http::curl_client(10, 2))
 		{
 		}
 

@@ -49,6 +49,11 @@ namespace cluster
 
 		long timeout_seconds = 30;
 
+		// How long a node is given to answer at all, apart from how long it is given to finish
+		// answering. A neighbour that is gone costs the thread serving the request this and not
+		// the whole timeout, which is as long as it is because a value may be sixteen megabytes.
+		long connect_timeout_seconds = 2;
+
 		bool is_clustered() const;
 	};
 

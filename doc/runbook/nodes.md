@@ -87,6 +87,13 @@ a request.
 slow. A forwarded request waits `timeout_seconds`, which is **30 seconds**, and
 the thread serving it waits with it.
 
+That is the timeout on the whole request, and it is the one this failure spends.
+`connect_timeout_seconds` — **2 seconds** — bounds reaching the node rather than
+getting an answer out of it, so it is what a node that cannot be reached at all
+costs, and it does nothing for one that accepts the connection and then says
+nothing. The transfer timeout stays long because a value may be sixteen
+megabytes and a slow one is still an answer.
+
 **Check that node directly** rather than through the load balancer:
 
 ```bash
@@ -118,7 +125,9 @@ two-core instance would be a server that two waiting requests fill — health
 check included, which is what has an instance taken out of service.
 
 **Do:** raise `ASYNCDB_THREADS` on that node, and look for what the threads are
-waiting on, which is usually a neighbour that is up but wrong. Each thread keeps
+waiting on, which is usually a neighbour that is up but wrong — a neighbour that
+cannot be reached at all holds a thread for `connect_timeout_seconds` and not for
+the whole 30. Each thread keeps
 its own curl handles, so the pool is also how many connections this node holds to
 each neighbour — a very large number is more connections than a neighbour wants.
 

@@ -52,8 +52,14 @@ namespace http
 	{
 		long timeout_seconds;
 
+		// Connecting is bounded apart from the transfer, because the two answer different
+		// questions. A node that is not there is told from a node that is slow: the first costs
+		// this and the second costs the whole timeout, which has to be long enough to carry
+		// sixteen megabytes.
+		long connect_timeout_seconds;
+
 	public:
-		explicit curl_client(long timeout);
+		curl_client(long timeout, long connect_timeout);
 
 		response send(const request &request) const override;
 
