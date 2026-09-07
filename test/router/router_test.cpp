@@ -501,6 +501,34 @@ TEST(router_test, page_backwards_through_a_scan)
 	EXPECT_EQ(keys(second), (std::vector<std::string> { "1" }));
 }
 
+// The page a client is given is bounded in bytes, and the cursor is how the rest is asked for —
+// so a table of large values pages rather than answering with a response the node cannot build.
+TEST(router_test, page_through_a_scan_of_values_too_large_to_send_at_once)
+{
+	repository::fake_repository repository;
+	router::router router(repository);
+
+	create_table(router, "account");
+
+	std::string value(2 * 1024 * 1024, 'v');
+
+	for (size_t i = 0; i < 6; i++)
+	{
+		write_record(router, "account", std::to_string(i), value);
+	}
+
+	router::response first = router.route(get("/table/account/key"));
+
+	EXPECT_EQ(keys(first), (std::vector<std::string> { "0", "1", "2" }));
+	EXPECT_TRUE(first.json.contains("next"));
+
+	std::string cursor = std::string(first.json.at("next").as_string());
+	router::response second = router.route(get("/table/account/key?cursor=" + cursor));
+
+	EXPECT_EQ(keys(second), (std::vector<std::string> { "3", "4", "5" }));
+	EXPECT_FALSE(second.json.contains("next"));
+}
+
 TEST(router_test, fail_to_scan_with_a_cursor_this_instance_did_not_issue)
 {
 	repository::fake_repository repository;
@@ -1278,6 +1306,29 @@ TEST(router_cluster_test, hold_the_merged_page_to_the_limit)
 	// The cursor is this node's own and names the last key it answered with, so the next page
 	// starts with the keys this one dropped.
 	EXPECT_EQ(cursor_key(response), "b");
+}
+
+// Each node answered within the budget on its own, and the merge of them is the sum: two pages of
+// two megabyte records is twelve megabytes of response on the node putting them back in order. So
+// the budget is applied again to what they came to, and the cursor names the last key that
+// survived it — the same trim the limit gets, for the reason a limit cannot see.
+TEST(router_cluster_test, hold_the_merged_page_to_the_budget)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	std::string value(2 * 1024 * 1024, 'v');
+
+	create_table(router, "account");
+	write_record(router, "account", "a", value);
+	write_record(router, "account", "c", value);
+	nodes.answer(there, page(boost::json::array { record_json("b", value), record_json("d", value) }, false));
+
+	router::response response = router.route(get("/table/account/key"));
+
+	EXPECT_EQ(keys(response), (std::vector<std::string> { "a", "b", "c" }));
+	EXPECT_EQ(cursor_key(response), "c");
 }
 
 TEST(router_cluster_test, page_through_a_scan_of_every_node)

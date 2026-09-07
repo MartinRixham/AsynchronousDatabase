@@ -61,6 +61,7 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 | Key | 4 KiB | Keys live in indexes and bloom filters, which are held in memory |
 | Value | 16 MiB | A value is read whole into memory to be served |
 | Scan `limit` | 1000, default 100 | One page is one response, held in memory |
+| Scan page | 8 MiB | The same reason counted in bytes, because a limit cannot see the size of what it lets through: a page ends early and carries a cursor rather than building a response the node cannot hold |
 | Table name | 64 characters | |
 | Tables | dozens | [Each is a memtable](/database/#tables-are-column-families) |
 

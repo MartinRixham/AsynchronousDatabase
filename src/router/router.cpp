@@ -127,6 +127,29 @@ namespace
 		return response.json.contains("next");
 	}
 
+	// A page is bounded in bytes as well as in records, and every node answered within the budget
+	// on its own — but a merge is the sum of them, a zone of two nodes being two pages of it, so
+	// it is applied again to what they came to. The first record is never dropped, for the reason
+	// scan::max_page_bytes gives.
+	bool trim_to_budget(std::vector<record::record> *records)
+	{
+		size_t bytes = 0;
+
+		for (size_t i = 0; i < records->size(); i++)
+		{
+			bytes += (*records)[i].key.size() + (*records)[i].value.size();
+
+			if (i > 0 && bytes > scan::max_page_bytes)
+			{
+				records->resize(i);
+
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	// The pages of every node in one order, which is the order a single node would have answered
 	// in. Two nodes holding the same key is the copy every zone keeps, or a key whose owner
 	// changed, and either way it is returned once rather than twice.
@@ -603,6 +626,11 @@ router::response router::router::scan_records(const request &request, const std:
 			{
 				records.resize(range.limit);
 
+				has_more = true;
+			}
+
+			if (trim_to_budget(&records))
+			{
 				has_more = true;
 			}
 

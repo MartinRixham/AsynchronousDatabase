@@ -227,6 +227,7 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 
 	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(options, table_handle(table_name)));
 	scan::page page;
+	size_t bytes = 0;
 
 	// One more than the page is read, because whether there is a next page is the difference
 	// between a cursor and no cursor, and the API promises that no cursor means exhausted.
@@ -237,6 +238,20 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 			page.has_more = true;
 			break;
 		}
+
+		// The size is asked of the slices rather than of strings copied out of them, so a record
+		// the budget refuses is one this never allocated. It is never weighed against an empty
+		// page: a record larger than the whole budget is a page of its own, and not a scan stuck
+		// on the key it cannot carry.
+		size_t size = it->key().size() + (range.values ? it->value().size() : 0);
+
+		if (!page.records.empty() && bytes + size > scan::max_page_bytes)
+		{
+			page.has_more = true;
+			break;
+		}
+
+		bytes += size;
 
 		// Not asking for the value lets the iterator stay in the index blocks, which for a table
 		// of large values is the whole saving.

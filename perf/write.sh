@@ -2,14 +2,20 @@
 
 # Writes, over persistent connections, reported as latency percentiles.
 #
-#   THREADS=6 REQUESTS=5000 VALUE_BYTES=100 perf/write.sh
+#   THREADS=6 REQUESTS=5000 VALUE_BYTES=1024 perf/write.sh
 
 source "$(dirname "$0")/harness.sh"
 
 # A table of its own, dropped and recreated so that a run always starts on an empty one and two
 # runs are comparable. Nothing else should be using this name.
 table=${TABLE:-perf_load}
-value_bytes=${VALUE_BYTES:-100}
+
+# A value may be 16 MiB, and this is a kilobyte, because the request count it pairs with is
+# REQUESTS=5000 on sixteen threads — eighty thousand of anything larger is a run measured in
+# gigabytes. Size and count trade against each other: raise this and lower those together,
+# which is what build.yaml does to load the deployed stack with values of a size the proxy and
+# the parser in front of the store used to refuse outright.
+value_bytes=${VALUE_BYTES:-1024}
 content_type=application/octet-stream
 
 status()
@@ -43,6 +49,13 @@ write_requests()
 	printf 'request = "PUT"\n'
 	printf 'data-binary = "@%s"\n' "$work/value"
 	printf 'header = "Content-Type: %s"\n' "$content_type"
+
+	# curl asks for a 100 Continue on any body over a kilobyte, and the database never sends one:
+	# only the nginx in front of it answers, on its behalf. Left in, a payload of any size worth
+	# measuring spends a second of curl's own timeout per request whenever this is pointed at the
+	# binary rather than at the proxy — which is a measurement of curl. src/http/http_client.cpp
+	# clears the header for the same reason.
+	printf 'header = "Expect:"\n'
 
 	# A key range of its own per worker, so that workers never write the same key at the same
 	# time, and so that every write of a first run is an insert rather than an overwrite.

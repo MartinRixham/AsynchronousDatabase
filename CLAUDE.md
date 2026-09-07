@@ -107,6 +107,15 @@ persistent connections and reports latency percentiles. Everything is an environ
 `TABLE` and `VALUE_BYTES` for writes. They drive a server that is already running and are
 no part of `cmk`.
 
+**`VALUE_BYTES` and `REQUESTS` trade against each other.** The script default is a kilobyte against
+`REQUESTS=5000` on sixteen threads; `build.yaml` loads the deployed stack with two megabyte values
+and thirty two requests a thread instead — values the proxy and the parser in front of the store
+refused outright until both were raised to the documented 16 MiB, and half a gigabyte in each
+direction either way. The write's curl config clears `Expect:` for the same reason `http::client`
+does: **only the nginx in front of the database answers a 100 Continue**, so a body over a kilobyte
+otherwise spends a second of curl's own timeout per request wherever the proxy is not in the path —
+1150 ms a write against the binary alone, against 190 ms through nginx.
+
 **They are tests as well as measurements.** A request the server answers with anything but a 2xx —
 including the `000` of a transfer that never answered — makes the run exit non-zero, which is what
 lets `build.yaml` run them last against the deployed stack and fail the build on them. Latency is
@@ -334,6 +343,14 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
 - `scan::range` is the parsed query of a scan or a range delete, and a cursor is base64 of
   `{ "k": last key, "s": instance }`; the instance is what makes a cursor this instance did not issue
   refusable.
+- **A page is bounded in bytes as well as in records** — `scan::max_page_bytes`, 8 MiB of keys and
+  values. `limit` caps the count and says nothing about the size, so a thousand of the largest legal
+  records is a 16 GiB response built in memory on the node answering: the instance dies, is replaced,
+  and comes back empty. The walk in `rocksdb_repository::scan_records` stops on the budget and sets
+  `has_more`, and `trim_to_budget` in the router applies it again to the merge, because each node
+  answered within it but a zone of two nodes is two pages of it. **A record larger than the whole
+  budget is still returned, alone**, or a scan could never get past that key. `fake_repository`
+  walks the same way, so a unit test sees the page a client really gets.
 - **Partitioning is by key alone, never by table**, so the same key of two tables is in one
   partition and a record and the records derived from it are one hop. A write is ordered by the node
   **leading** the key's partition, which writes the copy in every zone and every one of them has to

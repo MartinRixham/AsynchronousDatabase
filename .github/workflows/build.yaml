@@ -165,14 +165,25 @@ jobs:
         path: automation/playwright-report/
         retention-days: 7
 
+    # Two runs, because size and count measure different things and neither subsumes the other.
+    # Many small requests are the throughput and the percentiles — two thousand of them is a
+    # distribution worth reading. A few large ones are the path a big value takes: spooled to disk
+    # by nginx, read whole by the parser, and fanned out to the copy in every zone, which is a load
+    # the deployment could not carry at all until both limits were raised to the documented 16 MiB.
+    # The second run drops and recreates the table, so it starts on an empty one as the first did.
     - name: Run the load tests
       env:
         THREADS: '8'
-        REQUESTS: '250'
       run: |
         export BASE=$URL/asyncdb
-        VALUE_BYTES=1024 perf/write.sh
-        URL=$BASE/table/perf_load/key/0 perf/read.sh
+
+        REQUESTS=250 VALUE_BYTES=1024 perf/write.sh
+        REQUESTS=250 URL=$BASE/table/perf_load/key/0 perf/read.sh
+
+        # 8 × 32 of two megabytes is half a gigabyte in each direction, from a runner loading
+        # eu-west-2 over the internet. Raising the size is what brings the count down.
+        REQUESTS=32 VALUE_BYTES=2097152 perf/write.sh
+        REQUESTS=32 URL=$BASE/table/perf_load/key/0 perf/read.sh
 
     - name: The chaos role
       id: chaos_role

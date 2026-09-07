@@ -295,6 +295,67 @@ TEST_F(repository_test, a_page_says_whether_there_is_another)
 	EXPECT_FALSE(repository->scan_records("a_table", range).has_more);
 }
 
+// A limit of a thousand says nothing about the size of a thousand records, and a value may be
+// 16 MiB. Six of two megabytes is over the eight megabyte budget, so the page ends at three and
+// says there is more — which is the cursor the client follows, and not a response nobody can
+// hold. Three and not four because the keys are weighed too: what the budget bounds is the
+// response, and a key is up to 4 KiB of one.
+TEST_F(repository_test, scan_stops_at_the_page_budget_rather_than_the_limit)
+{
+	create_table("a_table");
+
+	std::string value(2 * 1024 * 1024, 'v');
+
+	for (size_t i = 0; i < 6; i++)
+	{
+		repository->write_record("a_table", record::valid_record(std::to_string(i), value));
+	}
+
+	scan::page page = repository->scan_records("a_table", whole_table());
+
+	EXPECT_EQ(page.records.size(), 3u);
+	EXPECT_TRUE(page.has_more);
+}
+
+// The budget is never weighed against an empty page, because a scan that could not carry the
+// record in front of it would never get past that key.
+TEST_F(repository_test, a_record_larger_than_the_budget_is_a_page_of_its_own)
+{
+	create_table("a_table");
+
+	repository->write_record(
+		"a_table", record::valid_record("1", std::string(scan::max_page_bytes + 1, 'v')));
+	repository->write_record("a_table", record::valid_record("2", "small"));
+
+	scan::page page = repository->scan_records("a_table", whole_table());
+
+	EXPECT_EQ(keys(page), (std::vector<std::string> { "1" }));
+	EXPECT_TRUE(page.has_more);
+}
+
+// Keys only is the whole saving on a table of large values: the values are never read, so they
+// are not what the page is weighed against either.
+TEST_F(repository_test, the_budget_weighs_the_values_a_scan_is_asked_for)
+{
+	create_table("a_table");
+
+	std::string value(2 * 1024 * 1024, 'v');
+
+	for (size_t i = 0; i < 6; i++)
+	{
+		repository->write_record("a_table", record::valid_record(std::to_string(i), value));
+	}
+
+	scan::range range = whole_table();
+
+	range.values = false;
+
+	scan::page page = repository->scan_records("a_table", range);
+
+	EXPECT_EQ(page.records.size(), 6u);
+	EXPECT_FALSE(page.has_more);
+}
+
 TEST_F(repository_test, scan_keys_without_their_values)
 {
 	create_table("a_table");

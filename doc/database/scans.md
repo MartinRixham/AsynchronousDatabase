@@ -33,7 +33,7 @@ is itself a JSON document arrives here escaped, and is the client's to parse.
 | `from` | Start here, **inclusive** |
 | `to` | Stop here, **exclusive** |
 | `reverse` | `true` walks the range from `to` back towards `from` |
-| `limit` | At most this many records. Default 100, maximum 1000 |
+| `limit` | At most this many records. Default 100, maximum 1000 — **and a page may be shorter**, see below |
 | `values` | `false` returns keys only |
 
 `from` inclusive and `to` exclusive is RocksDB's own convention, and it is the
@@ -42,6 +42,19 @@ with nothing dropped and nothing repeated.
 
 Omit both bounds and the scan is the whole table, which is a legitimate thing to
 ask for and an expensive one.
+
+**`limit` is a maximum and not a promise.** A page is bounded in bytes as well as
+in records — 8 MiB of keys and values — because a limit of a thousand says
+nothing about the size of a thousand records, and a value may be 16 MiB. A page
+that reaches the byte budget first ends there and carries a cursor, so a table of
+large values is paged rather than answered with a response the node would have to
+build in memory before it could send any of it. **Follow the cursor until there
+is none**, which is what a client should do anyway: a short page is not an
+exhausted range, and only the absence of a cursor is.
+
+A single record larger than the whole budget is still returned, alone, because a
+scan that could not carry the record in front of it would never get past that
+key.
 
 `values=false` is not a cosmetic saving. It lets the service iterate without
 fetching values, which for a table of large values is the difference between

@@ -115,6 +115,8 @@ scan::page repository::fake_repository::scan_records(const std::string &table_na
 		std::reverse(keys.begin(), keys.end());
 	}
 
+	size_t bytes = 0;
+
 	for (size_t i = 0; i < keys.size(); i++)
 	{
 		if (page.records.size() == range.limit)
@@ -122,6 +124,18 @@ scan::page repository::fake_repository::scan_records(const std::string &table_na
 			page.has_more = true;
 			break;
 		}
+
+		// The byte budget of scan::max_page_bytes, ended the same way the real store ends it, so
+		// that a test against this one sees the page a client would really be given.
+		size_t size = keys[i].size() + (range.values ? table_records.at(keys[i]).size() : 0);
+
+		if (!page.records.empty() && bytes + size > scan::max_page_bytes)
+		{
+			page.has_more = true;
+			break;
+		}
+
+		bytes += size;
 
 		page.records.push_back(
 			record::valid_record(keys[i], range.values ? table_records.at(keys[i]) : ""));
