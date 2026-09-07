@@ -1,12 +1,14 @@
 # Publishing
 
-Most of `build-and-push` is one decision — has this version passed the suite
-already? — and the two things that happen if it has not.
+Publishing is the first three steps of `deploy-and-verify`, after the login and
+before the stack: load the image the `build` job left as an artifact, push it to
+ECR, and write the tag to `/asyncdb/version`.
 
-There is one gate, read in two places: this page publishes the image for a
-version that has not passed, and [the deploy gate](/pipeline/#the-gate) stands
-the stack up for the same versions. The image is republished on every push until
-the version passes.
+**They are in that job because that is where the gate is.** There is one
+condition, `needs.build.outputs.verify`, and it is the `if:` on the job — so the
+publish is gated by being inside it, exactly as the suite below it is, and no
+step repeats the question. The image is republished on every push until the
+version passes.
 
 ## Why the registry is not the gate
 
@@ -21,9 +23,10 @@ then
 ```
 
 It cannot be the *deploy* gate, because [the stack pulls the image it tests out
-of ECR](/deployment/#parameters): the push comes first, so a published version is
-not yet a version that passed, and skipping the suite for anything already in the
-registry would skip it for a version whose first run went red.
+of ECR](/deployment/#parameters): the push comes first, in the same job, so a
+published version is not yet a version that passed, and skipping the suite for
+anything already in the registry would skip it for a version whose first run went
+red.
 
 It is a poor **publish** gate too. It would freeze the image at the first commit
 that carried the version, so on a red version:
@@ -50,7 +53,7 @@ the build that went green. What that asks of everybody is one thing — **do not
 pull a version that has no git tag**, because it is a version still being worked
 on, and neither its bytes nor its number mean anything yet.
 
-## The gate in this job
+## Where the gate is
 
 ```yaml
 - name: Check whether this version has passed already
@@ -64,20 +67,20 @@ on, and neither its bytes nor its number mean anything yet.
     fi
 ```
 
-The same step, the same output, and the same `ls-remote` that
-[gates the whole `deploy-and-verify` job](/pipeline/#the-gate) — see there
-for what it reads and how it fails. Two steps in *this* job hang off it as well:
+It runs in `build`, and its output is what
+[gates the whole `deploy-and-verify` job](/pipeline/#the-gate) — see there for
+what it reads and how it fails. The publish is two of that job's steps, and
+neither carries a condition of its own:
 
 ```yaml
 - name: Tag and push Docker image to ECR
-  if: steps.check_verified.outputs.verify == 'true'
   run: |
     IMAGE_URI=${{ steps.ecr-login.outputs.registry }}/asyncdb:$VERSION
+    docker load --input image.tar.gz
     docker tag asyncdb:latest $IMAGE_URI
     docker push $IMAGE_URI
 
 - name: Record published version in SSM
-  if: steps.check_verified.outputs.verify == 'true'
   run: |
     aws ssm put-parameter \
       --name /asyncdb/version \
@@ -86,22 +89,24 @@ for what it reads and how it fails. Two steps in *this* job hang off it as well:
       --overwrite
 ```
 
-The tag and the push are **one step**, and the gate does not notice a push that
-silently does nothing: it asks git, not the registry, so such a version is tested
-as whatever ECR happens to hold under that tag. If that is nothing, the instances
-have no container, the cluster never reaches six nodes and the run fails on the
-wait — which is the detection, and it is a coarse one.
+`docker load` is there because the image was built on the *other* job's runner
+and [travels as an artifact](/pipeline/#carrying-the-image); the load, the tag
+and the push are **one step**. The gate does not notice a push that silently does
+nothing: it asks git, not the registry, so such a version is tested as whatever
+ECR happens to hold under that tag. If that is nothing, the instances have no
+container, the cluster never reaches six nodes and the run fails on the wait —
+which is the detection, and it is a coarse one.
 
 **The `put-parameter` is the other half of publishing.** `/asyncdb/version` is
 what [the template resolves at deploy time](/deployment/#parameters), so this line
 and not the `docker push` is what decides which tag the next instance to launch
-will run — including the instances `deploy-and-verify` stands up three steps
-later, which is how the suite comes to test what this job just built.
+will run — including the instances `make create-stack` stands up two steps later,
+which is how the suite comes to test what the job above it built.
 
 ## Making the repository
 
 Neither ECR repository is a thing anybody creates by hand, and `asyncdb`'s is made
-by the step above the gate — `describe-repositories` or else `create-repository`,
+by the step before the push — `describe-repositories` or else `create-repository`,
 [as the mirror does for `etcd`](/pipeline/#making-the-repositories). It is what
 the `docker push` needs and nothing more.
 
@@ -109,8 +114,9 @@ the `docker push` needs and nothing more.
 
 1. Edit `version`. That is the release: nothing else in the repository names it,
    and the number is not read by the build, only by the workflow.
-2. Push to `master`. The image builds, the tests inside it run, and the image is
-   published to ECR and named in `/asyncdb/version`.
+2. Push to `master`. The image builds and the tests inside it run in `build`;
+   `deploy-and-verify` then publishes it to ECR and names it in
+   `/asyncdb/version`.
 3. The stack goes up, [the suite runs against
    it](/pipeline/#the-gate), and the commit is tagged `0.0.2` if all of it
    passed. A red run leaves the version published and untagged, so the next push
@@ -123,6 +129,6 @@ the `docker push` needs and nothing more.
    [replaced](/deployment/#rolling-out-a-new-version).
 
 Leaving `version` alone is a deliberate no-op release: the build still runs in
-full, and once that version has had one green run the publish steps and the whole
-`deploy-and-verify` job skip together, so the push costs the image build and no
-AWS at all.
+full, and once that version has had one green run the whole `deploy-and-verify`
+job is skipped — publish included — so the push costs the image build and no AWS
+at all.

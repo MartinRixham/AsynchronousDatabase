@@ -203,13 +203,14 @@ a larger share than the others.
 
 ## The version did not publish
 
-The build publishes **only if the tag in `version` does not already exist in
-ECR**. Leaving `version` unchanged makes CI a complete build whose result is
-thrown away, which is a no-op publish and not a failure.
+The push to ECR is in `deploy-and-verify`, which runs **only if the tag in
+`version` has not passed the suite already** — that is, only if the remote has no
+`{version}` git tag. Leaving `version` unchanged makes CI a complete build whose
+result is thrown away, which is a no-op publish and not a failure.
 
 | Symptom | Is |
 | --- | --- |
-| No new image, build green | `version` was not bumped |
+| No new image, build green | `version` was not bumped, so the publishing job was skipped |
 | Image pushed, commit not tagged | The workflow lacks `ssm:PutParameter` on `arn:aws:ssm:eu-west-2:*:parameter/asyncdb/*`. The write runs before the git tag |
 | Instances still on the old tag | Expected. Replace them — see above |
 
@@ -221,9 +222,9 @@ the tag.
 
 ## The build failed after the stack came up
 
-`deploy-and-verify` runs against the deployed stack, in order: wait for `/health` to
-name six nodes, then `newman`, then the Playwright journeys, then `perf/write.sh`
-and `perf/read.sh`. The stack is deleted afterwards **whether they passed or
+`deploy-and-verify` publishes the image and then runs against the stack it stands
+up with it, in order: wait for `/health` to name six nodes, then `newman`, then
+the Playwright journeys, then `perf/write.sh` and `perf/read.sh`. The stack is deleted afterwards **whether they passed or
 not**, so a failure leaves nothing running and nothing to inspect.
 
 | Step | A failure means |

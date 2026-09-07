@@ -1,13 +1,12 @@
 # The build pipeline
 
 `.github/workflows/build.yaml` is the push side of CI: one workflow, two jobs,
-twenty-eight steps, no matrix and no reusable workflow. `build-and-push` builds
-the Docker image and publishes it. `deploy-and-verify` then
-**stands the whole AWS stack up, runs every test that needs a running server
-against it, and deletes it again**. Both halves happen only for a version that
-has not passed that suite before, which is [the one
-gate](#the-gate) — and until it has, each push rewrites the version's
-image in ECR. The other half
+thirty steps, no matrix and no reusable workflow. `build` builds the Docker image
+and hands it on as an artifact. `deploy-and-verify` then **publishes it, stands
+the whole AWS stack up, runs every test that needs a running server against it,
+and deletes it again**. That second job happens only for a version that has not
+passed the suite before, which is [the one gate](#the-gate) — and until it has,
+each push rewrites the version's image in ECR. The other half
 of CI is `.github/workflows/pull-request.yaml`, which is
 [two jobs and no AWS at all](#the-pull-request-build).
 
@@ -18,51 +17,53 @@ of CI is `.github/workflows/pull-request.yaml`, which is
                  │  checkout   │  actions/checkout@v7, one commit deep
                  └──────┬──────┘
                  ┌──────┴──────┐
-                 │  AWS login  │  static keys, eu-west-2, then ECR login
-                 └──────┬──────┘
-                 ┌──────┴──────┐
                  │docker build │  ← cppcheck, the compile, gtest under valgrind, the UI
-                 └──────┬──────┘
-                 ┌──────┴──────┐
-                 │  make repo  │  create-repository asyncdb if it is not there
                  └──────┬──────┘
             ┌───────────┴───────────┐
             │  tag $VERSION on the  │  the gate — has this version already gone
             │        remote?        │  green all the way through?
-            └────┬─────────────┬────┘
-              yes│             │no
-                 │             ├─ docker push asyncdb:$VERSION  ← overwrites
-            (nothing)          └─ put-parameter /asyncdb/version
-                 │             │
-                 └──────┬──────┘
+            └───────────┬───────────┘
                  ┌──────┴──────┐
-                 │ mirror etcd │  unconditional — the gate does not reach it
+                 │ save image  │  docker save | gzip, then upload-artifact, kept a day
                  └──────┬──────┘
                         │
              ═══════════╪═══════════  job boundary: deploy-and-verify
                         │
             ┌───────────┴───────────┐
-            │    the same answer    │  needs.build-and-push.outputs.verify,
-            │                       │  carried across the job boundary
+            │    the same answer    │  needs.build.outputs.verify — the `if:` on the
+            │                       │  whole job, and on no step inside it
             └────┬─────────────┬────┘
               yes│             │no
-                 │        ┌────┴────────┐
-          (whole job      │create-stack │  and wait for /health to name six nodes
-           is skipped)    └────┬────────┘
-                          ┌────┴────────┐
-                          │   newman    │  the Postman collection
-                          │  playwright │  the browser journeys
-                          │    perf     │  write.sh then read.sh
-                          │    chaos    │  the FIS experiments, which break the stack
-                          └────┬────────┘
-                          ┌────┴────────┐
-                          │  git tag    │  $VERSION, pushed to origin — the one
-                          │             │  place it is tagged, and no `if:`, so
-                          │             │  only on a green run
-                          └────┬────────┘
-                          ┌────┴────────┐
-                          │delete-stack │  if: always() — a red run leaves nothing standing
-                          └─────────────┘
+                 │             │
+                 │        (whole job
+                 │         is skipped)
+          ┌──────┴──────┐
+          │  AWS login  │  static keys, eu-west-2, then ECR login
+          └──────┬──────┘
+          ┌──────┴──────┐
+          │ load, tag,  │  download-artifact, docker push asyncdb:$VERSION  ← overwrites
+          │    push     │  put-parameter /asyncdb/version
+          └──────┬──────┘
+          ┌──────┴──────┐
+          │ mirror etcd │  and put-parameter /asyncdb/etcd
+          └──────┬──────┘
+          ┌──────┴──────┐
+          │create-stack │  and wait for /health to name six nodes
+          └──────┬──────┘
+          ┌──────┴──────┐
+          │   newman    │  the Postman collection
+          │  playwright │  the browser journeys
+          │    perf     │  write.sh then read.sh
+          │    chaos    │  the FIS experiments, which break the stack
+          └──────┬──────┘
+          ┌──────┴──────┐
+          │  git tag    │  $VERSION, pushed to origin — the one
+          │             │  place it is tagged, and no `if:`, so
+          │             │  only on a green run
+          └──────┬──────┘
+          ┌──────┴──────┐
+          │delete-stack │  if: always() — a red run leaves nothing standing
+          └─────────────┘
 ```
 
 The interesting property of this pipeline is that **one question gates
@@ -70,10 +71,11 @@ everything that costs anything, and it is a question about the tests**. Every
 push to `master` runs the full image build —
 cppcheck, the C++ compile, the gtest suite under valgrind, eslint and vitest —
 whether or not anything will be published; a push that does not bump `version` is
-not a skipped build but a complete build whose image is thrown away. And the API
-collection, the browser journeys, the load runs and the chaos suite all happen
-**after** the push, against a stack the run created for them — which is why the
-git tag is at the end of them and not beside the push, and why the image tag they
+not a skipped build but a complete build whose image is thrown away. And the
+publish, the API collection, the browser journeys, the load runs and the chaos
+suite are all inside the job the gate stands in front of — so the push still
+comes **before** the tests that need a stack to run against, which is why the git
+tag is at the end of them and not beside the push, and why the image tag they
 tested has to be rewritable until then. See [the sharp edges](#sharp-edges).
 
 ## The gate
@@ -90,18 +92,19 @@ tested has to be rewritable until then. See [the sharp edges](#sharp-edges).
     fi
 ```
 
-<code v-pre>needs.build-and-push.outputs.verify == 'true'</code> is the condition on the whole
+<code v-pre>needs.build.outputs.verify == 'true'</code> is the condition on the whole
 `deploy-and-verify` job, which is why it is a job and not a run of steps: **a
 step added to it is gated by being in it**, rather than by somebody remembering
-to repeat the condition on it. The same output carries
-[the two publish steps](/pipeline/release#the-gate-in-this-job) in the job above.
+to repeat the condition on it. That is the only place the condition is written.
+[The publish](/pipeline/release#where-the-gate-is) is in that job for the same
+reason, and `build` above it has no `if:` on any of its six steps.
 
 The question it asks is deliberately about the **tests** and not about the
 registry, and it cannot be the other way round: the stack pulls the image it
-tests out of ECR, so the push comes three steps before anything is deployed, and
-a published version is not a version that passed. So the tag this reads is pushed
-nowhere near the push: [the step that pushes it](#recording-the-pass) is the last
-one before the teardown. **A `0.0.2` tag means the version passed**; that it was
+tests out of ECR, so the push is the first thing the job does after logging in,
+and a published version is not a version that passed. So the tag this reads is
+pushed nowhere near the push: [the step that pushes it](#recording-the-pass) is
+the last one before the teardown. **A `0.0.2` tag means the version passed**; that it was
 published is ECR's business and `/asyncdb/version`'s, and this workflow asks
 neither of them a question.
 
@@ -138,10 +141,10 @@ The consequences worth knowing:
   passed can have its image rewritten by a build of a later commit, which then
   has to pass the whole suite itself to be tagged. Still the safe direction for
   the suite, and not a free one.
-- **The gate keys on `version` alone.** `etcd-version` moves for its own reasons
-  and is [mirrored unconditionally](#mirroring-etcd), so bumping *it* without
-  bumping `version` publishes a new etcd tag that no run deploys against. Bump
-  `version` too, or delete the tag.
+- **The gate keys on `version` alone**, and [the etcd mirror](#mirroring-etcd) is
+  behind it. So bumping `etcd-version` without bumping `version` mirrors nothing
+  and leaves `/asyncdb/etcd` naming the old tag. Bump `version` too, or delete the
+  tag.
 
 ### Recording the pass
 
@@ -201,29 +204,33 @@ anything that needs a server, because nothing is deployed for a pull request.
 
 ## The jobs
 
-Two jobs on `ubuntu-latest`. `build-and-push` first, and its steps in order:
+Two jobs on `ubuntu-latest`. `build` first — six steps, no `if:` on any of them,
+and **no AWS credentials at all**:
 
 | Step | Does |
 | --- | --- |
-| Checkout code | `actions/checkout@v7`, default depth — one commit, and the credentials it persists are what lets the tag step push |
+| Checkout code | `actions/checkout@v7`, default depth — one commit |
+| Build Docker image | `docker build -t asyncdb:latest .` — [the image build](/pipeline/image) |
+| Read version | `cat version` into `$GITHUB_ENV` and the `version` output |
+| Check whether this version has passed already | `git ls-remote --tags origin refs/tags/$VERSION`, setting the `verify` output — [the gate](#the-gate) |
+| Save the image | `docker save asyncdb:latest \| gzip > image.tar.gz` |
+| Upload the image | `upload-artifact@v4` as `asyncdb-image`, `compression-level: 0` over an already gzipped tar, `retention-days: 1` — [below](#carrying-the-image) |
+
+Then `deploy-and-verify`, which `needs: build` and runs only when its `verify`
+output is `true`. It checks the repository out again — job outputs cross a job
+boundary, a workspace and a `$GITHUB_ENV` do not — and takes `$VERSION` from
+<code v-pre>needs.build.outputs.version</code>:
+
+| Step | Does |
+| --- | --- |
+| Checkout code | `actions/checkout@v7` again; the credentials it persists are what lets the tag step push |
 | Configure AWS credentials | `aws-actions/configure-aws-credentials@v6` with `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` from repository secrets, region `eu-west-2` |
 | Login to Amazon ECR | `aws-actions/amazon-ecr-login@v2`; its `outputs.registry` is the account's registry host, used by the push and by the mirror |
-| Build Docker image | `docker build -t asyncdb:latest .` — [the image build](/pipeline/image) |
-| Read version | `cat version` into `$GITHUB_ENV` |
+| Download the image | `download-artifact@v4`, which puts `image.tar.gz` back in the workspace |
 | Create the asyncdb repository | `aws ecr describe-repositories` or else `create-repository` — [below](#making-the-repositories) |
-| Check whether this version has passed already | `git ls-remote --tags origin refs/tags/$VERSION`, setting the `verify` output — [the gate](#the-gate) |
-| Tag and push Docker image to ECR | `docker tag` and `docker push`, only if `verify == 'true'` — [overwriting the tag](/pipeline/release#overwriting-the-tag) if this version has been published and not yet passed |
-| Record published version in SSM | `put-parameter /asyncdb/version`, only if `verify == 'true'` — this is what [the template resolves at deploy time](/deployment/#parameters) |
-| Mirror etcd into ECR | [below](#mirroring-etcd) — unconditional, and the one publish the version gate does not guard |
-
-Then `deploy-and-verify`, which `needs: build-and-push` and runs only when its
-`verify` output is `true`. It checks the repository out and configures the same
-credentials again — job outputs cross a job boundary, a workspace and a
-`$GITHUB_ENV` do not — and takes `$VERSION` from
-<code v-pre>needs.build-and-push.outputs.version</code>:
-
-| Step | Does |
-| --- | --- |
+| Tag and push Docker image to ECR | `docker load`, then `docker tag` and `docker push` — [overwriting the tag](/pipeline/release#overwriting-the-tag) if this version has been published and not yet passed |
+| Record published version in SSM | `put-parameter /asyncdb/version` — this is what [the template resolves at deploy time](/deployment/#parameters) |
+| Mirror etcd into ECR | [below](#mirroring-etcd) |
 | Deploy the stack | `make create-stack`, `wait stack-create-complete`, and the `Url` output into `$GITHUB_ENV`; sets the `created` output every later step keys off |
 | Wait for the cluster to come up | `/asyncdb/health` until `.nodes` is **six**, ninety attempts ten seconds apart |
 | Install newman, Run the API collection | [the Postman collection](https://github.com/MartinRixham/AsynchronousDatabase/tree/master/api) against `$URL/asyncdb` |
@@ -246,7 +253,7 @@ nothing makes them agree.
 ## Making the repositories
 
 Neither ECR repository is a thing anybody creates by hand. `asyncdb`'s is made
-by one step above the version gate:
+by the step before the push:
 
 ```bash
 aws ecr describe-repositories --repository-name asyncdb > /dev/null 2>&1 \
@@ -260,6 +267,39 @@ first there is nothing to do.
 **Where it sits does not matter.** Nothing between it and the push asks the
 registry a question, so this step is only what the `docker push` needs, and the
 mirror below creates its own repository beside its own push for the same reason.
+
+## Carrying the image
+
+The `docker build` is in `build` and the `docker push` is in `deploy-and-verify`,
+and a job gets its own runner, so the image is carried between them as an
+artifact:
+
+```yaml
+- name: Save the image
+  run: docker save asyncdb:latest | gzip > image.tar.gz
+
+- name: Upload the image
+  uses: actions/upload-artifact@v4
+  with:
+    name: asyncdb-image
+    path: image.tar.gz
+    compression-level: 0
+    retention-days: 1
+```
+
+`compression-level: 0` because the tar is gzipped already and the action would
+otherwise deflate it a second time for nothing. `retention-days: 1` because the
+only reader is the next job of the same run; what a released version is kept in
+is ECR.
+
+The save and the upload carry **no condition**, so a push on a version that has
+passed pays for them and throws them away with the image — a minute or so on top
+of a build that is minutes of C++ and valgrind. That is the price of the gate
+being written once, on the job.
+
+The alternative is building the image in `deploy-and-verify` instead, and it is
+worse: a push that deploys nothing would then run no build and no tests, and the
+image build is the only thing [that runs any](#what-ci-does-not-run).
 
 ## Mirroring etcd
 
@@ -294,11 +334,11 @@ for asyncdb applies to a tag nothing here builds. A mirrored tag is either the
 bytes quay.io published under it or nothing; there is no second commit that would
 have produced a better one. Two differences worth knowing:
 
-- **It is not guarded by `verify`.** The `version` gate decides whether *this
-  repository's* image is published; `etcd-version` moves for its own reasons and
-  usually never, so the two are asked separately. A push that publishes nothing
-  still leaves the registry and `/asyncdb/etcd` correct, which is what the
-  `make create-stack` two steps later depends on.
+- **It is in the gated job**, beside the asyncdb push, so it runs exactly when a
+  stack is about to pull the tag. `etcd-version` moves for its own reasons and
+  usually never, but a bump to it alone mirrors nothing and leaves
+  `/asyncdb/etcd` naming the old tag — so bump `version` with it, which is the
+  only thing that stands a stack up to run the new one anyway.
 - **It creates the repository**, the same way [the step above the version gate
   does for `asyncdb`](#making-the-repositories), and for the same reason: there
   is no reason to make a person create by hand a thing the build knows the name
@@ -351,9 +391,11 @@ Everything else in the repository is a thing a person runs:
 ## Secrets and permissions
 
 Two repository secrets, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: static,
-long-lived IAM user keys rather than an OIDC role the job assumes. **What they
-need is close to everything**, because the job does not only publish an image —
-it creates and deletes the stack:
+long-lived IAM user keys rather than an OIDC role the job assumes. **They are
+read by `deploy-and-verify` alone** — `build` configures no credentials, so a
+push on a version that has passed reaches AWS not at all. **What they need is
+close to everything**, because that job does not only publish an image — it
+creates and deletes the stack:
 
 | For | Needs |
 | --- | --- |
@@ -367,7 +409,8 @@ That is a wide key to hold statically in repository secrets, and moving it to an
 OIDC role the job assumes is the obvious improvement nobody has made.
 
 [The gate](#the-gate) needs no AWS permission at all: it is a
-`git ls-remote` on a remote the checkout already authenticated.
+`git ls-remote` on a remote the checkout already authenticated, which is what
+lets it be answered in the job that holds no key.
 
 The workflow declares no `permissions` block, so the `GITHUB_TOKEN` gets the
 repository's default, and **one** step needs `contents: write` to push a tag —

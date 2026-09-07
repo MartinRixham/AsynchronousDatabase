@@ -455,14 +455,16 @@ Built on [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum), not a m
 
 ## Release
 
-Pushing to `master` builds the Docker image, creates the ECR repository `asyncdb` if the account has
-none and, **only if the tag in the `version` file has not passed the suite already**, pushes it and
-writes that tag to the SSM parameter `/asyncdb/version`. It then mirrors the etcd tag `etcd-version`
-names into ECR if it is not there already and writes `/asyncdb/etcd` — unconditionally, whatever the
-version gate decided.
+Pushing to `master` builds the Docker image and uploads it as a workflow artifact. That first job,
+`build`, has no condition on any step and asks AWS nothing: it builds, reads `version`, answers the
+gate and hands the image on.
 
-**Everything that needs a running cluster is a second job, `deploy-and-verify`, and it runs once per
-version rather than once per push.** It `make create-stack`s the CloudFormation stack, waits for
+**Everything that publishes or costs anything is the second job, `deploy-and-verify`, gated as a
+whole on the tag in the `version` file not having passed the suite already, so it runs once per
+version rather than once per push.** It loads the artifact and pushes it to ECR, creating the
+repository `asyncdb` if the account has none, writes that tag to the SSM parameter
+`/asyncdb/version`, mirrors the etcd tag `etcd-version` names into ECR if it is not there already
+and writes `/asyncdb/etcd`. Then it `make create-stack`s the CloudFormation stack, waits for
 `/health` to name six nodes, runs the Postman collection against the stack's `Url` output with
 `newman`, then the Playwright journeys, then `perf/write.sh` and `perf/read.sh` against that same
 address, then `chaos/validate.sh` and `chaos/run.sh`, and `make delete-stack`s it again — whether they
@@ -471,11 +473,12 @@ leaves nothing running. The teardown deletes only a stack that same run created,
 by hand makes `create-stack` fail and is then left alone (`ClusterALB` is a fixed name, so there can
 only be one).
 
-**There is one gate, and it is the `{version}` git tag.** It carries the `docker push`, the
-`put-parameter` and the whole of `deploy-and-verify`, all on
-`git ls-remote --exit-code --tags origin refs/tags/$VERSION` finding nothing — and the tag is pushed
-by that job's last step before the teardown. That step carries no `if:` of its own, which is the
-whole mechanism: a step with no condition runs only when every step before it succeeded. So a
+**There is one gate, and it is the `{version}` git tag.** It is the `if:` on `deploy-and-verify`
+and nowhere else — no step repeats it, and a step added to that job is gated by being in it — on
+`git ls-remote --exit-code --tags origin refs/tags/$VERSION` finding nothing, carried across the job
+boundary as an output. The tag is pushed by that job's last step before the teardown. That step
+carries no `if:` of its own, which is the whole mechanism: a step with no condition runs only when
+every step before it succeeded. So a
 version that fails is published and retried on every push until it passes, and a version that has
 passed is neither republished nor stood up again — which is what keeps nine instances, an ALB and
 about $2.80 of FIS action-minutes off a push that only touched a comment. **A version tag means
@@ -484,9 +487,9 @@ passed, and never merely published**; the workflow asks git alone, and neither E
 
 **The image tag in ECR is therefore overwritten**, for as long as the version has not passed — the
 repository is created mutable, which is the default. It has to be: the stack pulls the image it
-tests out of ECR, so the push comes before the suite, and every commit carrying a red version has
-to be the one the suite then runs against. The window in which a version's bytes move is exactly
-the window before it passes, so **do not pull a version that has no git tag**.
+tests out of ECR, so the push is the first thing the deploy job does, and every commit carrying a
+red version has to be the one the suite then runs against. The window in which a version's bytes
+move is exactly the window before it passes, so **do not pull a version that has no git tag**.
 
 **Nothing is held outside the repository to make that work**: `git tag -l` is the list of versions
 that have been through the suite, and `git push --delete origin {version}` is how one is made to go
@@ -560,8 +563,8 @@ accepted, and pinning it is one parameter override away.
 **The etcd tag is written by hand in one place, `etcd-version`.** The build reads it, mirrors
 `quay.io/coreos/etcd:$ETCD_VERSION` into ECR if it is not there already, and writes
 `/asyncdb/etcd`, which the template's `EtcdVersion` parameter resolves — exactly the arrangement
-`version` and `/asyncdb/version` have for the asyncdb image. That step is **not** guarded by the
-version gate: a push that publishes nothing still leaves the registry and the parameter correct,
-because the two tags move for different reasons. `docker-compose.yml` names the same version
-against quay.io directly, because a laptop has an internet connection. `doc/pipeline/index.md` is
-the page.
+`version` and `/asyncdb/version` have for the asyncdb image. It sits in `deploy-and-verify` beside
+that push, so it runs when a stack is about to pull the tag and not otherwise: **bumping
+`etcd-version` alone mirrors nothing**, and wants a `version` bump with it. `docker-compose.yml`
+names the same version against quay.io directly, because a laptop has an internet connection.
+`doc/pipeline/index.md` is the page.
