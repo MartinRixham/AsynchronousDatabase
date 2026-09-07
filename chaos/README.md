@@ -1,8 +1,8 @@
 # Chaos
 
 The failure modes in [`doc/runbook`](../doc/runbook), injected into the deployed stack with the
-AWS Fault Injection Service and asserted on from outside. The runbook says what each fault looks
-like, what recovers by itself and what needs a hand; this is what checks that it still does.
+AWS CLI and asserted on from outside. The runbook says what each fault looks like, what recovers
+by itself and what needs a hand; this is what checks that it still does.
 
 It is a test suite and not a demonstration. Every experiment ends by asserting that what it
 broke came back, and an assertion that did not hold is a non-zero exit — which is what lets
@@ -12,18 +12,18 @@ broke came back, and an assertion that did not hold is a non-zero exit — which
 
 | Experiment | The failure mode | The fault |
 | --- | --- | --- |
-| `node-stops` | [A node does not answer](../doc/runbook/nodes.md), [an instance was replaced](../doc/runbook/nodes.md), [the rebuild](../doc/runbook/rebuild.md) | `aws:ec2:stop-instances`, one database node |
-| `zone-lost` | [A read needs one copy](../doc/runbook/index.md), [fewer zones than the deployment has](../doc/runbook/membership.md) | `aws:network:disrupt-connectivity`, scope `availability-zone` |
+| `node-stops` | [A node does not answer](../doc/runbook/nodes.md), [an instance was replaced](../doc/runbook/nodes.md), [the rebuild](../doc/runbook/rebuild.md) | `ec2:StopInstances`, one database node |
+| `zone-lost` | [A read needs one copy](../doc/runbook/index.md), [fewer zones than the deployment has](../doc/runbook/membership.md) | A network acl on the zone's subnet, denying the other zones' subnets |
 | `scan-loses-a-node` | [A scan fails while everything else works](../doc/runbook/nodes.md) | A `DOCKER-USER` rule rejecting what arrives for port 8080, one node **per zone** |
 | `etcd-unreachable` | [etcd cannot be reached](../doc/runbook/membership.md) — one node, cluster of one | A `DOCKER-USER` rule rejecting what the container sends to port 2379 |
-| `node-latency` | [A node that is up but wrong](../doc/runbook/nodes.md), [threads are all waiting](../doc/runbook/nodes.md) | `AWSFIS-Run-Network-Latency-Sources` toward the VPC |
-| `disk-fills` | [RocksDB returned an error](../doc/runbook/storage.md), [the disk is filling](../doc/runbook/storage.md) | `AWSFIS-Run-Disk-Fill`, the whole volume |
-| `etcd-quorum-lost` | [etcd has lost quorum](../doc/runbook/membership.md) | `aws:ec2:stop-instances`, two of the three members |
+| `node-latency` | [A node that is up but wrong](../doc/runbook/nodes.md), [threads are all waiting](../doc/runbook/nodes.md) | A `netem` qdisc delaying everything the host sends into the VPC |
+| `disk-fills` | [RocksDB returned an error](../doc/runbook/storage.md), [the disk is filling](../doc/runbook/storage.md) | `fallocate` over what is left of the root volume |
+| `etcd-quorum-lost` | [etcd has lost quorum](../doc/runbook/membership.md) | `ec2:StopInstances`, two of the three members |
 
-The order is the order they run in, and it is not arbitrary. The agentless faults come first
-because they need nothing of the instances themselves. `etcd-quorum-lost` is last because it is
-the only one that leaves the cluster having been *wrong about itself* rather than merely short
-of a node, and the pipeline deletes the stack next.
+The order is the order they run in, and it is not arbitrary. The three that need nothing of the
+instances themselves come first, because they run against a stack whose agent answers nobody.
+`etcd-quorum-lost` is last because it is the only one that leaves the cluster having been *wrong
+about itself* rather than merely short of a node, and the pipeline deletes the stack next.
 
 `node-stops` is the one to run if only one is run. It is the only test anywhere of
 [the rebuild](../doc/runbook/rebuild.md), and the rebuild is the only thing in the system that
@@ -37,7 +37,7 @@ nothing.
 
 ```bash
 make create-stack                    # or against the stack a build stood up
-make create-chaos-stack              # the role FIS assumes
+make create-chaos-stack              # the permission to inject a fault
 chaos/run.sh
 make delete-chaos-stack
 ```
@@ -64,26 +64,21 @@ deployment's own timings — a ten second lease, a sixty second load balancer he
 hundred second grace period — and `CHAOS_SETTLE` and `CHAOS_RECOVERY` are how much of each is
 allowed for.
 
-## The role, and the permission to use it
+## The permission to break things
 
-`chaos.yaml` is a stack of its own holding two things, and it is separate from
+`chaos.yaml` is a stack of its own holding one managed policy, and it is separate from
 `cloudformation.yaml` deliberately: neither of them is a thing to leave standing beside a
 database, and this way both are created for a run and deleted after it.
 
-| Resource | Is |
-| --- | --- |
-| `ChaosRole` | The role FIS assumes, with the three `AWSFaultInjectionSimulator*Access` managed policies on it |
-| `ChaosPolicy` | What lets the credentials **running the suite** drive FIS at all: the eleven `fis:` actions it uses, and `iam:PassRole` on `ChaosRole` alone, conditioned to `fis.amazonaws.com` |
+`ChaosPolicy` is what the suite injects with — stopping and starting an instance tagged `asyncdb`
+or `etcd`, writing a network acl, sending a Run Command, and suspending the etcd group's
+`ReplaceUnhealthy`. It attaches to the IAM groups named by the `Operators` parameter, which
+defaults to `builders`, the group holding the identity the pipeline runs as. Nothing else about
+the account grants the destructive half of that, which is deliberate: **outside a chaos run,
+nobody in this account can stop an instance of either tier or run a shell command on one.**
 
-`ChaosPolicy` attaches to the IAM groups named by the `Operators` parameter, which defaults to
-`builders` — the group holding the identity the pipeline runs as. Nothing else about the account
-grants FIS anything, which is deliberate: outside a chaos run, nobody in this account can start
-an experiment.
-
-`CHAOS_ROLE` overrides the role if it is managed somewhere else.
-
-The rest of what the suite needs — `ec2:DescribeInstances`, `ssm:SendCommand`,
-`autoscaling:SuspendProcesses` — the build's credentials already have.
+Only the stop and start are scoped by tag. The rest is `Resource: "*"`, because the stack
+standing at all is the grant, and it stands for a run.
 
 ## Validate before you run
 
@@ -91,64 +86,66 @@ The rest of what the suite needs — `ec2:DescribeInstances`, `ssm:SendCommand`,
 chaos/validate.sh
 ```
 
-Every experiment's template, created and deleted again, and nothing started. The service checks
-every action, parameter and target arn when a template is created, so this is the whole of
-"would this experiment run?" for two API calls each, no fault, and seconds — where finding the
-same mistake by running the suite is the length of the experiment that hits it. It needs the
-stack up, because the arns in a template name real instances and subnets.
+Every experiment's `preflight`, and no fault at all. A preflight resolves the instances, subnets
+and groups the experiment would break, dry runs the calls EC2 offers a dry run of, and asks
+Systems Manager whether the agent answers on the instances the fault would go through. It is the
+whole of "would this experiment run?" for a handful of API calls each, nothing applied, and
+seconds — where finding the same mistake by running the suite is the length of the experiment
+that hits it. It needs the stack up, because what a preflight resolves is real resources.
 
-It is worth running after any change to an experiment. Credentials that are not allowed to create
-a template, and `completeIfInstancesTerminated` without the `startInstancesAfterDuration` the
-service insists goes with it, are caught in seconds here rather than by a full run.
+It is worth running after any change to an experiment. A chaos stack that is not standing, an
+instance whose SSM agent never registered, and a group whose logical id moved are all caught in
+seconds here rather than by a full run.
 
 ## The faults that go in through SSM
 
-Four of the seven inject their fault with `aws:ssm:send-command`, and they run by default like
-the other three. The documents they run install what they need — `atd` for the rollback timer,
-`tc` for the latency — from the distribution's own repositories, which
+Four of the seven carry their fault onto the instance with `ssm:SendCommand` and the
+`AWS-RunShellScript` document, and they run by default like the other three. `node-latency`
+installs `tc` from the distribution's own repositories, which
 [the route out](../doc/deployment/network.md#the-route-out) is what makes reachable: an
 egress-only internet gateway is a route to the internet that opens outwards only and over IPv6
 only, so `dnf` reaches the Amazon Linux repositories and the SSM agent reaches Systems Manager
 over its dual-stack endpoint.
 
-The cost of that is paid in the deployment rather than here: **the faults depend on an instance
-being able to install a package while it is under test**, and a repository that does not answer is
-an experiment that fails at its precondition rather than an assertion that did not hold. FIS
-reports that as an experiment that `failed` with a reason, which the harness prints.
+The cost of that is paid in the deployment rather than here: **that one fault depends on an
+instance being able to install a package while it is under test**, and a repository that does not
+answer is an experiment that fails at its precondition rather than an assertion that did not
+hold. It fails there because `fault_await` waits for every invocation to be running the script
+before a single assertion is made — a command the service accepted is not a fault that landed.
 
-The other three need none of it, because the fault is a network access control list or an
-instance state that the service changes from outside. That is why they are still first.
+The other three need nothing of the instances at all, because the fault is a network acl or an
+instance state and both are written from outside. That is why they are still first.
 
-### Two of the four are a rule of our own
+### The shape of an SSM fault
 
-`node-latency` and `disk-fills` run `AWSFIS-Run-Network-Latency-Sources` and
-`AWSFIS-Run-Disk-Fill`. `scan-loses-a-node` and `etcd-unreachable` run `AWS-RunShellScript` and a
-script `blackhole_parameters` in [`harness.sh`](harness.sh) builds, because
-**`AWSFIS-Run-Network-Blackhole-Port` blocks nothing here**: it writes its rules into `INPUT` and
-`OUTPUT`, and asyncdb is a container behind a published port. Everything a peer sends it is
-translated and forwarded, so it goes through `FORWARD` and never `INPUT`; everything the container
-sends is forwarded too, and never `OUTPUT`. Both experiments ran the document, watched it report
-success, and asserted against a cluster in which nothing at all had happened — three nodes that
-were meant to be deaf answered a scan and refused none of the writes, and a node that was meant to
-have lost etcd renewed its lease throughout. `DOCKER-USER` is the chain docker leaves in `FORWARD`
-for exactly this, and it is the one a container's traffic passes through.
+Every one of the four sends the same script, built by `fault_script` in
+[`harness.sh`](harness.sh): write the removal down, arm a detached timer, install the fault, sleep,
+remove it. **Nothing here waits that sleep out.** `fault_stop` takes the fault away over a second
+Run Command as soon as the assertions are done, because waiting is every experiment after this one
+measuring this fault instead of its own. The sleep and the timer are for the run that died holding
+the fault, they are minutes long, and removing a fault that is already gone is nothing.
+
+The timer is detached with `setsid` rather than left to a trap, because there is no signal to trap:
+a Run Command that is cancelled runs no trap in the script it cancelled, and an instance that stops
+being asked anything is an instance still holding whatever was installed on it.
+
+### The deaf node is a rule of our own
+
+`scan-loses-a-node` and `etcd-unreachable` install a rule in `DOCKER-USER`, and it has to be that
+chain: asyncdb is a container behind a published port, so everything a peer sends it is translated
+and forwarded and goes through `FORWARD` and never `INPUT`, and everything the container sends is
+forwarded too and never `OUTPUT`. **A rule in `INPUT` or `OUTPUT` blocks nothing here** — the node
+would answer its peers throughout and every assertion would be made against a cluster in which
+nothing had happened. `DOCKER-USER` is the chain docker leaves in `FORWARD` for exactly this.
 
 The rule **rejects** rather than drops. A node waits thirty seconds on another node, so a dropped
 packet is a node that hangs and a reset is a node that does not answer, which is what these two
 are about — the copy that does answer is asked next, and `node-latency` is the experiment about
 waiting.
 
-**Both experiments take the rule out themselves**, with `blackhole_clear`, over the same Run
-Command the fault went in through. Cancelling a Run Command runs no trap in the script it
-cancelled, so the timers in that script — its own `sleep`, and a `setsid` of its own if it is
-killed outright — are what clear a rule a run died holding, and they are minutes long. Waiting for
-one of those is every experiment after this one measuring this fault instead of its own, which is
-what a rule left standing looks like: the membership is untouched, reads carry on, and every write
-and every table create fans out to a node that cannot be reached and answers `500`.
-
-`node-latency` needs none of this, because `tc` shapes the host's own interface and a container's
-traffic leaves through it like anything else. That is why it was the one SSM experiment that
-passed while the other three were asserting against faults that were never injected.
+`node-latency` needs none of that chain, because `tc` shapes the host's own device and a
+container's traffic leaves through it like anything else. Its qdisc goes on whatever the default
+route names, which is not `eth0` on an instance of this generation.
 
 ## What this does not cover
 
@@ -157,11 +154,11 @@ are not are worth naming so that nobody looks here for them:
 
 | Not covered | Why |
 | --- | --- |
-| [`Corruption` in RocksDB](../doc/runbook/storage.md) | Nothing in FIS damages a file. `aws:ebs:pause-io` is io2 Block Express and these are `gp3` root volumes |
+| [`Corruption` in RocksDB](../doc/runbook/storage.md) | Damaging a live SST under RocksDB is not a fault, it is a forgery, and what it proved would be about the bytes chosen |
 | [The store will not open](../doc/runbook/storage.md) | Two processes over one directory is a host-local lock conflict, not an infrastructure fault |
 | [A node in no zone](../doc/runbook/membership.md) | A metadata read that failed at boot. A configuration fault |
 | [`invalid_cursor`, `stale_leader`, `table_not_found`](../doc/runbook/errors.md) | Client-level. That is what [`api/`](../api) asserts |
-| [A delete during a rebuild](../doc/runbook/rebuild.md) | FIS can terminate the instance; the racing delete needs a harness timed against it |
+| [A delete during a rebuild](../doc/runbook/rebuild.md) | Terminating the instance is easy; the racing delete needs a harness timed against it |
 | [Everything about the release](../doc/runbook/deployment.md) | The version gate, the stack that will not create, the tag that never published. Not runtime faults |
 
 Two things it covers and reports rather than asserts. The first is that **a full disk breaks the
@@ -201,8 +198,6 @@ As in [`perf/`](../perf).
 | --- | --- | --- |
 | `CHAOS_EXPERIMENTS` | Which experiments, in what order | all seven |
 | `CHAOS_STACK` | The stack under test | `asyncdb` |
-| `CHAOS_ROLE_STACK` | The stack holding the FIS role | `asyncdb-chaos` |
-| `CHAOS_ROLE` | The role arn, instead of that stack's output | |
 | `CHAOS_URL` | The address to drive, instead of the stack's `Url` output | |
 | `CHAOS_TABLE` | The table the suite seeds and reads | `chaos` |
 | `CHAOS_RECORDS` | How many records it seeds | 200 |
@@ -213,32 +208,23 @@ As in [`perf/`](../perf).
 Each experiment has one or two of its own — the length of its fault, the size of its latency —
 named at the top of the script that uses it.
 
-**A duration is a ceiling, not the bill.** FIS charges per action-minute of an action that
-actually ran, and `fis_stop_now` takes each fault away as soon as that experiment's assertions are
-done rather than watching it expire — so five of the seven are billed for what they used. That is
-what lets the durations stay generous: a fault that expires mid-assertion is a *false failure*
-rather than a weaker test, because `scan-loses-a-node` asserts that a scan **fails** while a node
-is deaf and goes red if the node comes back early. Shortening one of those five saves nothing now.
+**A duration is a ceiling and nothing else.** A fault lasts until `fault_stop` takes it away,
+which is as soon as that experiment's assertions are done; the seconds an experiment names are
+what its script sleeps for if nothing ever comes back to remove it. That is what lets them stay
+generous — **a fault that expires mid-assertion is a *false failure* and not a weaker test**,
+because `scan-loses-a-node` asserts that a scan **fails** while a node is deaf and goes red if the
+node comes back early. Shortening one buys nothing: a fault costs no more for being allowed to
+last longer than the assertions take.
 
-A stopped experiment removes its own fault. The agentless actions undo what they installed and
-the `AWSFIS-Run-*` documents roll back when their command is cancelled; the two that install a
-`DOCKER-USER` rule delete it themselves afterwards, because cancelling `AWS-RunShellScript` runs
-no trap. None of it is taken on trust: the recovery assertion that every experiment runs
-immediately afterwards is the check that the fault went — and it has to be an assertion the fault
-would fail. `scan-loses-a-node` waits on a **write**, not on the membership: the membership is the
-one thing that fault never changes, and a recovery check that cannot fail is how three deaf nodes
-survive into the next experiment.
+Every fault removes itself, and none of it is taken on trust: the recovery assertion that every
+experiment runs immediately afterwards is the check that it went, **and it has to be an assertion
+the fault would fail**. `scan-loses-a-node` waits on a **write**, not on the membership: the
+membership is the one thing that fault never changes, and a recovery check that cannot fail is how
+three deaf nodes survive into the next experiment.
 
-**Two still pay their whole duration.** `node-stops` has no duration on its action at all — it
-completes when the instance stops, and is one action-minute whatever the assertions do.
-`etcd-quorum-lost` stays on `fis_await_end` deliberately: what starts the etcd members again is
-the action's own `startInstancesAfterDuration`, and whether an early stop honours it is not a
-thing to discover on the last experiment of a run. `CHAOS_ETCD_DURATION` is therefore a real
-duration rather than a ceiling, and the pipeline sets it to `PT3M`.
-
-A duration in seconds becomes the FIS action's own duration as `PT$((seconds / 60))M`, so **keep it
-a whole number of minutes**: 150 is a document told to run for 150 seconds inside an action billed
-and stopped at `PT2M`.
+`heal` runs from the exit trap as well as from the experiment, so a run that is killed holding a
+fault still takes it away — and every one of them is written to be safe run twice, or against a
+fault that never landed.
 
 ## Reading a run
 
@@ -248,7 +234,6 @@ and stopped at `PT2M`.
 
   PASS the stack is running six database nodes
   Stopping i-0a1b2c3d4e5f60718.
-  Experiment EXPabc123 from template EXTdef456.
   PASS the fault was injected
   PASS the stopped node left the membership and the zone count did not change
   ---- while the node was going away: 143 of 190 reads answered 2xx

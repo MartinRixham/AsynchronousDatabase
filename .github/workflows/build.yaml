@@ -199,20 +199,18 @@ jobs:
         REQUESTS=32 VALUE_BYTES=2097152 perf/write.sh
         REQUESTS=32 URL=$BASE/table/perf_load/key/0 perf/read.sh
 
-    - name: The chaos role
-      id: chaos_role
+    - name: The chaos permissions
+      id: chaos_policy
       if: steps.deploy.outputs.created == 'true'
       run: |
         make create-chaos-stack
         echo "created=true" >> $GITHUB_OUTPUT
         aws cloudformation wait stack-create-complete --stack-name asyncdb-chaos
 
-    - name: Validate the experiment templates
+    - name: Validate the experiments
       run: chaos/validate.sh
 
     - name: Run the chaos suite
-      env:
-        CHAOS_ETCD_DURATION: PT3M
       run: chaos/run.sh
 
     - name: Record that this version passed
@@ -224,8 +222,8 @@ jobs:
 
         echo "Version $VERSION has passed. Subsequent pushes on it will deploy nothing."
 
-    - name: Tear down the chaos role
-      if: always() && steps.chaos_role.outputs.created == 'true'
+    - name: Tear down the chaos permissions
+      if: always() && steps.chaos_policy.outputs.created == 'true'
       run: |
         make delete-chaos-stack
         aws cloudformation wait stack-delete-complete --stack-name asyncdb-chaos

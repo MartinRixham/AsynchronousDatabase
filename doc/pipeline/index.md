@@ -54,7 +54,7 @@ of CI is `.github/workflows/pull-request.yaml`, which is
           │   newman    │  the Postman collection
           │  playwright │  the browser journeys
           │    perf     │  write.sh then read.sh
-          │    chaos    │  the FIS experiments, which break the stack
+          │    chaos    │  the experiments, which break the stack   
           └──────┬──────┘
           ┌──────┴──────┐
           │  git tag    │  $VERSION, pushed to origin — the one
@@ -124,8 +124,8 @@ The consequences worth knowing:
   tag in ECR is frozen at the build that went green, and the git tag names the
   commit it was built from. Pushes that do not touch
   `version` — a comment, a README, a fix to a test that does not need a cluster —
-  cost the image build and nothing else, which is nine `t3.micro`, an ALB and
-  roughly $2.80 of FIS action-minutes a push that is never spent.
+  cost the image build and nothing else, which is nine `t3.micro` and an ALB a
+  push that is never spent.
 - **The gate fails open.** `--exit-code` is `0` for a ref that is there and `2`
   for one that is not, but a remote that cannot be reached at all is `128`, and
   the `else` branch takes that too. Unreachable reads as unverified and deploys,
@@ -236,11 +236,11 @@ boundary, a workspace and a `$GITHUB_ENV` do not — and takes `$VERSION` from
 | Install newman, Run the API collection | [the Postman collection](https://github.com/MartinRixham/AsynchronousDatabase/tree/master/api) against `$URL/asyncdb` |
 | Install the browser tests, Run the browser tests | Playwright with `ASYNCDB_URL=$URL`, and an `upload-artifact@v4` of the report `if: failure()` |
 | Run the load tests | `perf/write.sh` then `perf/read.sh`, eight threads, 250 requests |
-| The chaos role | `make create-chaos-stack` — the role FIS assumes, a stack of its own, with its own `created` output |
-| Validate the experiment templates | `chaos/validate.sh` — every template created and deleted again, nothing started |
+| The chaos permissions | `make create-chaos-stack` — the policy the suite injects with, a stack of its own, with its own `created` output |
+| Validate the experiments | `chaos/validate.sh` — every experiment's preflight, nothing applied |
 | Run the chaos suite | `chaos/run.sh` — the seven experiments, in order |
 | Record that this version passed | `git tag $VERSION` and `git push origin` — [above](#recording-the-pass), and the reason the next push on this version publishes and deploys nothing |
-| Tear down the chaos role | `make delete-chaos-stack`, `if: always()` — but only if this run created it |
+| Tear down the chaos permissions | `make delete-chaos-stack`, `if: always()` — but only if this run created it |
 | Stack events | `make describe-stack`, `if: failure()` |
 | What the nodes say for themselves | `if: failure()` — `docker logs` over SSM Run Command and `get-console-output`, per instance, every command best effort so that a diagnosis cannot fail the run |
 | Tear down the stack | `make delete-stack`, `if: always()` — but only if this run created it |
@@ -380,10 +380,10 @@ Everything else in the repository is a thing a person runs:
   load with anything but a 2xx.
 - `chaos/` — the last thing the deploy step's stack sees, and the only thing that
   breaks it on purpose. Each experiment injects one of
-  [the runbook's failure modes](/runbook/) with the Fault Injection Service and
-  asserts that the cluster behaves and then recovers the way that page says it
-  does. It runs after `perf/` so that nothing before it is measuring a cluster
-  something else has already broken, and the role FIS assumes is created and
+  [the runbook's failure modes](/runbook/) with the AWS CLI and asserts that the
+  cluster behaves and then recovers the way that page says it does. It runs
+  after `perf/` so that nothing before it is measuring a cluster something else
+  has already broken, and the permission to inject a fault at all is created and
   deleted around it rather than left standing.
 - `doc/` — this wiki is never built by either workflow, so a VitePress error or a
   broken link reaches `master` unnoticed.

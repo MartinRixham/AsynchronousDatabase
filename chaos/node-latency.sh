@@ -17,7 +17,10 @@
 # doc/runbook/membership.md#leadership-keeps-moving instead: renewals start failing, and
 # leadership moves every lease.
 #
-# The fault goes in through the SSM agent. See the note on the SSM faults in chaos/README.md.
+# The fault goes in through the SSM agent, as a netem qdisc on the device the default route
+# names. tc is not on the image, so the script installs it from the distribution repositories,
+# which is what makes this fault depend on the private subnets' route out. The note on the SSM
+# faults in chaos/README.md is the rest of it.
 
 source "$(dirname "$0")/harness.sh"
 
@@ -31,38 +34,26 @@ cidr=$(aws ec2 describe-vpcs --vpc-ids "$vpc" --query 'Vpcs[0].CidrBlock' --outp
 
 seconds=${CHAOS_SLOW_SECONDS:-240}
 delay=${CHAOS_LATENCY_MS:-1200}
+jitter=${CHAOS_JITTER_MS:-100}
 
-echo "  Adding ${delay}ms to everything $slow says to $cidr."
-
-cat > "$work/template.json" <<EOF
+inject()
 {
-	"description": "asyncdb chaos: one node is slow",
-	"roleArn": "$role",
-	"stopConditions": [ { "source": "none" } ],
-	"tags": { "Name": "asyncdb-chaos" },
-	"targets": {
-		"Node": {
-			"resourceType": "aws:ec2:instance",
-			"resourceArns": $(arns instance "$slow"),
-			"selectionMode": "ALL"
-		}
-	},
-	"actions": {
-		"latency": {
-			"actionId": "aws:ssm:send-command",
-			"parameters": {
-				"duration": "PT$((seconds / 60))M",
-				"documentArn": "arn:aws:ssm:$region::document/AWSFIS-Run-Network-Latency-Sources",
-				"documentParameters": "{\"Interface\":\"DEFAULT\",\"TrafficType\":\"egress\",\"DelayMilliseconds\":\"$delay\",\"JitterMilliseconds\":\"100\",\"Sources\":\"$cidr\",\"DurationSeconds\":\"$seconds\",\"InstallDependencies\":\"True\"}"
-			},
-			"targets": { "Instances": "Node" }
-		}
-	}
-}
-EOF
+	echo "  Adding ${delay}ms to everything $slow says to $cidr."
 
-fis_start "$work/template.json" || { verdict; exit 1; }
-fis_await_running || { verdict; exit 1; }
+	latency "$seconds" "$delay" "$jitter" "$cidr" "$slow"
+}
+
+heal()
+{
+	latency_clear "$slow"
+}
+
+preflight()
+{
+	may_run "$slow"
+}
+
+fault_start || { verdict; exit 1; }
 
 # The assertion this experiment exists for. A lease renewed every three seconds survives a
 # delay of about a second, so the cluster goes on believing this node is a copy worth sending
@@ -81,7 +72,7 @@ printf '  ---- a read through the load balancer now takes %ss\n' \
 	"$(curl --silent --output /dev/null --max-time 40 --write-out '%{time_total}' \
 		"$base/table/$table/key/1")"
 
-fis_stop_now
+fault_stop
 
 await '(.nodes | length) == 6 and (.zones | length) == 3' "$settle" \
 	"the membership never changed and is still six nodes in three zones"

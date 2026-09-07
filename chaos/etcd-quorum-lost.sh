@@ -39,39 +39,30 @@ group=$(aws cloudformation describe-stack-resource --stack-name "$stack" \
 	--logical-resource-id EtcdAutoScalingGroup \
 	--query 'StackResourceDetail.PhysicalResourceId' --output text)
 
-echo "  Stopping $stopped of the group $group."
-
-duration=${CHAOS_ETCD_DURATION:-PT4M}
-
-cat > "$work/template.json" <<EOF
+inject()
 {
-	"description": "asyncdb chaos: etcd loses quorum",
-	"roleArn": "$role",
-	"stopConditions": [ { "source": "none" } ],
-	"tags": { "Name": "asyncdb-chaos" },
-	"targets": {
-		"Members": {
-			"resourceType": "aws:ec2:instance",
-			"resourceArns": $(arns instance $stopped),
-			"selectionMode": "ALL"
-		}
-	},
-	"actions": {
-		"stop": {
-			"actionId": "aws:ec2:stop-instances",
-			"parameters": {
-				"startInstancesAfterDuration": "$duration",
-				"completeIfInstancesTerminated": "true"
-			},
-			"targets": { "Instances": "Members" }
-		}
-	}
-}
-EOF
+	if aws autoscaling suspend-processes --auto-scaling-group-name "$group" \
+		--scaling-processes ReplaceUnhealthy
+	then
+		result 0 "the group will not replace the members while they are stopped"
+	else
+		result 1 "the group will not replace the members while they are stopped"
+		return 1
+	fi
 
-restore()
+	echo "  Stopping $stopped of the group $group."
+
+	aws ec2 stop-instances --instance-ids $stopped > /dev/null
+}
+
+# The members are waited for rather than started and left: what comes next is the assertion that
+# the membership repopulated itself, and a member that is still booting is one that has not
+# answered a single renewal yet.
+heal()
 {
 	aws ec2 start-instances --instance-ids $stopped > /dev/null 2>&1
+
+	aws ec2 wait instance-running --instance-ids $stopped 2> /dev/null
 
 	aws autoscaling resume-processes --auto-scaling-group-name "$group" \
 		--scaling-processes ReplaceUnhealthy > /dev/null 2>&1
@@ -79,15 +70,13 @@ restore()
 	return 0
 }
 
-cleanup_hook=restore
+preflight()
+{
+	may_stop $stopped
+	may_suspend "$group"
+}
 
-aws autoscaling suspend-processes --auto-scaling-group-name "$group" \
-	--scaling-processes ReplaceUnhealthy \
-	&& result 0 "the group will not replace the members while they are stopped" \
-	|| result 1 "the group will not replace the members while they are stopped"
-
-fis_start "$work/template.json" || { verdict; exit 1; }
-fis_await_running || { verdict; exit 1; }
+fault_start || { verdict; exit 1; }
 
 # A node that cannot read a membership does not report one. That is the whole diagnosis, and it
 # is what tells this apart from a node that is merely slow.
@@ -111,13 +100,7 @@ printf '  ---- %s of 60 reads of seeded records answered something other than 2x
 
 echo "  Waiting for the members to come back."
 
-# fis_await_end and not fis_stop_now, which is the one place in the suite that still pays for a
-# fault it is no longer watching, and deliberately. What starts these members again is the
-# action's own startInstancesAfterDuration, and whether stopping the experiment early honours it
-# or leaves two etcd instances stopped is not a thing to find out on the last experiment of a run
-# against a stack the pipeline deletes next. CHAOS_ETCD_DURATION is therefore a real duration
-# here rather than a ceiling, and shortening it is what makes this one cheaper.
-fis_await_end $((recovery / 2))
+fault_stop
 
 # Both keys etcd holds for asyncdb are leased, so neither outlived the members that wrote them
 # and neither had to. The cluster writes itself back into an empty etcd within a lease.

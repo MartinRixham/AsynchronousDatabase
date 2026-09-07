@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >-
-  The role the Fault Injection Service assumes to break the asyncdb stack. It is a stack of its own,
-  created for a chaos run and deleted after it, because a role that can stop and terminate instances
-  is not a thing to leave standing beside a database.
+  The permission to break the asyncdb stack. It is a stack of its own, created for a chaos run and
+  deleted after it, because the permission to stop an instance and to run a shell command on one is
+  not a thing to leave standing beside a database. Nothing else in the account grants either, so
+  outside a chaos run nobody here can inject a fault.
 
 Parameters:
 
@@ -16,61 +17,67 @@ Parameters:
 
 Resources:
 
-  ChaosRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: fis.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSFaultInjectionSimulatorEC2Access
-        - arn:aws:iam::aws:policy/service-role/AWSFaultInjectionSimulatorNetworkAccess
-        - arn:aws:iam::aws:policy/service-role/AWSFaultInjectionSimulatorSSMAccess
-
   ChaosPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       Description: >-
-        Drive the Fault Injection Service, and pass it the role it assumes. Attached for as long as
-        the chaos stack stands and no longer.
+        Apply the faults chaos/ injects, and nothing else. Attached for as long as the chaos stack
+        stands and no longer.
       Groups: !Ref Operators
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: DriveTheService
+          - Sid: FindWhatToBreak
             Effect: Allow
             Action:
-              - fis:CreateExperimentTemplate
-              - fis:DeleteExperimentTemplate
-              - fis:GetExperimentTemplate
-              - fis:ListExperimentTemplates
-              - fis:StartExperiment
-              - fis:StopExperiment
-              - fis:GetExperiment
-              - fis:ListExperiments
-              - fis:ListActions
-              - fis:TagResource
-              - fis:UntagResource
+              - ec2:DescribeInstances
+              - ec2:DescribeSubnets
+              - ec2:DescribeVpcs
+              - ec2:DescribeNetworkAcls
+              - ssm:DescribeInstanceInformation
+              - ssm:ListCommandInvocations
+              - ssm:GetCommandInvocation
+              - autoscaling:DescribeAutoScalingGroups
             Resource: "*"
-          - Sid: PassTheRoleToIt
+
+          - Sid: StopTheStackAndStartItAgain
             Effect: Allow
             Action:
-              - iam:PassRole
-            Resource: !GetAtt ChaosRole.Arn
+              - ec2:StopInstances
+              - ec2:StartInstances
+            Resource: "*"
             Condition:
               StringEquals:
-                iam:PassedToService: fis.amazonaws.com
+                ec2:ResourceTag/Name:
+                  - asyncdb
+                  - etcd
+
+          - Sid: CutAZoneOff
+            Effect: Allow
+            Action:
+              - ec2:CreateNetworkAcl
+              - ec2:CreateNetworkAclEntry
+              - ec2:DeleteNetworkAcl
+              - ec2:ReplaceNetworkAclAssociation
+              - ec2:CreateTags
+            Resource: "*"
+
+          - Sid: CarryAFaultOntoAnInstance
+            Effect: Allow
+            Action:
+              - ssm:SendCommand
+              - ssm:CancelCommand
+            Resource: "*"
+
+          - Sid: HoldTheEtcdGroupStill
+            Effect: Allow
+            Action:
+              - autoscaling:SuspendProcesses
+              - autoscaling:ResumeProcesses
+            Resource: "*"
 
 Outputs:
 
-  ChaosRole:
-    Description: The role arn every experiment template names.
-    Value: !GetAtt ChaosRole.Arn
-
   ChaosPolicy:
-    Description: The policy that lets the credentials running the suite drive FIS.
+    Description: The policy that lets the credentials running the suite inject a fault.
     Value: !Ref ChaosPolicy

@@ -23,9 +23,9 @@
 #
 # This is the most invasive experiment in the suite — a full root volume is a docker daemon and
 # an SSM agent with nowhere to write either — and it fills the whole disk, because anything short
-# of the whole disk is not this failure at all. AWSFIS-Run-Disk-Fill's Percent is a percentage of
-# the disk and not of what is free on it, so only Percent 100 fills what is free. The fault goes
-# in through the SSM agent, as the note on the SSM faults in chaos/README.md describes.
+# of the whole disk is not this failure at all. CHAOS_DISK_PERCENT is a percentage of the disk
+# and not of what is free on it, so only 100 fills what is free. The fault goes in through the
+# SSM agent, as the note on the SSM faults in chaos/README.md describes.
 
 source "$(dirname "$0")/harness.sh"
 
@@ -38,34 +38,26 @@ full=$(instances asyncdb | cut -f1 | head -1)
 seconds=${CHAOS_DISK_SECONDS:-240}
 percent=${CHAOS_DISK_PERCENT:-100}
 
-echo "  Filling the disk on $full to $percent%."
-
-cat > "$work/template.json" <<EOF
+inject()
 {
-	"description": "asyncdb chaos: one node's disk fills",
-	"roleArn": "$role",
-	"stopConditions": [ { "source": "none" } ],
-	"tags": { "Name": "asyncdb-chaos" },
-	"targets": {
-		"Node": {
-			"resourceType": "aws:ec2:instance",
-			"resourceArns": $(arns instance "$full"),
-			"selectionMode": "ALL"
-		}
-	},
-	"actions": {
-		"fill": {
-			"actionId": "aws:ssm:send-command",
-			"parameters": {
-				"duration": "PT$((seconds / 60))M",
-				"documentArn": "arn:aws:ssm:$region::document/AWSFIS-Run-Disk-Fill",
-				"documentParameters": "{\"Percent\":\"$percent\",\"DurationSeconds\":\"$seconds\",\"InstallDependencies\":\"True\"}"
-			},
-			"targets": { "Instances": "Node" }
-		}
-	}
+	echo "  Filling the disk on $full to $percent%."
+
+	fill "$seconds" "$percent" "$full"
 }
-EOF
+
+# Taking the file away needs the agent on a node whose disk is full, which is the one thing this
+# fault makes unreliable. It is not the only way out: the script holding the fault removes the
+# file itself when its own sleep ends, and its timer removes it if the script is gone. The
+# recovery assertion below is what says which of the three got there.
+heal()
+{
+	fill_clear "$full"
+}
+
+preflight()
+{
+	may_run "$full"
+}
 
 # write_refusals <body file> <key prefix> — the number of thirty writes that were refused, with
 # every refusal's code and status kept in $work/refusals and every key that was taken kept in
@@ -127,8 +119,7 @@ documented()
 	fi
 }
 
-fis_start "$work/template.json" || { verdict; exit 1; }
-fis_await_running || { verdict; exit 1; }
+fault_start || { verdict; exit 1; }
 
 : > "$work/taken"
 
@@ -154,7 +145,7 @@ fi
 # A read does not write, and the record is in every zone.
 expect_reads 40 "every read is answered while one node cannot write"
 
-fis_stop_now
+fault_stop
 
 # A store that stopped for want of space does not notice the space coming back by itself: the
 # background error is sticky, and repository::rocksdb_repository::written is what resumes it, on

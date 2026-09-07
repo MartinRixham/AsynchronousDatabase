@@ -10,13 +10,13 @@
 # zone with a node that does not answer is a zone to give up on — and when every zone has one,
 # there is no zone left to give up to.
 #
-# It is also the state that is next to impossible to arrange by hand, which is the argument for
-# doing this with FIS at all: three targets, one instance each, filtered by availability zone.
+# It is also the state the deployment is least likely to reach by accident and the hardest to
+# arrange deliberately, which is why it is a test and not a paragraph: it needs one node in every
+# zone deaf at the same time, and it has to be deaf to its peers while it is still renewing.
 #
-# The fault goes in through the SSM agent, as a rule of our own in DOCKER-USER rather than one of
-# the AWSFIS documents — see blackhole_parameters in chaos/harness.sh for why a document that
-# blackholes a port leaves a containerised database answering. The note on the SSM faults in
-# chaos/README.md is the rest of it.
+# The fault goes in through the SSM agent, as a rule of our own in DOCKER-USER — see
+# blackhole_rule in chaos/harness.sh for why a rule in INPUT or OUTPUT leaves a containerised
+# database answering. The note on the SSM faults in chaos/README.md is the rest of it.
 
 source "$(dirname "$0")/harness.sh"
 
@@ -48,37 +48,24 @@ cidr=$(aws ec2 describe-vpcs --vpc-ids "$vpc" --query 'Vpcs[0].CidrBlock' --outp
 
 match="-p tcp --dport 8080 ! -d $cidr"
 
-echo "  Blackholing port 8080 into the container on $(echo "$deaf" | tr '\n' ' ')"
-
-cat > "$work/template.json" <<EOF
+inject()
 {
-	"description": "asyncdb chaos: one node in every zone stops answering",
-	"roleArn": "$role",
-	"stopConditions": [ { "source": "none" } ],
-	"tags": { "Name": "asyncdb-chaos" },
-	"targets": {
-		"Deaf": {
-			"resourceType": "aws:ec2:instance",
-			"resourceArns": $(arns instance $deaf),
-			"selectionMode": "ALL"
-		}
-	},
-	"actions": {
-		"blackhole": {
-			"actionId": "aws:ssm:send-command",
-			"parameters": {
-				"duration": "PT$((seconds / 60))M",
-				"documentArn": "arn:aws:ssm:$region::document/AWS-RunShellScript",
-				"documentParameters": $(blackhole_parameters "$seconds" "$match")
-			},
-			"targets": { "Instances": "Deaf" }
-		}
-	}
-}
-EOF
+	echo "  Blackholing port 8080 into the container on $(echo "$deaf" | tr '\n' ' ')"
 
-fis_start "$work/template.json" || { verdict; exit 1; }
-fis_await_running || { verdict; exit 1; }
+	blackhole "$seconds" "$match" $deaf
+}
+
+heal()
+{
+	blackhole_clear "$match" $deaf
+}
+
+preflight()
+{
+	may_run $deaf
+}
+
+fault_start || { verdict; exit 1; }
 
 # The whole difficulty of this failure mode: the node is not answering and is still a member,
 # because renewing a lease says nothing about being able to serve a request.
@@ -113,8 +100,7 @@ esac
 # writes in eight touch one, so this number is expected to be large.
 printf '  ---- %s of 20 writes were refused while three nodes were deaf\n' "$(write_check 20)"
 
-fis_stop_now
-blackhole_clear "$match" $deaf
+fault_stop
 
 # The membership is what this fault never touched — the assertion above is that it held at six
 # nodes and three zones throughout — so it is no recovery check here. A write is: it needs every

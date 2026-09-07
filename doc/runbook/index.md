@@ -125,11 +125,11 @@ rebuild covers an *empty* node, not a thin one.
 ## What checks that this page is still true
 
 `chaos/` is this runbook as a test suite. Each experiment injects one of the
-failure modes above into the deployed stack with the AWS Fault Injection
-Service — an instance stopped, an availability zone cut off, etcd's quorum taken
-away — and asserts that what happens is what the page for it says happens, and
-that what recovers by itself does. The build runs it after the load tests, so a
-page here that has gone out of date fails a release rather than an incident.
+failure modes above into the deployed stack with the AWS CLI — an instance
+stopped, an availability zone cut off, etcd's quorum taken away — and asserts
+that what happens is what the page for it says happens, and that what recovers
+by itself does. The build runs it after the load tests, so a page here that has
+gone out of date fails a release rather than an incident.
 
-Not everything on these pages is a fault an infrastructure service can inject.
+Not everything on these pages is a fault worth injecting from outside.
 `chaos/README.md` lists what it covers and what it deliberately does not.

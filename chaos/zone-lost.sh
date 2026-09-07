@@ -11,8 +11,8 @@
 # nodes in two zones, which is two whole copies of the keyspace.
 #
 # This is the claim at the top of the runbook, tested: every zone can be the one that is gone
-# and a record is still read. It is agentless — the fault is a network access control list the
-# service writes, and nothing is asked of the instances — which is why it works on a stack whose
+# and a record is still read. Nothing is asked of the instances — the fault is a network access
+# control list of the suite's own, on the subnet — which is why it works on a stack whose
 # instances have no route to anywhere.
 
 source "$(dirname "$0")/harness.sh"
@@ -50,33 +50,22 @@ remaining=$(curl --fail --silent --max-time 10 "$base/health" \
 	|| result 1 "the zone $zone holds too few nodes to be worth cutting off"
 echo "  Cutting off $subnet in $zone, which holds $(echo "$cut_off" | tr '\n' ' ')"
 
-duration=${CHAOS_ZONE_DURATION:-PT6M}
-
-cat > "$work/template.json" <<EOF
+inject()
 {
-	"description": "asyncdb chaos: one availability zone is cut off",
-	"roleArn": "$role",
-	"stopConditions": [ { "source": "none" } ],
-	"tags": { "Name": "asyncdb-chaos" },
-	"targets": {
-		"Zone": {
-			"resourceType": "aws:ec2:subnet",
-			"resourceArns": $(arns subnet "$subnet"),
-			"selectionMode": "ALL"
-		}
-	},
-	"actions": {
-		"disrupt": {
-			"actionId": "aws:network:disrupt-connectivity",
-			"parameters": { "duration": "$duration", "scope": "availability-zone" },
-			"targets": { "Subnets": "Zone" }
-		}
-	}
+	zone_cut "$subnet" "$zone"
 }
-EOF
 
-fis_start "$work/template.json" || { verdict; exit 1; }
-fis_await_running || { verdict; exit 1; }
+heal()
+{
+	zone_heal
+}
+
+preflight()
+{
+	may_write_acls
+}
+
+fault_start || { verdict; exit 1; }
 
 start_probe
 
@@ -107,15 +96,16 @@ expect "$(scan_status)" 200 "a scan falls back to a zone that is whole"
 # And a write needs every copy of the membership as it now stands, which is two.
 expect_writes 20 "every write is taken by the two zones that are left"
 
-# The isolated nodes are still reachable over Run Command, because the interface endpoints they
-# go through have an interface in their own subnet and the fault is between zones. What they say
-# about themselves is the cluster-of-one behaviour, reported rather than asserted: whether that
-# path survives the fault is the network's business and not the database's.
+# The isolated nodes are still reachable over Run Command: the interface endpoints they go
+# through have an interface in their own subnet, the fault is between zones, and the acl leaves
+# IPv6 alone, which is how they reach Systems Manager. What they say about themselves is the
+# cluster-of-one behaviour, reported rather than asserted: whether that path survives the fault
+# is the network's business and not the database's.
 for isolated in $cut_off; do
 	echo "  $isolated says: $(node_health "$isolated" | jq -c '{nodes, zones, leads}' 2> /dev/null)"
 done
 
-fis_stop_now $((recovery / 2))
+fault_stop
 
 await '(.zones | length) == 3 and (.nodes | length) == 6' "$recovery" \
 	"the zone rejoined and the third copy is back"

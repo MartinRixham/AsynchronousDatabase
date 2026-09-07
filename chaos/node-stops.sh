@@ -27,41 +27,23 @@ expect "$count" 6 "the stack is running six database nodes"
 [ "$count" = 6 ] || { verdict; exit 1; }
 
 victim=$(echo "$before" | head -1)
-echo "  Stopping $victim."
 
-# The action takes no parameters, and both of the ones it offers are wrong here. The group's
-# health check is EC2, so a stopped instance is an unhealthy one that it terminates and replaces
-# — which is the point of the experiment — and asking the service to start it again afterwards
-# races that: for as long as both exist the group is at seven instances, which is a zone with
-# three nodes in it and the next experiment's precondition broken. Stopping is the whole fault,
-# and what happens to the instance afterwards belongs to the group.
-
-cat > "$work/template.json" <<EOF
+# Stopping is the whole fault, and what happens to the instance afterwards belongs to the group:
+# its health check is EC2, so a stopped instance is an unhealthy one that it terminates and
+# replaces, which is the point of the experiment. Starting it again on a timer of our own would
+# race that — for as long as both exist the group is at seven instances, which is a zone with
+# three nodes in it and the next experiment's precondition broken.
+inject()
 {
-	"description": "asyncdb chaos: one database node stops",
-	"roleArn": "$role",
-	"stopConditions": [ { "source": "none" } ],
-	"tags": { "Name": "asyncdb-chaos" },
-	"targets": {
-		"Nodes": {
-			"resourceType": "aws:ec2:instance",
-			"resourceArns": $(arns instance "$victim"),
-			"selectionMode": "ALL"
-		}
-	},
-	"actions": {
-		"stop": {
-			"actionId": "aws:ec2:stop-instances",
-			"targets": { "Instances": "Nodes" }
-		}
-	}
-}
-EOF
+	echo "  Stopping $victim."
 
-# The group replaces a stopped instance, so the instance FIS stopped is one that may already be
-# gone by the time anything here reads it. Starting it again is best effort and for the case
-# the group did not: a stack left five nodes short is worse than a run that took longer.
-restore()
+	aws ec2 stop-instances --instance-ids "$victim" > /dev/null
+}
+
+# The group replaces a stopped instance, so the instance this stopped is one that may already be
+# gone by the time anything here reads it. Starting it again is best effort and for the case the
+# group did not: a stack left five nodes short is worse than a run that took longer.
+heal()
 {
 	local stopped
 
@@ -73,10 +55,12 @@ restore()
 	return 0
 }
 
-cleanup_hook=restore
+preflight()
+{
+	may_stop "$victim"
+}
 
-fis_start "$work/template.json" || { verdict; exit 1; }
-fis_await_running || { verdict; exit 1; }
+fault_start || { verdict; exit 1; }
 
 start_probe
 
@@ -142,9 +126,8 @@ expect_readable 40 5 "every seeded record can still be read once the replacement
 printf '  ---- reads once the replacement joined: %s\n' "$(codes)"
 expect_writes 20 "every write is taken once the replacement has joined"
 
-# fis_await_end and not fis_stop_now, and there is nothing to save by changing it: the action
-# carries no duration at all, so it completes as soon as the instance has stopped and is a single
-# action-minute however long the assertions above take.
-fis_await_end 120
+# The fault ended when the group terminated the instance, which is what the assertions above
+# waited for. This is the case it did not: an instance still sitting stopped is started again.
+fault_stop
 
 verdict

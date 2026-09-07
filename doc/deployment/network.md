@@ -75,10 +75,10 @@ there is nothing to translate: the addresses on the far side of it are the
 instance's own.
 
 **A route off the instance is what `chaos/` needs.** Four of its seven
-experiments inject their fault through the SSM agent, and the two that run an
-`AWSFIS-Run-*` document install `at` and `tc` from the distribution's
-repositories before they do anything, so without one four of
-[the runbook's](/runbook/) failure modes would have no test.
+experiments inject their fault through the SSM agent, and `node-latency`
+installs `tc` from the distribution's repositories before it does anything, so
+without one four of [the runbook's](/runbook/) failure modes would have no
+test.
 
 **It is also the cheap answer.** Six interface endpoints in three availability
 zones would be eighteen endpoint-hours an hour and
@@ -105,8 +105,8 @@ What goes over it, and what each thing had to be told to use it:
 | --- | --- | --- |
 | `aws ecr get-login-password` and `aws ec2 describe-instances` | `ecr.eu-west-2.api.aws`, `ec2.eu-west-2.api.aws` | `AWS_USE_DUALSTACK_ENDPOINT=true` in both user data scripts |
 | `docker pull` | `332187735950.dkr-ecr.eu-west-2.on.aws` | The registry name in `REGISTRY_URL`, which is [ECR's dual-stack form](https://docs.aws.amazon.com/AmazonECR/latest/userguide/ecr-requests.html) and not `dkr.ecr…amazonaws.com` |
-| The SSM agent — Session Manager, and the `AWSFIS-Run-*` documents | Systems Manager's dual-stack endpoints | `UseDualStackEndpoint` in `/etc/amazon/ssm/amazon-ssm-agent.json`, written by the user data before the agent is restarted |
-| `dnf`, which is what those documents install `at` and `tc` with | The Amazon Linux repositories in S3 | Nothing. On EC2 they are already the `s3.dualstack` names |
+| The SSM agent — Session Manager, and the Run Commands `chaos/` injects with | Systems Manager's dual-stack endpoints | `UseDualStackEndpoint` in `/etc/amazon/ssm/amazon-ssm-agent.json`, written by the user data before the agent is restarted |
+| `dnf`, which is what `node-latency` installs `tc` with | The Amazon Linux repositories in S3 | Nothing. On EC2 they are already the `s3.dualstack` names |
 
 **Every one of those had to be named differently.** An AWS service endpoint is
 IPv4-only unless it is asked for in its dual-stack form, so a stack whose only

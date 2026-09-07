@@ -2,16 +2,14 @@
 
 # Sourced by every experiment in this folder.
 #
-# An experiment here is four things: a fault the AWS Fault Injection Service applies to the
-# deployed stack, the assertions doc/runbook makes about what that fault looks like from
-# outside, a probe recording what a client saw while it ran, and a verdict. This file owns all
-# four, so that an experiment script is the fault and the assertions and nothing else.
+# An experiment here is four things: a fault applied to the deployed stack with the AWS CLI,
+# the assertions doc/runbook makes about what that fault looks like from outside, a probe
+# recording what a client saw while it ran, and a verdict. This file owns all four, so that an
+# experiment script is the fault and the assertions and nothing else.
 #
 # Everything is an environment variable, as in perf/. The defaults are the deployed stack:
 #
 #   CHAOS_STACK        the CloudFormation stack under test          asyncdb
-#   CHAOS_ROLE_STACK   the stack holding the FIS role               asyncdb-chaos
-#   CHAOS_ROLE         the role arn, if not taken from that stack
 #   CHAOS_URL          the address to drive, if not the Url output of the stack
 #   CHAOS_TABLE        the table the suite seeds and reads          chaos
 #   CHAOS_RECORDS      how many records it seeds                    200
@@ -28,7 +26,6 @@ set -m
 export LC_ALL=C
 
 stack=${CHAOS_STACK:-asyncdb}
-role_stack=${CHAOS_ROLE_STACK:-asyncdb-chaos}
 table=${CHAOS_TABLE:-chaos}
 records=${CHAOS_RECORDS:-200}
 settle=${CHAOS_SETTLE:-150}
@@ -42,12 +39,11 @@ onset=${CHAOS_ONSET:-20}
 lease=10
 
 work=$(mktemp -d)
+remove_script=/tmp/asyncdb-chaos-remove
 checks=0
 failures=0
-experiment=
-template=
+standing=0
 probe=
-cleanup_hook=
 
 # ---------------------------------------------------------------------------- the stack
 
@@ -59,11 +55,7 @@ setup()
 		command -v "$missing" > /dev/null || die "$missing is not installed."
 	done
 
-	account=$(aws sts get-caller-identity --query Account --output text) \
-		|| die "No AWS credentials."
-
-	region=$(aws configure get region)
-	region=${AWS_REGION:-${AWS_DEFAULT_REGION:-${region:-eu-west-2}}}
+	aws sts get-caller-identity > /dev/null || die "No AWS credentials."
 
 	url=${CHAOS_URL:-$(aws cloudformation describe-stacks --stack-name "$stack" \
 		--query "Stacks[0].Outputs[?OutputKey=='Url'].OutputValue" --output text 2> /dev/null)}
@@ -72,18 +64,12 @@ setup()
 
 	base=$url/asyncdb
 
-	role=${CHAOS_ROLE:-$(aws cloudformation describe-stacks --stack-name "$role_stack" \
-		--query "Stacks[0].Outputs[?OutputKey=='ChaosRole'].OutputValue" --output text 2> /dev/null)}
-
-	[ -n "${role:-}" ] && [ "$role" != None ] \
-		|| die "No FIS role. Run 'make create-chaos-stack', or set CHAOS_ROLE."
-
 	# The instances are found by tag inside this stack's own VPC rather than by tag alone, so a
 	# second stack in the account is never a target. Nothing else is taken from the template.
 	vpc=$(aws cloudformation describe-stack-resource --stack-name "$stack" \
 		--logical-resource-id VPC --query 'StackResourceDetail.PhysicalResourceId' --output text)
 
-	echo "Stack $stack at $url, vpc $vpc, role $role."
+	echo "Stack $stack at $url, vpc $vpc."
 }
 
 die()
@@ -103,31 +89,6 @@ instances()
 		--output text | sort
 }
 
-instance_arn()
-{
-	printf 'arn:aws:ec2:%s:%s:instance/%s' "$region" "$account" "$1"
-}
-
-subnet_arn()
-{
-	printf 'arn:aws:ec2:%s:%s:subnet/%s' "$region" "$account" "$1"
-}
-
-# A JSON array of arns, for pasting into an experiment template's resourceArns.
-arns()
-{
-	local kind=$1 first=1 id
-	shift
-
-	printf '['
-	for id in "$@"; do
-		[ "$first" = 1 ] || printf ', '
-		printf '"%s"' "$("${kind}_arn" "$id")"
-		first=0
-	done
-	printf ']'
-}
-
 # Run Command is how a private instance is asked anything: the runner is outside the VPC and
 # only the load balancer answers it, so a single node's own view of itself — which is the whole
 # diagnostic in doc/runbook — is unreachable over HTTP. It is best effort by design: an instance
@@ -137,9 +98,11 @@ ssm_run()
 	local id=$1 command
 	shift
 
+	jq -n --arg c "$*" '{ commands: [ $c ] }' > "$work/command.json"
+
 	command=$(aws ssm send-command --instance-ids "$id" \
 		--document-name AWS-RunShellScript \
-		--parameters "commands=[$(jq -Rn --arg c "$*" '$c')]" \
+		--parameters "file://$work/command.json" \
 		--query 'Command.CommandId' --output text 2> /dev/null) || return 1
 
 	aws ssm wait command-executed --command-id "$command" --instance-id "$id" 2> /dev/null
@@ -520,67 +483,187 @@ expect_not()
 
 # ---------------------------------------------------------------------------- the fault
 
-# blackhole_parameters <seconds> <iptables match> — the documentParameters of an
-# aws:ssm:send-command action that stops a node answering, for the two experiments that need one.
+# An experiment declares its fault as three functions, and this file owns when they run:
 #
-# It is a script of our own and not AWSFIS-Run-Network-Blackhole-Port, because that document writes
-# its rules into INPUT and OUTPUT and asyncdb is a container behind a published port: everything a
-# peer sends it is DNATed and forwarded, so it goes through FORWARD and never INPUT, and everything
-# the container sends is forwarded too and never OUTPUT — so the document reports success and
-# blocks nothing. DOCKER-USER is the chain docker leaves in FORWARD for exactly this.
+#   inject     applies the fault, and returns non-zero if it could not be applied
+#   heal       takes it away, and is safe to run twice or against a fault that never landed
+#   preflight  asks whether inject would work, without applying anything — chaos/validate.sh
+#
+# Every fault here is applied with the AWS CLI directly. Nothing is passed to a service that
+# would apply it on the suite's behalf, and nothing but heal takes one away, which is why heal
+# is called by the exit trap as well as by the experiment: a run that dies holding a fault is
+# a run that still removes it.
+
+# fault_start — apply the fault, or say why not.
+fault_start()
+{
+	# Validating is asking every question an experiment asks of the account and applying
+	# nothing: the targets are resolved, the permissions are dry run, and the script stops
+	# here. chaos/validate.sh is this mode over every experiment.
+	if [ "${CHAOS_VALIDATE:-0}" = 1 ]; then
+		preflight
+		verdict
+		exit $?
+	fi
+
+	# Standing before injected, not after. An inject that fails halfway has applied half a
+	# fault, and the half it applied is the half heal has to take away.
+	standing=1
+
+	if ! inject; then
+		result 1 "the fault was injected"
+		return 1
+	fi
+
+	result 0 "the fault was injected"
+
+	# An assertion made before the fault has landed is an assertion about nothing.
+	sleep "$onset"
+}
+
+# fault_stop — the assertions are done, so take the fault away rather than sit and watch its
+# own timer expire. Every experiment that calls this follows it with the recovery it asserts on,
+# which is the check that the fault actually went: none of it is taken on trust.
+fault_stop()
+{
+	[ "$standing" = 1 ] || return 0
+	standing=0
+
+	echo "  The assertions are done. Taking the fault away."
+	heal
+}
+
+# ---------------------------------------------------------------------------- faults over SSM
+
+# fault_script <seconds> <install> <remove> — the body of the AWS-RunShellScript command that
+# carries a fault onto an instance: install it, hold it, take it away.
+#
+# The detached timer is the only thing standing between a run that died and an instance left
+# holding a fault, because a cancelled Run Command runs no trap in the script it cancelled. It
+# is later than the fault itself and removing a fault that is already gone is nothing, so it
+# costs a run that ends properly nothing at all.
+#
+# **What ends a fault is fault_stop and not this script.** The timers here are minutes long: an
+# experiment that waited one out would leave every experiment after it measuring this fault.
+fault_script()
+{
+	local seconds=$1 install=$2 remove=$3
+
+	# The remove is written down before anything is installed and run from there by both the
+	# trap and the timer. Nesting it inside either as text is what breaks on the first quote it
+	# contains, and every fault here removes itself with a command substitution.
+	cat <<-SCRIPT
+	set -o errexit
+
+	cat > $remove_script <<'REMOVE'
+	$remove
+	REMOVE
+
+	setsid nohup bash -c "sleep $((seconds + 120)); bash $remove_script" > /dev/null 2>&1 &
+
+	trap 'bash $remove_script; exit 0' INT TERM
+
+	$install
+	echo injected
+
+	sleep $seconds
+
+	bash $remove_script
+	echo removed
+	SCRIPT
+}
+
+# fault_send <seconds> <install> <remove> <instance>... — one command to every instance at once,
+# and never waited for: the script it runs holds the fault for as long as the assertions need,
+# so a call that waited for it would outlast the experiment.
+fault_send()
+{
+	local seconds=$1 install=$2 remove=$3
+	shift 3
+
+	fault_script "$seconds" "$install" "$remove" \
+		| jq -Rs '{ commands: [ . ] }' > "$work/parameters.json"
+
+	aws ssm send-command --instance-ids "$@" \
+		--document-name AWS-RunShellScript \
+		--parameters "file://$work/parameters.json" \
+		--query 'Command.CommandId' --output text
+}
+
+# fault_await <command> <instance>... — every invocation has reached its instance and is running
+# the script. A send that answered is a command the service accepted and not a fault that landed:
+# an instance the agent has not registered leaves an invocation pending until it times out.
+fault_await()
+{
+	local command=$1 deadline=$((SECONDS + 300)) wanted=$(($# - 1)) statuses
+
+	while [ "$SECONDS" -lt "$deadline" ]; do
+		statuses=$(aws ssm list-command-invocations --command-id "$command" \
+			--query 'CommandInvocations[].Status' --output text 2> /dev/null)
+
+		case $statuses in
+			*Failed* | *TimedOut* | *Cancelled*)
+				echo "  Command $command is $statuses." >&2
+				return 1
+				;;
+		esac
+
+		# The invocations appear one at a time, so a count that is short is a list that
+		# is not finished rather than an instance that refused.
+		case $statuses in
+			*Pending* | *Delayed* | '') ;;
+			*)
+				[ "$(printf '%s' "$statuses" | wc -w)" = "$wanted" ] && return 0
+				;;
+		esac
+
+		sleep 5
+	done
+
+	echo "  Command $command is still ${statuses:-unreported} after five minutes." >&2
+	return 1
+}
+
+# ---------------------------------------------------------------------------- a deaf node
+
+# The rule the two experiments that need a node to stop answering install, and it is a rule of
+# our own rather than a document that blackholes a port, because asyncdb is a container behind a
+# published port: everything a peer sends it is DNATed and forwarded, so it goes through FORWARD
+# and never INPUT, and everything the container sends is forwarded too and never OUTPUT. A rule
+# in INPUT or OUTPUT blocks nothing here. DOCKER-USER is the chain docker leaves in FORWARD for
+# exactly this.
 #
 # It rejects rather than drops. A node waits thirty seconds on another node
 # (cluster::config::timeout_seconds), so a dropped packet is a node that hangs, and what these two
 # are about is a node that does not answer: a reset says so at once, the copy that does answer is
 # asked next, and node-latency is the experiment about waiting.
-#
-# **What ends the fault is blackhole_clear and not this script.** The timers here are what take the
-# rule out of a run that died holding it, and they are minutes long: an experiment that waited for
-# one would leave every experiment after it measuring this fault.
 blackhole_rule()
 {
 	printf '%s -j REJECT --reject-with tcp-reset' "$1"
 }
 
-blackhole_parameters()
+blackhole_remove()
 {
-	local seconds=$1 rule
-	rule=$(blackhole_rule "$2")
-
-	jq -n --arg script "$(cat <<EOF
-set -o errexit
-
-rule='$rule'
-
-remove()
-{
-	iptables -D DOCKER-USER \$rule 2> /dev/null || true
+	printf 'iptables -D DOCKER-USER %s 2> /dev/null || true' "$(blackhole_rule "$1")"
 }
 
-# What the AWSFIS documents use 'at' for: the rule comes out whatever becomes of this script,
-# including a kill that no trap sees. It is later than the fault, and removing a rule that is
-# already gone is nothing.
-setsid nohup bash -c "sleep $((seconds + 120)); iptables -D DOCKER-USER \$rule 2> /dev/null" \
-	> /dev/null 2>&1 < /dev/null &
+# blackhole <seconds> <iptables match> <instance>... — install it, and wait until it is installed.
+blackhole()
+{
+	local seconds=$1 match=$2 command
+	shift 2
 
-trap 'remove; exit 0' INT TERM
+	command=$(fault_send "$seconds" \
+		"iptables -I DOCKER-USER $(blackhole_rule "$match")" \
+		"$(blackhole_remove "$match")" "$@") || return 1
 
-iptables -I DOCKER-USER \$rule
-echo "injected: DOCKER-USER \$rule"
-
-sleep $seconds
-
-remove
-echo "removed: DOCKER-USER \$rule"
-EOF
-)" '{ commands: [ $script ] } | tojson'
+	fault_await "$command" "$@"
 }
 
-# blackhole_clear <iptables match> <instance> ... — take the rule out over Run Command, which is
-# how these two faults are actually ended. Cancelling a Run Command does not run the trap in the
-# script that installed the rule, so a stopped experiment leaves it standing until one of that
-# script's own timers expires — long after the assertions are done, and against everything that
-# runs next. Deleting a rule that is not there is nothing, so this is right whatever the trap did.
+# blackhole_clear <iptables match> <instance>... — take the rule out over Run Command, which is
+# how this fault is actually ended: the script that installed it is sleeping, and nothing but its
+# own timer would make it stop. Deleting a rule that is not there is nothing, so this is right
+# whatever became of that script.
 #
 # The agent answers a node that is deaf to its peers: a request the host makes to a published port
 # is translated on its way out of the host and never crosses FORWARD, which is where the rule is.
@@ -605,225 +688,305 @@ blackhole_clear()
 		[ "${answered:-}" = cleared ] \
 			|| echo "  $id is still holding the rule — ${answered:-it could not be asked}"
 	done
+
+	return 0
 }
 
-# fis_start <template file> — create the experiment template, start it, and remember both so
-# that the trap can stop and delete them whatever happens next.
-fis_start()
+# ---------------------------------------------------------------------------- a slow node
+
+# The device is read out of the default route rather than named: an instance of this generation
+# is ens5 and not eth0. A root qdisc on it delays what the container sends for the same reason
+# DOCKER-USER sees what the container sends — everything the host forwards leaves through the
+# device the route names — and tc is not on the image, so it comes from the distribution
+# repositories, which is what makes this fault depend on the private subnets' route out.
+latency_remove()
+{
+	printf 'tc qdisc del dev $(ip route show default | cut -d" " -f5) root 2> /dev/null || true'
+}
+
+# latency <seconds> <milliseconds> <jitter> <cidr> <instance> — everything the node says to the
+# cidr is delayed. Only egress is touched: a delay in each direction is twice the delay, and one
+# direction is enough to make a node slow.
+latency()
+{
+	local seconds=$1 delay=$2 jitter=$3 cidr=$4 instance=$5 command install
+
+	install=$(cat <<-INSTALL
+	dnf install --assumeyes --quiet iproute-tc > /dev/null 2>&1 || true
+
+	dev=\$(ip route show default | cut -d" " -f5)
+
+	tc qdisc add dev \$dev root handle 1: prio
+	tc qdisc add dev \$dev parent 1:3 handle 30: netem delay ${delay}ms ${jitter}ms
+	tc filter add dev \$dev protocol ip parent 1:0 prio 3 u32 match ip dst $cidr flowid 1:3
+	INSTALL
+	)
+
+	command=$(fault_send "$seconds" "$install" "$(latency_remove)" "$instance") || return 1
+	fault_await "$command" "$instance"
+}
+
+latency_clear()
+{
+	local id answered check
+
+	check='tc qdisc show dev $(ip route show default | cut -d" " -f5)'
+	check="$check | grep -q netem && echo present || echo cleared"
+
+	for id in "$@"; do
+		answered=$(ssm_run "$id" "$(latency_remove); $check")
+
+		[ "${answered:-}" = cleared ] \
+			|| echo "  $id is still holding the qdisc — ${answered:-it could not be asked}"
+	done
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------- a full disk
+
+# The percentage is of the disk and not of what is free on it, so only 100 fills what is free.
+#
+# fallocate takes the space without writing it, so thirty gigabytes go in a moment rather than in
+# the minutes a copy of them would take — and a fault that takes minutes to land is one the
+# assertions reach before it has. What fallocate cannot take is the reserve the filesystem keeps
+# back, which is megabytes, so a hundred per cent writes until the write fails as well: anything
+# short of a full volume is not this failure at all.
+fill_file=/var/asyncdb-chaos.fill
+
+fill_remove()
+{
+	printf 'rm -f %s %s.rest || true' "$fill_file" "$fill_file"
+}
+
+# fill <seconds> <percent> <instance>
+fill()
+{
+	local seconds=$1 percent=$2 instance=$3 command install
+
+	install=$(cat <<-INSTALL
+	total=\$(df --block-size=1 --output=size / | tail -1)
+	used=\$(df --block-size=1 --output=used / | tail -1)
+	avail=\$(df --block-size=1 --output=avail / | tail -1)
+
+	want=\$(( total * $percent / 100 - used ))
+	[ "\$want" -gt "\$avail" ] && want=\$avail
+
+	if [ "\$want" -gt 0 ]; then
+		fallocate --length "\$want" $fill_file 2> /dev/null || true
+	fi
+
+	if [ "$percent" -ge 100 ]; then
+		dd if=/dev/zero of=$fill_file.rest bs=1M 2> /dev/null || true
+	fi
+	INSTALL
+	)
+
+	command=$(fault_send "$seconds" "$install" "$(fill_remove)" "$instance") || return 1
+	fault_await "$command" "$instance"
+}
+
+fill_clear()
+{
+	local id answered check
+
+	check="{ [ -e $fill_file ] || [ -e $fill_file.rest ]; }"
+	check="$check && echo present || echo cleared"
+
+	for id in "$@"; do
+		answered=$(ssm_run "$id" "$(fill_remove); $check")
+
+		[ "${answered:-}" = cleared ] \
+			|| echo "  $id is still holding the fill — ${answered:-it could not be asked}"
+	done
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------- a zone cut off
+
+# zone_cut <subnet> <zone> — a network acl of the suite's own on that subnet, denying every other
+# zone's subnets and allowing what is left. That is the whole of "this zone cannot see the
+# others", and it is the one fault here that is not a call on an instance: nothing is asked of
+# the instances, so it works on a stack whose instances cannot be reached at all.
+#
+# What it replaced is written down before anything is replaced, because putting the association
+# back is the only way this fault goes away.
+zone_cut()
+{
+	local subnet=$1 zone=$2 acl rule=100 cidr others association original new
+
+	# Every other zone's subnets, public and private alike: the load balancer is in the public
+	# ones and the peers and etcd in the private.
+	others=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc" \
+		--query "Subnets[?AvailabilityZone!='$zone'].CidrBlock" --output text) || return 1
+
+	[ -n "$others" ] || { echo "  No subnets outside $zone to cut off." >&2; return 1; }
+
+	association=$(aws ec2 describe-network-acls \
+		--filters "Name=association.subnet-id,Values=$subnet" \
+		--query "NetworkAcls[].Associations[?SubnetId=='$subnet'].NetworkAclAssociationId" \
+		--output text) || return 1
+
+	original=$(aws ec2 describe-network-acls \
+		--filters "Name=association.subnet-id,Values=$subnet" \
+		--query "NetworkAcls[?Associations[?SubnetId=='$subnet']].NetworkAclId" \
+		--output text) || return 1
+
+	acl=$(aws ec2 create-network-acl --vpc-id "$vpc" \
+		--tag-specifications \
+			'ResourceType=network-acl,Tags=[{Key=Name,Value=asyncdb-chaos}]' \
+		--query 'NetworkAcl.NetworkAclId' --output text) || return 1
+
+	echo "$acl" > "$work/acl"
+
+	# A network acl is stateless and the lowest matching rule number wins, so the denials come
+	# first and the allow of everything else follows them. Nothing is implied: an acl denies
+	# what no rule of its own matched, so the allows have to be written.
+	for cidr in $others; do
+		aws ec2 create-network-acl-entry --network-acl-id "$acl" --rule-number "$rule" \
+			--protocol -1 --rule-action deny --cidr-block "$cidr" --ingress || return 1
+		aws ec2 create-network-acl-entry --network-acl-id "$acl" --rule-number "$rule" \
+			--protocol -1 --rule-action deny --cidr-block "$cidr" --egress || return 1
+
+		rule=$((rule + 10))
+	done
+
+	aws ec2 create-network-acl-entry --network-acl-id "$acl" --rule-number 900 \
+		--protocol -1 --rule-action allow --cidr-block 0.0.0.0/0 --ingress || return 1
+	aws ec2 create-network-acl-entry --network-acl-id "$acl" --rule-number 900 \
+		--protocol -1 --rule-action allow --cidr-block 0.0.0.0/0 --egress || return 1
+
+	# IPv6 is left alone, deliberately. A node addresses its peers and etcd by the private IPv4
+	# the user data read out of IMDS, so the cut is complete without it — and the instances keep
+	# the route out that Systems Manager answers on, which is what lets the isolated side still
+	# be asked what it thinks of itself while it is cut off.
+	aws ec2 create-network-acl-entry --network-acl-id "$acl" --rule-number 910 \
+		--protocol -1 --rule-action allow --ipv6-cidr-block ::/0 --ingress || return 1
+	aws ec2 create-network-acl-entry --network-acl-id "$acl" --rule-number 910 \
+		--protocol -1 --rule-action allow --ipv6-cidr-block ::/0 --egress || return 1
+
+	new=$(aws ec2 replace-network-acl-association --association-id "$association" \
+		--network-acl-id "$acl" --query NewAssociationId --output text) || return 1
+
+	printf '%s %s\n' "$new" "$original" > "$work/association"
+}
+
+# The association goes back first and the acl goes after it: an acl a subnet is still associated
+# with cannot be deleted. Deleting it is best effort — one left behind is tagged asyncdb-chaos
+# and associated with nothing — but putting the association back is not, and it is the recovery
+# assertion that says whether it worked.
+zone_heal()
+{
+	local new original
+
+	if [ -s "$work/association" ]; then
+		read -r new original < "$work/association"
+
+		aws ec2 replace-network-acl-association --association-id "$new" \
+			--network-acl-id "$original" > /dev/null 2>&1
+
+		: > "$work/association"
+	fi
+
+	if [ -s "$work/acl" ]; then
+		aws ec2 delete-network-acl --network-acl-id "$(cat "$work/acl")" > /dev/null 2>&1
+
+		: > "$work/acl"
+	fi
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------- the dry runs
+
+# What an experiment's preflight is made of. Each one answers a question a full run would take
+# minutes to reach, applies nothing, and costs one API call.
+
+# may_stop <instance>... — the dry run EC2 offers. It stops nothing and answers whether these
+# credentials could.
+may_stop()
 {
 	local answer
+	answer=$(aws ec2 stop-instances --dry-run --instance-ids "$@" 2>&1)
 
-	# What the service said is the diagnosis and there is nowhere else to read it: an experiment
-	# that never started leaves no experiment to ask about.
-	answer=$(aws fis create-experiment-template --cli-input-json "file://$1" \
-		--query 'experimentTemplate.id' --output text 2>&1)
-
-	if [ $? -ne 0 ]; then
-		result 1 "the experiment template was not created"
-		printf '  %s\n' "$answer"
-		[ "${CHAOS_VALIDATE:-0}" = 1 ] && { verdict; exit 1; }
-		return 1
-	fi
-
-	template=$answer
-
-	# Validating is creating the template and deleting it again: the service checks every
-	# action, parameter and target arn in it, and nothing is started, so it costs nothing and
-	# touches nothing. chaos/validate.sh is this mode over every experiment.
-	if [ "${CHAOS_VALIDATE:-0}" = 1 ]; then
-		result 0 "the experiment template is accepted by the service"
-		aws fis delete-experiment-template --id "$template" > /dev/null 2>&1
-		template=
-		verdict
-		exit $?
-	fi
-
-	answer=$(aws fis start-experiment --experiment-template-id "$template" \
-		--query 'experiment.id' --output text 2>&1)
-
-	if [ $? -ne 0 ]; then
-		result 1 "the experiment did not start"
-		printf '  %s\n' "$answer"
-		return 1
-	fi
-
-	experiment=$answer
-
-	echo "  Experiment $experiment from template $template."
+	case $answer in
+		*DryRunOperation*) result 0 "these credentials may stop $*" ;;
+		*) result 1 "these credentials may stop $* — $answer" ;;
+	esac
 }
 
-# Creating a template and deleting it again touches nothing and asks the service every question
-# that matters: whether these credentials may drive FIS at all, and whether they may pass the
-# role to it. Both are answered before an experiment has waited minutes to find out.
-preflight_fis()
+# may_write_acls — the same, for the one fault that writes a network acl.
+may_write_acls()
+{
+	local answer
+	answer=$(aws ec2 create-network-acl --dry-run --vpc-id "$vpc" 2>&1)
+
+	case $answer in
+		*DryRunOperation*) result 0 "these credentials may write a network acl in $vpc" ;;
+		*) result 1 "these credentials may write a network acl in $vpc — $answer" ;;
+	esac
+}
+
+# may_run <instance>... — Run Command has no dry run, and what actually fails is an instance
+# whose agent never registered, so this asks whether Systems Manager can see them at all.
+may_run()
+{
+	local online
+
+	online=$(aws ssm describe-instance-information \
+		--filters "Key=InstanceIds,Values=$(IFS=,; echo "$*")" \
+		--query 'length(InstanceInformationList[?PingStatus == `Online`])' \
+		--output text 2> /dev/null)
+
+	expect "${online:-0}" "$#" "the SSM agent answers on $*"
+}
+
+# may_suspend <group> — the one autoscaling call any experiment makes, which has no dry run
+# either. Reading the group is what says the name resolves and the credentials reach the service.
+may_suspend()
+{
+	local answer
+	answer=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$1" \
+		--query 'AutoScalingGroups[0].AutoScalingGroupName' --output text 2>&1)
+
+	expect "$answer" "$1" "the group $1 can be read, and so suspended"
+}
+
+# Breaking nothing, and asking the two questions every experiment here needs answered before one
+# of them has waited minutes to find out: whether these credentials may stop an instance, and
+# whether Run Command reaches one.
+preflight_chaos()
 {
 	local instance answer
 
 	instance=$(instances asyncdb | cut -f1 | head -1)
 
-	cat > "$work/preflight.json" <<EOF
-{
-	"description": "asyncdb chaos: preflight, never started",
-	"roleArn": "$role",
-	"stopConditions": [ { "source": "none" } ],
-	"tags": { "Name": "asyncdb-chaos" },
-	"targets": {
-		"Nodes": {
-			"resourceType": "aws:ec2:instance",
-			"resourceArns": $(arns instance "$instance"),
-			"selectionMode": "ALL"
-		}
-	},
-	"actions": {
-		"stop": {
-			"actionId": "aws:ec2:stop-instances",
-			"targets": { "Instances": "Nodes" }
-		}
-	}
-}
-EOF
+	[ -n "$instance" ] || { echo "No asyncdb instances in $vpc." >&2; return 1; }
 
-	answer=$(aws fis create-experiment-template --cli-input-json "file://$work/preflight.json" \
-		--query 'experimentTemplate.id' --output text 2>&1)
+	answer=$(aws ec2 stop-instances --dry-run --instance-ids "$instance" 2>&1)
 
-	if [ $? -ne 0 ]; then
-		printf '%s\n' "$answer" | sed 's/^/  /' >&2
+	case $answer in
+		*DryRunOperation*) ;;
+		*)
+			printf '%s\n' "$answer" | sed 's/^/  /' >&2
+			echo >&2
+			echo "The operator policy is part of chaos.yaml. If the chaos stack is not" >&2
+			echo "standing, 'make create-chaos-stack' attaches it, and it goes away with" >&2
+			echo "the stack." >&2
+			return 1
+			;;
+	esac
 
-		# The two ways this fails are not the same thing, and only one of them is about
-		# permissions. Saying so here saves reading an access denied that is not one.
-		case $answer in
-			*AccessDenied* | *not\ authorized*)
-				echo >&2
-				echo "The operator policy is part of chaos.yaml. If the chaos stack predates" >&2
-				echo "it, 'make update-chaos-stack' attaches it, and it goes away with the" >&2
-				echo "stack." >&2
-				;;
-			*)
-				echo >&2
-				echo "The credentials can reach the service, so this is the template and not" >&2
-				echo "the permissions." >&2
-				;;
-		esac
+	answer=$(aws ssm describe-instance-information \
+		--filters "Key=InstanceIds,Values=$instance" \
+		--query 'InstanceInformationList[0].PingStatus' --output text 2> /dev/null)
 
+	[ "$answer" = Online ] || {
+		echo "The SSM agent does not answer on $instance — it says ${answer:-nothing}." >&2
+		echo "Four of the seven experiments inject through it." >&2
 		return 1
-	fi
-
-	aws fis delete-experiment-template --id "$answer" > /dev/null 2>&1
-}
-
-fis_status()
-{
-	aws fis get-experiment --id "$experiment" --query 'experiment.state.status' --output text
-}
-
-fis_reason()
-{
-	aws fis get-experiment --id "$experiment" --query 'experiment.state.reason' --output text
-}
-
-# An assertion made before the fault is applied is an assertion about nothing. FIS reports
-# running once every action has started, and the fault itself lands a moment after that.
-fis_await_running()
-{
-	local deadline=$((SECONDS + 300)) state
-
-	while [ "$SECONDS" -lt "$deadline" ]; do
-		state=$(fis_status)
-
-		case $state in
-			running | completed)
-				result 0 "the fault was injected"
-				sleep "$onset"
-				return 0
-				;;
-			failed | stopped)
-				result 1 "the fault was injected — $state: $(fis_reason)"
-				return 1
-				;;
-		esac
-
-		sleep 5
-	done
-
-	result 1 "the fault was injected — still $(fis_status) after five minutes"
-	return 1
-}
-
-fis_await_end()
-{
-	local deadline=$((SECONDS + ${1:-900})) state
-
-	while [ "$SECONDS" -lt "$deadline" ]; do
-		state=$(fis_status)
-
-		case $state in
-			completed) echo "  The fault has been removed."; return 0 ;;
-			stopped | failed) echo "  The experiment $state: $(fis_reason)"; return 1 ;;
-		esac
-
-		sleep 10
-	done
-
-	echo "  The experiment is still $(fis_status)."
-	return 1
-}
-
-# fis_stop_now [timeout] — the assertions are done, so take the fault away rather than sit and
-# watch it expire. Every experiment that calls this follows it with the recovery it asserts on.
-#
-# **This is what makes a duration a ceiling rather than the bill.** FIS charges per action-minute of
-# an action that actually ran, so an experiment stopped two minutes into a six minute template is
-# billed for two, where fis_await_end below pays the whole six. The durations stay long because a
-# fault that expires mid-assertion is a false failure, and cost nothing to keep long.
-#
-# A stopped experiment removes its own fault, and never by being waited out — except for a rule
-# blackhole_parameters installed. The agentless actions undo what they installed and the
-# AWSFIS-Run-* documents roll back when their command is cancelled; cancelling AWS-RunShellScript
-# runs no trap, so the two experiments that use it follow this call with blackhole_clear. Nothing
-# here takes any of that on trust: the recovery assertion after every call is the check.
-fis_stop_now()
-{
-	local deadline state
-
-	if [ -z "$experiment" ]; then
-		echo "  There is no experiment to stop."
-		return 0
-	fi
-
-	echo "  The assertions are done. Stopping the fault rather than waiting it out."
-
-	# It can have ended on its own between the last assertion and here, which is not a failure, so
-	# watch for the end.
-	if ! aws fis stop-experiment --id "$experiment" > /dev/null 2>&1; then
-		echo "  It could not be stopped, so waiting for it to end instead."
-		fis_await_end "${1:-300}"
-		return $?
-	fi
-
-	deadline=$((SECONDS + ${1:-300}))
-
-	while [ "$SECONDS" -lt "$deadline" ]; do
-		state=$(fis_status)
-
-		case $state in
-			stopped | completed) echo "  The fault has been removed — $state."; return 0 ;;
-			failed) echo "  The experiment failed: $(fis_reason)"; return 1 ;;
-		esac
-
-		sleep 5
-	done
-
-	echo "  The experiment is still $(fis_status)."
-	return 1
-}
-
-fis_finish()
-{
-	[ -n "$experiment" ] && aws fis stop-experiment --id "$experiment" > /dev/null 2>&1
-	[ -n "$template" ] && aws fis delete-experiment-template --id "$template" > /dev/null 2>&1
-
-	experiment=
-	template=
+	}
 }
 
 # ---------------------------------------------------------------------------- the verdict
@@ -833,9 +996,12 @@ cleanup()
 	local status=$?
 
 	stop_probe
-	fis_finish
 
-	[ -n "$cleanup_hook" ] && "$cleanup_hook"
+	# The fault is taken away here as well as by the experiment, because an experiment that died
+	# holding one never reached its own fault_stop. It is a no-op when the fault has already
+	# gone, and $work is still standing, which is where a fault's own record of what it replaced
+	# is kept.
+	fault_stop
 
 	rm -rf "$work"
 

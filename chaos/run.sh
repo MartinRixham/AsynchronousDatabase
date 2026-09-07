@@ -14,10 +14,10 @@ source "$(dirname "$0")/harness.sh"
 
 here=$(dirname "$0")
 
-# Agentless first, because they need nothing of the instances themselves and so run anywhere.
-# The four that go in through the SSM agent follow. And etcd losing quorum is last, because it
-# is the only one that leaves the cluster having been wrong about itself rather than merely
-# short of a node.
+# The three that need nothing of the instances themselves are first, because they run against a
+# stack whose agent answers nobody. The four that go in through the SSM agent follow. And etcd
+# losing quorum is last, because it is the only one that leaves the cluster having been wrong
+# about itself rather than merely short of a node.
 default="node-stops zone-lost scan-loses-a-node etcd-unreachable node-latency disk-fills etcd-quorum-lost"
 
 experiments=${CHAOS_EXPERIMENTS:-$default}
@@ -31,7 +31,7 @@ whole()
 	health_matches '(.nodes | length) == 6 and (.zones | length) == 3 and (.write_stalled | not)' 6
 }
 
-preflight_fis || exit 1
+preflight_chaos || exit 1
 
 if whole; then
 	echo "Six nodes in three zones, nothing stalled. Starting."
