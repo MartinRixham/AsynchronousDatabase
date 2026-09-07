@@ -97,6 +97,8 @@ come up and pull nothing.**
 | `BaseAmi` | `/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id` | A **public** parameter of AWS's, resolved at deploy time to the image both tiers launch from |
 | `Version` | `/asyncdb/version` | An SSM parameter of this account's, resolved at deploy time to the asyncdb tag the database instances pull |
 | `EtcdVersion` | `/asyncdb/etcd` | The same, for the etcd tag the etcd instances pull out of this account's registry |
+| `Nodes` | `6` | How many database instances the group runs, which is [how many ways each zone splits its copy](/deployment/database#the-two-parameters-that-are-the-shape). 3, 6 or 9 |
+| `Zones` | `3` | How many availability zones the database tier spans, which is **how many copies of the keyspace there are**. 2 or 3 |
 
 `BaseAmi` is the **ECS-optimised Amazon Linux 2023** image, and the
 ECS-optimised part is used **for Docker, not for ECS**: there is no ECS cluster
@@ -160,11 +162,12 @@ on every push and not only on a release.
   precondition only for a stack stood up before CI has ever run against the
   account.
 - **The image tag itself**, pushed under that name. An instance that cannot pull
-  simply has no container: `docker run` fails, the load balancer takes the
-  instance out of service on the health check, and the group, whose health check
-  is `ELB`, replaces it — with the same tag, so an instance that cannot pull is
-  replaced by another that cannot either, and the load balancer answers 502 for
-  as long as that lasts.
+  simply has no container: `docker run` fails and the load balancer takes the
+  instance out of service on the health check. The group's health check is
+  [`EC2`](/runbook/deployment#the-group-does-not-replace-a-failed-application), so
+  it does not replace it either — the instance sits there running nothing until
+  a hand terminates it, and the load balancer answers 502 for as long as no
+  instance has a container.
 
 ## The image the instances pull
 
@@ -229,10 +232,10 @@ It is a small template, and it is worth being plain about where it stops.
 - **There is no HTTPS.** The listener is HTTP on port 80, in and out. There is
   no certificate, no redirect and no `Scheme: internal` anywhere: everything the
   API carries crosses the internet in the clear.
-- **Nothing scales anything.** The application group is `DesiredCapacity: 6`
-  between 1 and 7 with no scaling policy, no alarm and no target tracking, and
-  the etcd group is 3 pinned between 1 and 3. The bounds are there for a hand to
-  move — and growing the group is
+- **Nothing scales anything.** The application group takes its capacity from
+  the `Nodes` parameter, 6 by default, with no scaling policy, no alarm and no
+  target tracking, and the etcd group is 3 pinned between 1 and 3. The parameter
+  is there for a hand to move — and growing the group is
   [a thing to do deliberately](/database/cluster#what-this-is-not), because a
   key that changes owner is a key the new owner does not have.
 - **Losing two etcd instances at once is still a hand on the keyboard.** A group

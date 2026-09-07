@@ -151,10 +151,11 @@ Set neither of the first two and the instance would be
 [what it was before](/database/cluster#turning-it-on): one process owning the
 whole keyspace, talking to nothing.
 
-There is no `docker run --restart`, so a container that stops does not come back
-on its own. The instance is replaced for it, because the group's health check is
-`ELB` and the container is the only thing that answers the path the load balancer
-asks for.
+The container runs `--restart always`, so one that exits comes back by itself
+and reopens what the last one wrote: the store is the host's `/var/lib/asyncdb`
+and not the container's. What that does not cover is an instance that never got a
+container at all: the group's
+[health check is `EC2`](#the-auto-scaling-group), and it leaves that one running.
 
 ## The root volume
 
@@ -196,10 +197,10 @@ persistent, and it is not the instance-local NVMe a write-heavy store would want
 
 ## The auto scaling group
 
-`AutoScalingGroup` spans all three **private** subnets, launches from the launch
-template at `LatestVersionNumber`, registers into `ALBTargetGroup`, and is
-`DesiredCapacity: 6` between `MinSize: 1` and `MaxSize: 7`. It carries a
-`DependsOn` naming `PrivateRoute`, because
+`AutoScalingGroup` spans the **private** subnets, launches from the launch
+template at `LatestVersionNumber`, registers into `ALBTargetGroup`, and takes its
+capacity from `Nodes`, which is 6. It carries a `DependsOn` naming
+`PrivateRoute`, because
 [the pull and the etcd discovery both go out over it](/deployment/network#the-route-out)
 and nothing in the launch template says so.
 
@@ -208,27 +209,61 @@ group balances its capacity across the subnets it is given, so six instances
 over three subnets is two in each. That is the whole of the arrangement —
 [three copies of the keyspace, each split in half](/database/cluster#one-copy-in-every-zone)
 — and it is arrived at by counting instances rather than by configuring
-anything. `MaxSize` is one above the desired capacity so that a replacement can
-launch before the instance it replaces goes; **capacity is worth moving three at
-a time**, one per zone, so that no zone is left holding a larger share than the
-others.
+anything.
 
-Three, spread over three subnets, is one instance per availability zone. The
-bounds allow a fourth for a replacement to come up before an old one goes, and
-allow the group to be taken down to one by hand, but nothing moves it on its
-own: there is no scaling policy and no alarm in the template.
+## The two parameters that are the shape
 
-`HealthCheckType` is `ELB` rather than the default `EC2`, so the group replaces
-an instance whose *application* has failed and not only one whose *instance* has:
-an instance whose pull failed, or whose container exited, is one the load balancer
-has already stopped sending traffic to, and the group now takes it out too.
+The arrangement has exactly two dimensions, and each of them is one parameter:
+
+| | Is | Values |
+| --- | --- | --- |
+| `Zones` | How many availability zones the group is given, which is **how many copies of the keyspace there are** — a zone holds exactly one | 2 or 3, default 3 |
+| `Nodes` | How many instances the group runs, which is **how many ways a zone splits the copy it holds** | 3, 6 or 9, default 6 |
+
+Neither is read by anything running on an instance. `Zones` is the number of
+subnets in `VPCZoneIdentifier` and nothing else; a node reads its own
+availability zone [out of IMDS](#the-user-data), so where the group put it is
+what it is. `Nodes` is `DesiredCapacity`, and the split inside a zone is arrived
+at by counting the instances that registered.
+
+`MaxSize` comes from the `Capacity` mapping rather than from the parameter,
+because CloudFormation cannot add one to a number: it is one above the desired
+capacity for every allowed value, so that a replacement can launch before the
+instance it replaces goes. The allowed values are multiples of three for the same
+reason **capacity is worth moving three at a time**, one per zone, so that no zone
+is left holding a larger share than the others. Three, spread over three subnets,
+is one instance per availability zone; `MinSize: 1` allows the group to be taken
+down to one by hand.
+
+Nothing moves either parameter on its own — there is no scaling policy and no
+alarm in the template — and moving one is a stack update. **Growing is safe and
+shrinking is not**: an instance that joins
+[fills itself in before it registers](/runbook/rebuild), so it holds what it is
+about to own by the time anything asks, while an instance that goes takes what it
+held with it, because [there is no rebalancing](/runbook/storage#what-there-is-not).
+
+`chaos/nodes-added`, `chaos/nodes-removed` and `chaos/zone-retired` move one of
+these parameters each and assert what a resize has to leave behind: every zone
+holding the same keys, and no key held by two nodes of one zone. Those hold only
+once records move when ownership moves, in both directions, which is not what the
+cluster does today — the three of them are red, on purpose, and are the
+specification for the work that makes them green.
+
+`HealthCheckType` is `EC2`, the default, so the group replaces an instance whose
+*instance* has failed — a failed EC2 status check — and **not** one whose
+*application* has. An instance whose pull failed has no container, and the load
+balancer stops sending it traffic while the group leaves it running.
+[The runbook](/runbook/deployment#the-group-does-not-replace-a-failed-application)
+is what that costs and what to do about it: terminate the instance yourself, and
+the group launches another. The etcd tier
+[has the same hole for the same reason](/deployment/etcd#the-group).
 
 `HealthCheckGracePeriod` is `200` seconds, and the number matters. It is measured
 from the launch and not from the first check, and everything in the user data has
 to fit inside it: a `yum -y update`, a download and install of AWS CLI v2, a
-`docker login` and then a cold `docker pull` of the image. An instance marked
-unhealthy before it has finished that is replaced by another that starts the same
-work from the beginning, which is a group that replaces instances forever.
+`docker login` and then a cold `docker pull` of the image. An instance whose EC2
+status checks are evaluated before it has finished is one the group replaces with
+another that starts the same work from the beginning.
 
 **Three and a bit minutes is not a generous margin for that sequence.** It holds
 because the pull is from ECR in the same region, but a slow `yum` mirror or a

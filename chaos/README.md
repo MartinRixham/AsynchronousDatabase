@@ -18,16 +18,27 @@ broke came back, and an assertion that did not hold is a non-zero exit — which
 | `etcd-unreachable` | [etcd cannot be reached](../doc/runbook/membership.md) — one node, cluster of one | A `DOCKER-USER` rule rejecting what the container sends to port 2379 |
 | `node-latency` | [A node that is up but wrong](../doc/runbook/nodes.md), [threads are all waiting](../doc/runbook/nodes.md) | A `netem` qdisc delaying everything the host sends into the VPC |
 | `disk-fills` | [RocksDB returned an error](../doc/runbook/storage.md), [the disk is filling](../doc/runbook/storage.md) | `fallocate` over what is left of the root volume |
+| `nodes-added` | [Growing a cluster](../doc/runbook/storage.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update taking the tier to **nine** instances, and back to six |
+| `nodes-removed` | [No rebalancing](../doc/runbook/storage.md) | A stack update taking the tier to **three** instances, and back to six |
+| `zone-retired` | [Fewer zones than the deployment has](../doc/runbook/membership.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update giving the group **two** subnets instead of three, and back |
+
+The last three [assert two invariants the cluster does not hold yet](#the-two-invariants-they-assert)
+and are red until it does.
 | `etcd-quorum-lost` | [etcd has lost quorum](../doc/runbook/membership.md) | `ec2:StopInstances`, two of the three members |
 
 The order is the order they run in, and it is not arbitrary. The three that need nothing of the
-instances themselves come first, because they run against a stack whose agent answers nobody.
-`etcd-quorum-lost` is last because it is the only one that leaves the cluster having been *wrong
-about itself* rather than merely short of a node, and the pipeline deletes the stack next.
+instances themselves come first, because they run against a stack whose agent answers nobody. The
+three that resize the tier come after every fault that only breaks it, because they are the only
+ones that change what the deployment *is*: a run that dies inside one leaves a stack of a different
+shape rather than a cluster short of a node. `etcd-quorum-lost` is last because it is the only one
+that leaves the cluster having been *wrong about itself* rather than merely short of a node, and
+the pipeline deletes the stack next.
 
 `node-stops` is the one to run if only one is run. It is the only test anywhere of
-[the rebuild](../doc/runbook/rebuild.md), and the rebuild is the only thing in the system that
-puts a lost copy back.
+[the rebuild](../doc/runbook/rebuild.md) a *replacement* runs, and the rebuild is the only thing in
+the system that puts a lost copy back. `nodes-added` and `zone-retired` reach the same mechanism
+from the other side — a node joining a tier that grew rather than one replacing a tier that lost an
+instance — and `zone-retired` is the only one that asks a whole zone's copy to be built.
 
 ## Run it
 
@@ -59,7 +70,15 @@ chaos/node-stops.sh
 Roughly twenty minutes for the first three, most of it `node-stops` waiting for the auto
 scaling group to launch a replacement and for that replacement to rebuild itself, and about
 half an hour again for the four that go in through SSM — four or five minutes of fault each,
-and a settle after every one of them. The faults themselves are minutes; the waiting is the
+and a settle after every one of them. **The three resizes are half an hour again**, and all of it
+is waiting: each of them is two stack updates, and an update that adds instances is a launch, a
+pull and a rebuild before the membership says anything has happened. `zone-retired` is the slowest
+of the three, because rebalancing out of a zone is one instance at a time — the group launches the
+replacement before terminating what it replaces, and `MaxSize` allows one spare.
+
+They also cost money for as long as they run: `nodes-added` is nine database instances rather than
+six for the length of it. Nothing is left behind — every one of them puts the shape back, and the
+suite stops if it did not. The faults themselves are minutes; the waiting is the
 deployment's own timings — a ten second lease, a sixty second load balancer health check, a two
 hundred second grace period — and `CHAOS_SETTLE` and `CHAOS_RECOVERY` are how much of each is
 allowed for.
@@ -71,14 +90,20 @@ allowed for.
 database, and this way both are created for a run and deleted after it.
 
 `ChaosPolicy` is what the suite injects with — stopping and starting an instance tagged `asyncdb`
-or `etcd`, writing a network acl, sending a Run Command, and suspending the etcd group's
-`ReplaceUnhealthy`. It attaches to the IAM groups named by the `Operators` parameter, which
+or `etcd`, writing a network acl, sending a Run Command, updating the stack that is under test, and
+suspending the etcd group's `ReplaceUnhealthy`. It attaches to the IAM groups named by the
+`Operators` parameter, which
 defaults to `builders`, the group holding the identity the pipeline runs as. Nothing else about
 the account grants the destructive half of that, which is deliberate: **outside a chaos run,
 nobody in this account can stop an instance of either tier or run a shell command on one.**
 
 Only the stop and start are scoped by tag. The rest is `Resource: "*"`, because the stack
 standing at all is the grant, and it stands for a run.
+
+The update is the one that is not destructive on its own, and it is here for the same reason: the
+resizes need `UpdateStack` on the stack and `UpdateAutoScalingGroup` on what it changes, and
+nothing else in the account grants either. It is not the permission to *deploy* — that is the
+pipeline's identity, and standing the stack up is still its job.
 
 ## Validate before you run
 
@@ -87,8 +112,11 @@ chaos/validate.sh
 ```
 
 Every experiment's `preflight`, and no fault at all. A preflight resolves the instances, subnets
-and groups the experiment would break, dry runs the calls EC2 offers a dry run of, and asks
-Systems Manager whether the agent answers on the instances the fault would go through. It is the
+and groups the experiment would break, dry runs the calls EC2 offers a dry run of, asks Systems
+Manager whether the agent answers on the instances the fault would go through, and — for the three
+that resize the tier — creates the **change set** a stack update would apply, reads what it would
+change and deletes it. That last one is how a stack created before the template took `Nodes` and
+`Zones` is caught in a second rather than ten minutes into an experiment. It is the
 whole of "would this experiment run?" for a handful of API calls each, nothing applied, and
 seconds — where finding the same mistake by running the suite is the length of the experiment
 that hits it. It needs the stack up, because what a preflight resolves is real resources.
@@ -115,6 +143,12 @@ before a single assertion is made — a command the service accepted is not a fa
 
 The other three need nothing of the instances at all, because the fault is a network acl or an
 instance state and both are written from outside. That is why they are still first.
+
+The three resizes are a third case: nothing of theirs is *injected* through the agent, and their
+assertions are asked over it — what a resize moved is a question about one node's store, and only
+Run Command reaches one node. A run whose agent stops answering fails them on
+`every node said what it holds`, which is deliberately an assertion rather than a shrug: a node that
+cannot be asked and a node that holds nothing must not read alike.
 
 ### The shape of an SSM fault
 
@@ -146,6 +180,88 @@ waiting.
 `node-latency` needs none of that chain, because `tc` shapes the host's own device and a
 container's traffic leaves through it like anything else. Its qdisc goes on whatever the default
 route names, which is not `eth0` on an instance of this generation.
+
+## The faults that are a stack update
+
+`nodes-added`, `nodes-removed` and `zone-retired` break nothing. The shape of the database tier is
+two parameters of `cloudformation.yaml` — `Nodes`, how many instances the group runs, and `Zones`,
+how many subnets it is given — and moving one of them is an `UpdateStack` carrying that parameter,
+the deployed template, and every other parameter as it stands. The auto scaling group does the rest:
+it balances what it is given over the subnets it spans, and an instance reads its own availability
+zone out of IMDS, so nothing is ever *told* what shape the cluster is.
+
+The two parameters are the two factors, one each:
+
+| | Is | Moving it |
+| --- | --- | --- |
+| `Zones` | How many copies of the keyspace there are — a zone holds exactly one | `zone-retired`, three copies down to two and back |
+| `Nodes` | How many ways a zone splits the copy it holds | `nodes-added` to nine, `nodes-removed` to three |
+
+**Three is the ceiling for `Zones` and two the floor**, because there is no fourth subnet to grow
+into and one zone is no replication at all. So the increase is asserted on the way back rather than
+as a fault of its own — the retirement is the fault, and putting the zone back is a copy that has to
+be *built* rather than one that was waiting, which is the half `zone-lost` cannot test.
+
+`heal` is the update back, so a run that dies inside one still leaves the stack the shape it found
+it. The template is `--use-previous-template` throughout: what is under test is the stack the
+pipeline stood up, and carrying the checkout's template would be a second change nobody asked for.
+
+### The two invariants they assert
+
+> **These are red.** The two invariants below hold only if the cluster **moves records when
+> ownership moves**, in both directions. It does not, yet: growing pulls — a node fills itself in
+> before it joins — and nothing else does anything at all. Until both mechanisms exist the three
+> resize experiments fail, and so do the pipeline's chaos step and the version gate behind it. They
+> are the specification for that work, written as tests; `CHAOS_EXPERIMENTS` is how to run the other
+> seven meanwhile.
+
+Every resize is asked the same two things once it has settled, and they come from
+[the cluster spec](../doc/database/cluster.md) rather than from what the code does today:
+
+| Invariant | Is | What it takes |
+| --- | --- | --- |
+| **Every zone holds the same keys** | A zone holds a copy of the whole keyspace, so two zones naming different keys is a copy that is short | A node that *gains* a partition fetches what it now owns |
+| **No key is held by two nodes of one zone** | A zone's nodes split the copy it holds, so a key in two of their stores is a node that kept what it stopped owning | A node that *loses* a partition clears down what it no longer owns |
+
+Both are **convergence** assertions, not instant ones. Moving records because ownership moved is
+work in the background rather than part of the update that caused it, so each is asked again until
+it holds or `CHAOS_CONVERGE` runs out — after the membership has already settled, so the seconds are
+the mechanism's own and not the auto scaling group's.
+
+They are two halves of one thing and neither is safe alone. Clearing down without fetching is a
+shrink that loses records rather than staling them; fetching without clearing down is the disk never
+coming back and a stale value waiting for the membership to swing again. Written as a pair, the
+suite says which half is missing: the first assertion fails when nothing fetches, the second when
+nothing clears down.
+
+**Neither can be seen through the load balancer.** A read is answered by whichever copy has the key
+— the owner, or another zone when the owner holds nothing — so it says a record exists *somewhere*
+and never where. The assertions ask each node what is in its own store, over Run Command, with a
+scan carrying `X-Asyncdb-Forwarded`: a forwarded request is served where it lands, so the answer is
+that node's own share rather than its zone's merged one. It is the request a rebuild makes of each
+node of a zone.
+
+`nodes-added` makes the second half visible through the API as well. It writes a value of its own
+into every seeded key while the tier is nine wide and reads them back once it is six again, and
+asserts that **none of them answers the older value**: a key handed back to a node that stopped
+owning it either has to be given it again or was never let go, and a stale answer is the second of
+those. The three numbers it prints beside that — fresh, stale, gone — are
+[the runbook's sentence](../doc/runbook/storage.md#what-there-is-not) measured: *growing a cluster is
+a thing to do deliberately, at a quiet moment, with the keys rewritten afterwards.*
+
+### What is measured and never asserted
+
+**What a terminated instance took with it.** Every resize prints how many of the seeded keys are
+still held by some node. A key whose owner in *every* zone was terminated in the same update went
+with them — every copy of it left at once — and no mechanism inside the cluster puts that back:
+there is [no rebuild of a copy](../doc/runbook/storage.md#what-there-is-not) and no backup. Roughly
+one key in eight of a six-to-three shrink is in that position, and the number is the deployment's
+own hashing rather than anything the database decides.
+
+The shape of a failed read is asserted, though: every read of a resized tier is a 2xx or a 404,
+never a 5xx and never a request that did not answer. A key a resize took away is not found; a
+cluster that cannot answer is a different fault, and a count of failures alone cannot tell the two
+apart.
 
 ## What this does not cover
 
@@ -204,9 +320,10 @@ As in [`perf/`](../perf).
 | `CHAOS_SETTLE` | How long a membership change is given | 150 seconds |
 | `CHAOS_RECOVERY` | How long an instance replacement is given | 900 seconds |
 | `CHAOS_ONSET` | How long a started fault is given to bite | 20 seconds |
+| `CHAOS_CONVERGE` | How long a resized cluster is given to move the records whose owner changed | 300 seconds |
 
-Each experiment has one or two of its own — the length of its fault, the size of its latency —
-named at the top of the script that uses it.
+Each experiment has one or two of its own — the length of its fault, the size of its latency, the
+time a resized group is given to reach its new shape — named at the top of the script that uses it.
 
 **A duration is a ceiling and nothing else.** A fault lasts until `fault_stop` takes it away,
 which is as soon as that experiment's assertions are done; the seconds an experiment names are

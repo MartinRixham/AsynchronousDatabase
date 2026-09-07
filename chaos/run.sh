@@ -15,10 +15,13 @@ source "$(dirname "$0")/harness.sh"
 here=$(dirname "$0")
 
 # The three that need nothing of the instances themselves are first, because they run against a
-# stack whose agent answers nobody. The four that go in through the SSM agent follow. And etcd
-# losing quorum is last, because it is the only one that leaves the cluster having been wrong
-# about itself rather than merely short of a node.
-default="node-stops zone-lost scan-loses-a-node etcd-unreachable node-latency disk-fills etcd-quorum-lost"
+# stack whose agent answers nobody. The four that go in through the SSM agent follow. The three
+# that resize the tier come after all of them, because they are the only faults here that change
+# what the deployment *is* — a run that dies inside one leaves a stack that is a different shape
+# rather than a cluster short of a node — and they are also the longest. And etcd losing quorum is
+# last, because it is the only one that leaves the cluster having been wrong about itself.
+default="node-stops zone-lost scan-loses-a-node etcd-unreachable node-latency disk-fills"
+default="$default nodes-added nodes-removed zone-retired etcd-quorum-lost"
 
 experiments=${CHAOS_EXPERIMENTS:-$default}
 

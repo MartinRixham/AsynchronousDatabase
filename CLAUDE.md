@@ -131,15 +131,15 @@ testing:
 make create-stack            # or the stack a build stood up
 make create-chaos-stack      # chaos/chaos.yaml: the permission to inject a fault
 chaos/validate.sh            # every experiment's preflight, nothing applied — seconds
-chaos/run.sh                 # all seven experiments, in order
+chaos/run.sh                 # all ten experiments, in order
 make delete-chaos-stack
 ```
 
 `chaos/harness.sh` is sourced by each experiment the way `perf/harness.sh` is, and owns the same
 four things every one of them needs: the stack, the fault, a probe recording what a client saw
 while it ran, and the verdict. Everything is an environment variable — `CHAOS_EXPERIMENTS`,
-`CHAOS_SETTLE`, `CHAOS_RECOVERY` — and a failed assertion is a non-zero exit, which is what lets
-`build.yaml` run it after the load tests and fail the build on it.
+`CHAOS_SETTLE`, `CHAOS_RECOVERY`, `CHAOS_CONVERGE` — and a failed assertion is a non-zero exit,
+which is what lets `build.yaml` run it after the load tests and fail the build on it.
 
 **An experiment declares three functions and the harness owns when they run**: `inject` applies
 the fault, `heal` takes it away, and `preflight` asks whether `inject` would work while applying
@@ -160,10 +160,11 @@ fails one.
 - **The suite refuses to start** against a cluster that is not already six nodes in three zones
   with nothing stalled, and stops early if an experiment's damage did not heal — everything
   after that would be measuring the previous fault.
-- **Order matters.** The three that need nothing of the instances are first; `etcd-quorum-lost`
-  is last, because it is the only one that leaves the cluster having been wrong about itself, and
-  the pipeline deletes the stack next.
-- **Four of the seven inject through `ssm:SendCommand`** and the `AWS-RunShellScript` document,
+- **Order matters.** The three that need nothing of the instances are first; the three that
+  resize the tier come after every fault that only breaks it, because they are the only ones that
+  change what the deployment *is*; `etcd-quorum-lost` is last, because it is the only one that
+  leaves the cluster having been wrong about itself, and the pipeline deletes the stack next.
+- **Four of the ten inject through `ssm:SendCommand`** and the `AWS-RunShellScript` document,
   which needs the private subnets' [route out](#release): `node-latency` installs `tc` from the
   distribution repositories, so what it depends on is an instance being able to install a package
   while it is under test. All four send the script `fault_script` builds — write the removal down,
@@ -177,6 +178,41 @@ fails one.
   hears rather than of whichever one the load balancer picked. The other three (`ec2:StopInstances`
   twice, and a network acl on one zone's subnet) need nothing of the instances, which is why they
   are first. `chaos/README.md` is the page.
+- **Three of the ten inject with a stack update**, because the shape of the database tier is two
+  parameters of `cloudformation.yaml` and nothing else: `Zones` is how many copies of the keyspace
+  there are — a zone holds exactly one — and `Nodes` is how many ways a zone splits the copy it
+  holds. `zone-retired` takes the replication factor from three to two and back, `nodes-added`
+  takes the tier to nine instances and `nodes-removed` to three, and `heal` is the update back, so
+  a run that dies inside one leaves the stack the shape it found it. They carry
+  `--use-previous-template`: what is under test is the stack the pipeline stood up. Three is the
+  ceiling for `Zones` and two the floor, so **the increase in replication is asserted on the way
+  back** rather than as a fault of its own — and that half is what `zone-lost` cannot test, because
+  a zone cut off comes back with its copy and a zone retired comes back with instances that have
+  never held anything.
+- **The three resizes are red on purpose, and they are the specification for the work that makes
+  them green.** Each of them asserts two invariants of `doc/database/cluster.md` after every
+  transition: **every zone holds the same keys** (a zone holds a copy of the whole keyspace, so two
+  zones naming different keys is a copy that is short) and **no key is held by two nodes of one
+  zone** (a zone's nodes split the copy it holds). The first needs a node that *gains* a partition
+  to fetch what it now owns; the second needs a node that *loses* one to clear down what it no
+  longer owns. Today the cluster does neither — `rebuild` runs once, on an empty store — so the
+  suite fails, and with it the pipeline's chaos step and the version gate behind it.
+  `CHAOS_EXPERIMENTS` runs the other seven meanwhile. **Neither half is safe alone**: clearing down
+  without fetching is a shrink that loses records rather than staling them, and fetching without
+  clearing down is the disk never coming back and a stale value waiting for the membership to swing
+  again — which is why they are asserted as a pair, and why which one fails says which half is
+  missing.
+- **Neither invariant can be seen through the load balancer**, which answers a read from whichever
+  copy has the key and so says a record exists somewhere and never where. `holdings` in
+  `chaos/harness.sh` asks each node what is in its own store, over Run Command, with a scan carrying
+  `X-Asyncdb-Forwarded` — served where it lands, so it is that node's own share and not its zone's
+  merged answer, which is the request a rebuild makes of each node of a zone. A node that cannot be
+  asked is a failed assertion and not an empty store.
+- **What a terminated instance took with it is measured and never asserted.** A key whose owner in
+  every zone was terminated by the same update went with them, and nothing in the cluster puts that
+  back — no rebuild of a copy, no backup. Every resize prints how many seeded keys are still held
+  somewhere. What is asserted about a failed read is its shape: a 2xx or a 404, never a 5xx and
+  never a request that did not answer.
 - **`disk-fills` tests the proxy as much as the store.** nginx spools a request body over 8 KiB
   to a temporary file, so a full volume answers `500 unavailable` out of `server/50x.json` before
   the database is asked at all — which is why the experiment writes in two sizes, a megabyte the
@@ -184,20 +220,25 @@ fails one.
   reported and not asserted: the write ahead log is preallocated, so a node whose disk filled a
   minute ago still has tens of megabytes reserved to write into. What it asserts instead is that
   every write answered `2xx` while the disk was full is still there afterwards.
-- `node-stops` is the only test anywhere of the rebuild in `doc/runbook/rebuild.md`.
+- `node-stops` is the only test anywhere of the rebuild in `doc/runbook/rebuild.md` as a
+  *replacement* runs it; `nodes-added` and `zone-retired` reach the same mechanism from a tier
+  that grew, and `zone-retired` is the only one that has a whole zone's copy built.
 - **`chaos.yaml` is the permission to break things.** `ChaosPolicy` attaches stopping and
-  starting an instance tagged `asyncdb` or `etcd`, writing a network acl, sending a Run Command
-  and suspending the etcd group's `ReplaceUnhealthy` to the IAM groups in the `Operators`
-  parameter (default `builders`, which holds the pipeline's identity). Nothing else in the account
+  starting an instance tagged `asyncdb` or `etcd`, writing a network acl, sending a Run Command,
+  updating the stack under test and suspending the etcd group's `ReplaceUnhealthy` to the IAM
+  groups in the `Operators` parameter (default `builders`, which holds the pipeline's identity).
+  Nothing else in the account
   grants the destructive half of that, so outside a chaos run nobody here can stop an instance of
   either tier or run a shell command on one. `make update-chaos-stack` applies a change to a chaos
   stack that is already standing.
 - **Run `chaos/validate.sh` after touching an experiment.** It runs every `preflight` and no
   fault at all: the targets are resolved, EC2's own `--dry-run` answers the calls that offer one,
-  and Systems Manager is asked whether the agent answers on the instances a fault would go
-  through. That is the whole of "would this run?" for a handful of API calls and nothing applied
-  — a chaos stack that is not standing, an instance whose agent never registered and a group
-  whose logical id moved are caught in seconds rather than by a full run.
+  Systems Manager is asked whether the agent answers on the instances a fault would go through,
+  and a resize creates the change set its update would apply, reads it and deletes it. That is
+  the whole of "would this run?" for a handful of API calls and nothing applied — a chaos stack
+  that is not standing, an instance whose agent never registered, a group whose logical id moved
+  and a stack whose template predates the two resize parameters are caught in seconds rather than
+  by a full run.
 
 ### Running the whole thing
 
@@ -506,9 +547,9 @@ the tag at deploy time from what CI actually published rather than from the work
 the Makefile passes no parameter, and why passing one means passing the *parameter name* and never the
 tag. A `LaunchTemplate` change does not recycle running instances, so a release reaches an instance only
 when that instance is replaced. **The parameter has to exist before the first deploy**: CloudFormation
-cannot resolve it otherwise, and an instance that cannot pull its tag has no container at all, fails the
-ALB health check on `/asyncdb/health`, and is replaced by another that cannot pull either — the load
-balancer answers 502 throughout.
+cannot resolve it otherwise, and an instance that cannot pull its tag has no container at all and fails
+the ALB health check on `/asyncdb/health`. The group's health check is `EC2`, so nothing replaces it
+either: it sits there running nothing, and the load balancer answers 502 throughout.
 
 **Both tiers are in private subnets**, and where a NAT gateway would be there is an
 `EgressOnlyInternetGateway`: the private subnets are dual stack (`Ipv6CidrBlock` gives the VPC an

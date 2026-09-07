@@ -16,6 +16,8 @@
 #   CHAOS_SETTLE       how long a membership change is given        150 seconds
 #   CHAOS_RECOVERY     how long an instance replacement is given    900 seconds
 #   CHAOS_ONSET        how long a started fault is given to bite    20 seconds
+#   CHAOS_CONVERGE     how long a resized cluster is given to move   300 seconds
+#                      the records whose owner changed
 
 set -u
 
@@ -31,6 +33,7 @@ records=${CHAOS_RECORDS:-200}
 settle=${CHAOS_SETTLE:-150}
 recovery=${CHAOS_RECOVERY:-900}
 onset=${CHAOS_ONSET:-20}
+converge=${CHAOS_CONVERGE:-300}
 
 # The lease is ten seconds and it is renewed every three, so a node that stops answering is out
 # of the membership within one of them. Everything here that waits for a membership to change
@@ -225,6 +228,22 @@ write_check()
 # finds it.
 expect_readable()
 {
+	local absent
+	absent=$(readable "$1" "$2")
+
+	if [ "$absent" = 0 ]; then
+		result 0 "$3"
+	else
+		result 1 "$3 — $absent of $1 records could not be read in $2 attempts: $(codes)"
+	fi
+}
+
+# readable <how many keys> <attempts each> — the same walk, answering how many of those records no
+# attempt found. A resize is the fault that needs the number rather than the verdict: a key whose
+# owner changed hands is a key the new owner does not hold, so what a resize leaves behind is
+# measured and reported where a fault that breaks nothing permanent is asserted on.
+readable()
+{
 	local key attempt found missing=0 answer
 
 	: > "$work/codes"
@@ -244,11 +263,122 @@ expect_readable()
 		[ "$found" = 1 ] || missing=$((missing + 1))
 	done
 
-	if [ "$missing" = 0 ]; then
-		result 0 "$3"
+	echo "$missing"
+}
+
+# expect_codes <pattern> <description> — every status the check before this recorded matches. How a
+# request was refused says as much as how many were: a key no copy holds is a 404 and a cluster that
+# cannot answer at all is not, and a count of failures alone cannot tell them apart.
+expect_codes()
+{
+	local unexpected
+	unexpected=$(grep -cvE "$1" "$work/codes") || unexpected=0
+
+	if [ "$unexpected" = 0 ]; then
+		result 0 "$2"
 	else
-		result 1 "$3 — $missing of $1 records could not be read in $2 attempts: $(codes)"
+		result 1 "$2 — $unexpected answers were something else: $(codes)"
 	fi
+}
+
+# expect_round_trip <how many> <description> — a key written now reads back what was written now.
+# It is what a resized cluster has to be asked and a bare write does not: a write lands on the
+# copies the membership names, and what a resize moves is which nodes those are.
+expect_round_trip()
+{
+	local i failed=0 stamp=$RANDOM key code
+
+	: > "$work/codes"
+
+	for (( i = 0; i < $1; i++ )); do
+		key=r-$stamp-$i
+
+		code=$(status --request PUT --data "$stamp" \
+			--header 'Content-Type: application/octet-stream' \
+			"$base/table/$table/key/$key")
+		echo "$code" >> "$work/codes"
+
+		case $code in
+			2*) ;;
+			*) failed=$((failed + 1)); continue ;;
+		esac
+
+		code=$(read_value "$key")
+		echo "$code" >> "$work/codes"
+
+		case $code in
+			2*) [ "$(cat "$work/value")" = "$stamp" ] || failed=$((failed + 1)) ;;
+			*) failed=$((failed + 1)) ;;
+		esac
+	done
+
+	if [ "$failed" = 0 ]; then
+		result 0 "$2"
+	else
+		result 1 "$2 — $failed of $1 did not go there and come back: $(codes)"
+	fi
+}
+
+# read_value <key> — the status, with the body left in $work/value. Everything else here reads a
+# status alone, because every seeded record holds the same value; what a resize needs is which
+# value came back.
+read_value()
+{
+	curl --silent --max-time 15 --output "$work/value" --write-out '%{http_code}' \
+		"$base/table/$table/key/$1"
+}
+
+# write_seed <value> — the seeded keys again with a value of the suite's own, so that a read after a
+# resize says which copy answered rather than only that one did.
+write_seed()
+{
+	local i failed=0 answer
+
+	: > "$work/codes"
+
+	for (( i = 0; i < records; i++ )); do
+		answer=$(status --request PUT --data "$1" \
+			--header 'Content-Type: application/octet-stream' \
+			"$base/table/$table/key/$i")
+		echo "$answer" >> "$work/codes"
+
+		case $answer in
+			2*) ;;
+			*) failed=$((failed + 1)) ;;
+		esac
+	done
+
+	echo "$failed"
+}
+
+# held <how many keys> <value> — three numbers: how many of those seeded keys answer that value, how
+# many answer an older one, and how many no copy answers for at all. A copy that stopped being asked
+# and started being asked again holds what it held when it stopped, and that is a stale value rather
+# than a missing one — the same resize makes both, and they are not the same incident.
+held()
+{
+	local i key code same=0 other=0 absent=0
+
+	: > "$work/codes"
+
+	for (( i = 0; i < $1; i++ )); do
+		key=$((i % records))
+		code=$(read_value "$key")
+		echo "$code" >> "$work/codes"
+
+		case $code in
+			2*)
+				if [ "$(cat "$work/value")" = "$2" ]; then
+					same=$((same + 1))
+				else
+					other=$((other + 1))
+				fi
+				;;
+			*) absent=$((absent + 1)) ;;
+		esac
+	done
+
+	printf '%s %s %s\n' "$same" "$other" "$absent"
 }
 
 codes()
@@ -310,6 +440,188 @@ await_writes()
 scan_status()
 {
 	status "$base/table/$table/key?limit=100"
+}
+
+# ---------------------------------------------------------------------------- what a node holds
+
+# The one question in this file that cannot be put through the load balancer, and the only way to
+# see what a resize actually moved. A read through the load balancer is answered by whichever copy
+# has the key — the owner, or another zone when the owner holds nothing — so it says a record
+# exists somewhere and never where. A **scan carrying the forwarded header is answered where it
+# lands**, which makes it that node's own share rather than its zone's merged answer: it is the
+# request a rebuild makes of each node of a zone, asked here over Run Command.
+#
+# Two invariants follow from doc/database/cluster.md, and between them they are the whole of what a
+# resize has to leave behind:
+#
+#   every zone holds the same keys        a zone holds a copy of the whole keyspace, so two zones
+#                                         naming different keys is a copy that is short
+#   no key is held twice inside a zone    a zone's nodes split the copy it holds, so a key in two
+#                                         of their stores is a node that kept what it stopped owning
+#
+# A thousand is the largest page the API allows, and five of them is more keys than any experiment
+# here writes — the cap is on the Run Commands rather than on the correctness.
+holdings_limit=1000
+holdings_pages=5
+
+holdings_asked=0
+holdings_total=0
+
+# cluster::forwarded_header in src/cluster/cluster.h.
+forwarded_header=X-Asyncdb-Forwarded
+
+# holdings <instance> — the keys that node holds in its own store, sorted, one per line. Non-zero
+# when the node could not be asked, which is not the same answer as a node that holds nothing.
+holdings()
+{
+	local id=$1 from= url page keys pages=0
+
+	: > "$work/keys"
+
+	while [ "$pages" -lt "$holdings_pages" ]; do
+		pages=$((pages + 1))
+
+		# Every key this suite writes is unreserved in a URL, so the resume bound is not encoded.
+		url="http://localhost:8080/table/$table/key?limit=$holdings_limit${from:+&from=$from}"
+
+		page=$(ssm_run "$id" "curl -s --max-time 30 -H '$forwarded_header: true' '$url'")
+
+		echo "$page" | jq --exit-status 'has("records")' > /dev/null 2>&1 || return 1
+
+		keys=$(echo "$page" | jq -r '.records[].key')
+
+		[ -n "$keys" ] || break
+
+		echo "$keys" >> "$work/keys"
+
+		# No cursor is a range that is exhausted. A bound is inclusive, so the next page begins
+		# again with the key it resumed at, which the sort takes back out.
+		echo "$page" | jq --exit-status 'has("next")' > /dev/null 2>&1 || break
+
+		from=$(echo "$keys" | tail -1)
+	done
+
+	sort -u "$work/keys"
+}
+
+# collect_holdings — every node asked, into one file each named by the zone it is in. A node that
+# cannot be asked is counted rather than passed over: a silent empty answer would make both
+# assertions below say the opposite of what happened.
+collect_holdings()
+{
+	local id zone
+
+	holdings_asked=0
+	holdings_total=0
+
+	rm -rf "$work/holdings"
+	mkdir -p "$work/holdings"
+
+	while read -r id zone _; do
+		holdings_total=$((holdings_total + 1))
+
+		if holdings "$id" > "$work/holdings/$zone.$id"; then
+			holdings_asked=$((holdings_asked + 1))
+		fi
+	done < <(instances asyncdb)
+
+	[ "$holdings_asked" = "$holdings_total" ]
+}
+
+zones_held()
+{
+	ls "$work/holdings" | cut -d. -f1 | sort -u
+}
+
+# zones_differ — empty when every zone names the same keys as every other, and the zones that do not
+# with how many keys apart they are otherwise.
+zones_differ()
+{
+	local zone first= differ=
+
+	for zone in $(zones_held); do
+		cat "$work/holdings/$zone."* 2> /dev/null | sort -u > "$work/zone.$zone"
+
+		if [ -z "$first" ]; then
+			first=$zone
+			continue
+		fi
+
+		cmp -s "$work/zone.$first" "$work/zone.$zone" \
+			|| differ="$differ $zone($(comm -3 "$work/zone.$first" "$work/zone.$zone" | grep -c .))"
+	done
+
+	[ -z "$differ" ] || printf 'measured against %s:%s' "$first" "$differ"
+}
+
+# zone_duplicates — empty when no key is in two stores of one zone, and the zones that hold one
+# twice with how many otherwise.
+zone_duplicates()
+{
+	local zone duplicates worst=
+
+	for zone in $(zones_held); do
+		duplicates=$(cat "$work/holdings/$zone."* 2> /dev/null | sort | uniq -d | grep -c .)
+
+		[ "$duplicates" = 0 ] || worst="$worst $zone($duplicates)"
+	done
+
+	[ -z "$worst" ] || printf '%s' "${worst# }"
+}
+
+# seed_held — how many of the seeded keys are in any store at all. What a terminated instance took
+# with it is not something any mechanism in the cluster puts back — every copy of it went at once —
+# so this is a number and never an assertion.
+seed_held()
+{
+	local i
+
+	for (( i = 0; i < records; i++ )); do
+		echo "$i"
+	done | sort > "$work/seed.keys"
+
+	cat "$work/holdings"/* 2> /dev/null | sort -u > "$work/all.keys"
+
+	comm -12 "$work/seed.keys" "$work/all.keys" | grep -c .
+}
+
+# expect_copies <when> — the two invariants, given time to arrive.
+#
+# Moving records because ownership moved is work in the background and not part of the update that
+# caused it, so this waits for the cluster to converge the way await waits for a membership: what it
+# asserts is that it gets there, and CHAOS_CONVERGE is how long it is given. It is asked after the
+# shape has settled, so the seconds here are the mechanism's own and not the group's.
+expect_copies()
+{
+	local deadline=$((SECONDS + converge)) differ duplicates
+
+	while :; do
+		collect_holdings
+		differ=$(zones_differ)
+		duplicates=$(zone_duplicates)
+
+		[ -n "$differ" ] || [ -n "$duplicates" ] || break
+		[ "$holdings_asked" = "$holdings_total" ] || break
+		[ "$SECONDS" -lt "$deadline" ] || break
+
+		sleep 15
+	done
+
+	expect "$holdings_asked" "$holdings_total" "every node said what it holds $1"
+
+	if [ -z "$differ" ]; then
+		result 0 "every zone holds the same keys $1"
+	else
+		result 1 "every zone holds the same keys $1 — $differ"
+	fi
+
+	if [ -z "$duplicates" ]; then
+		result 0 "no key is held by two nodes of a zone $1"
+	else
+		result 1 "no key is held by two nodes of a zone $1 — held twice: $duplicates"
+	fi
+
+	printf '  ---- %s of %s seeded keys are held by some node %s\n' "$(seed_held)" "$records" "$1"
 }
 
 # ---------------------------------------------------------------------------- the probe
@@ -378,6 +690,16 @@ health_matches()
 		answer=$(curl --fail --silent --max-time 10 "$base/health") || return 1
 		echo "$answer" | jq --exit-status "$1" > /dev/null 2>&1 || return 1
 	done
+}
+
+# The tier as /health names it: how many nodes, how many zones, and how many nodes a zone holds.
+# All three and not the first alone, because six nodes in three zones and nine nodes in three zones
+# are the same thing to anything that counts zones — and the third number is what says the group
+# balanced them over the subnets, which is the whole of how a copy is split.
+shape()
+{
+	curl --fail --silent --max-time 10 "$base/health" \
+		| jq -c '[ (.nodes | length), (.zones | length), ([ .zones[] | length ] | unique) ]'
 }
 
 # await <jq predicate> <timeout> <description> — the cluster reaching a state, or not.
@@ -898,6 +1220,72 @@ zone_heal()
 	return 0
 }
 
+# ---------------------------------------------------------------------------- a resized tier
+
+# The one fault here that is applied by asking for it rather than by breaking something: the
+# database tier's shape is two parameters of the stack, Nodes and Zones, and moving either is a
+# stack update. Zones is how many copies of the keyspace there are, Nodes is how many ways a zone
+# splits the copy it holds, and the auto scaling group does the rest — it balances what it is given
+# over the subnets it spans, and an instance reads its own zone out of IMDS.
+#
+# Nothing about it is gentler than a fault an experiment injects. A node that joins rebuilds what it
+# will own before it registers, but a node that goes takes what it held with it: there is no
+# rebalancing, so the copies a resize moves between nodes are moved in one direction only.
+
+# stack_parameters <key=value>... — the parameter list for an update: these, and every other
+# parameter of the stack as it stands. UsePreviousValue keeps an SSM-typed parameter's name rather
+# than the tag it resolved to, so a resize deploys the version already running.
+stack_parameters()
+{
+	local name value override
+
+	for name in $(aws cloudformation describe-stacks --stack-name "$stack" \
+		--query 'Stacks[0].Parameters[].ParameterKey' --output text); do
+		value=
+
+		for override in "$@"; do
+			[ "${override%%=*}" = "$name" ] && value=${override#*=}
+		done
+
+		if [ -n "$value" ]; then
+			printf 'ParameterKey=%s,ParameterValue=%s\n' "$name" "$value"
+		else
+			printf 'ParameterKey=%s,UsePreviousValue=true\n' "$name"
+		fi
+	done
+}
+
+# stack_update <key=value>... — the update, waited out. The template is the one deployed and not the
+# one checked out: what is under test is the stack the pipeline stood up, and carrying this
+# checkout's template would be a second change nobody asked for.
+stack_update()
+{
+	local parameters answer
+
+	mapfile -t parameters < <(stack_parameters "$@")
+
+	[ "${#parameters[@]}" -gt 0 ] || { echo "  The stack $stack names no parameters." >&2; return 1; }
+
+	# An update that would change nothing is refused rather than applied, and that is the state it
+	# was asking for — which is what makes heal safe to run twice, or against a fault that never
+	# landed.
+	answer=$(aws cloudformation update-stack --stack-name "$stack" \
+		--use-previous-template --capabilities CAPABILITY_NAMED_IAM \
+		--parameters "${parameters[@]}" 2>&1) || {
+			case $answer in
+				*"No updates are to be performed"*) return 0 ;;
+			esac
+
+			echo "  $answer" >&2
+			return 1
+		}
+
+	# The wait is over the stack and says nothing about the instances: an auto scaling group is
+	# updated the moment the group takes the new capacity, and what it then launches or terminates
+	# takes minutes more. Every assertion about the shape of the cluster is made against /health.
+	aws cloudformation wait stack-update-complete --stack-name "$stack" 2> /dev/null
+}
+
 # ---------------------------------------------------------------------------- the dry runs
 
 # What an experiment's preflight is made of. Each one answers a question a full run would take
@@ -940,6 +1328,48 @@ may_run()
 		--output text 2> /dev/null)
 
 	expect "${online:-0}" "$#" "the SSM agent answers on $*"
+}
+
+# may_resize <key=value>... — the dry run CloudFormation offers, which is a change set: it is the
+# update, worked out and written down, and it applies nothing until it is told to. This deletes it
+# instead.
+#
+# It answers the question a resize has to ask before it waits ten minutes to find out — whether the
+# stack standing is one whose template takes these parameters at all, which a stack created before
+# it did is not — and it answers it against the deployed template rather than the checkout.
+may_resize()
+{
+	local parameters name set status changed
+
+	mapfile -t parameters < <(stack_parameters "$@")
+
+	name=chaos-$$-$RANDOM
+
+	set=$(aws cloudformation create-change-set --stack-name "$stack" \
+		--change-set-name "$name" --use-previous-template \
+		--capabilities CAPABILITY_NAMED_IAM \
+		--parameters "${parameters[@]}" --query Id --output text 2>&1) || {
+			result 1 "$stack takes $* — $set"
+			return 1
+		}
+
+	# A change set that could not be worked out fails rather than erroring, and the reason is the
+	# whole diagnosis: a parameter the template does not have and a value it does not allow both
+	# land here.
+	aws cloudformation wait change-set-create-complete --change-set-name "$set" 2> /dev/null
+
+	status=$(aws cloudformation describe-change-set --change-set-name "$set" \
+		--query 'join(`: `, [Status, StatusReason || `no reason given`])' --output text)
+
+	changed=$(aws cloudformation describe-change-set --change-set-name "$set" \
+		--query 'join(`,`, Changes[].ResourceChange.LogicalResourceId)' --output text)
+
+	aws cloudformation delete-change-set --change-set-name "$set" > /dev/null 2>&1
+
+	case $status in
+		CREATE_COMPLETE*) result 0 "$stack would take $* — it changes ${changed:-nothing}" ;;
+		*) result 1 "$stack would take $* — the change set says $status" ;;
+	esac
 }
 
 # may_suspend <group> — the one autoscaling call any experiment makes, which has no dry run

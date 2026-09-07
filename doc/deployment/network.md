@@ -74,7 +74,7 @@ nothing that was not asked for gets in — and it does no translation, because
 there is nothing to translate: the addresses on the far side of it are the
 instance's own.
 
-**A route off the instance is what `chaos/` needs.** Four of its seven
+**A route off the instance is what `chaos/` needs.** Four of its ten
 experiments inject their fault through the SSM agent, and `node-latency`
 installs `tc` from the distribution's repositories before it does anything, so
 without one four of [the runbook's](/runbook/) failure modes would have no

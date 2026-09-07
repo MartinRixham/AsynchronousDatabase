@@ -542,9 +542,9 @@ fixed cost by, and it is worth re-measuring rather than inheriting: it moves
 with `InstanceType`, with value size, and with whether the load is hot enough to
 be paying for credits while it is measured.
 
-Nothing scales on its own — `DesiredCapacity` is 6 with
+Nothing scales on its own — the `Nodes` parameter is 6 with
 [no policy and no alarm](/deployment/#what-this-stack-does-not-do) — so more
-capacity is a hand on `MinSize` and `MaxSize`, and
+capacity is a stack update carrying that parameter, and
 [growing the cluster is a thing to do deliberately](/database/cluster#what-this-is-not)
 because a key that changes owner is a key the new owner does not have. **Grow it
 three at a time**, one per availability zone: each node adds $0.0118 an hour and

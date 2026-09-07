@@ -110,13 +110,6 @@ one whose *application* has failed. An instance whose container exited, or whose
 pull failed, is one the load balancer stops sending traffic to and that the group
 **leaves running**.
 
-::: warning The deployment page is out of date on this
-[The database tier](/deployment/database) still describes `HealthCheckType` as
-`ELB`, and still says there is no `--restart` on the container. The template
-today has `"HealthCheckType": "EC2"` and runs the container
-`docker run -d --restart always`. Read this page for the current behaviour.
-:::
-
 What follows from `EC2`, with `--restart always` alongside it:
 
 | What failed | What happens |

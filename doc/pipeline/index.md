@@ -238,7 +238,7 @@ boundary, a workspace and a `$GITHUB_ENV` do not — and takes `$VERSION` from
 | Run the load tests | `perf/write.sh` then `perf/read.sh`, eight threads, 250 requests |
 | The chaos permissions | `make create-chaos-stack` — the policy the suite injects with, a stack of its own, with its own `created` output |
 | Validate the experiments | `chaos/validate.sh` — every experiment's preflight, nothing applied |
-| Run the chaos suite | `chaos/run.sh` — the seven experiments, in order |
+| Run the chaos suite | `chaos/run.sh` — the ten experiments, in order |
 | Record that this version passed | `git tag $VERSION` and `git push origin` — [above](#recording-the-pass), and the reason the next push on this version publishes and deploys nothing |
 | Tear down the chaos permissions | `make delete-chaos-stack`, `if: always()` — but only if this run created it |
 | Stack events | `make describe-stack`, `if: failure()` |

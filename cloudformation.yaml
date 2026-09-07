@@ -38,6 +38,43 @@ Parameters:
       it writes afterwards. The tier pulls out of this account's registry and never out of quay.io,
       so the mirror is how the tag reaches an instance at all.
 
+  Nodes:
+    Type: String
+    Default: "6"
+    AllowedValues: ["3", "6", "9"]
+    Description: >-
+      How many database instances the group runs. The group balances them over the subnets it
+      spans, so this count is the whole of the arrangement inside a zone: six over three zones is
+      three copies of the keyspace each split in half, and nine is the same three copies split in
+      three. It moves three at a time, one per zone, so that no zone is left holding a larger share
+      than the others.
+
+  Zones:
+    Type: String
+    Default: "3"
+    AllowedValues: ["2", "3"]
+    Description: >-
+      How many availability zones the database tier spans, which is how many copies of the keyspace
+      there are: a zone holds exactly one. An instance reads its own zone out of IMDS, so this is
+      the subnets the group is given and nothing else. The etcd tier always spans three, so taking a
+      copy away here does not touch quorum.
+
+Mappings:
+
+  # MaxSize is one above the desired capacity, so that a replacement can launch before the instance
+  # it replaces goes. CloudFormation cannot add one to a parameter, so the pairs are written out.
+  Capacity:
+    "3":
+      Max: "4"
+    "6":
+      Max: "7"
+    "9":
+      Max: "10"
+
+Conditions:
+
+  ThreeZones: !Equals [!Ref Zones, "3"]
+
 Resources:
 
   VPC:
@@ -392,16 +429,19 @@ Resources:
     Type: AWS::AutoScaling::AutoScalingGroup
     DependsOn: [PrivateRoute]
     Properties:
-      VPCZoneIdentifier:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-        - !Ref PrivateSubnet3
+      VPCZoneIdentifier: !If
+        - ThreeZones
+        - - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+          - !Ref PrivateSubnet3
+        - - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
       LaunchTemplate:
         LaunchTemplateId: !Ref LaunchTemplate
         Version: !GetAtt LaunchTemplate.LatestVersionNumber
-      DesiredCapacity: 6
+      DesiredCapacity: !Ref Nodes
       MinSize: "1"
-      MaxSize: "7"
+      MaxSize: !FindInMap [Capacity, !Ref Nodes, Max]
       HealthCheckType: EC2
       HealthCheckGracePeriod: 200
       TargetGroupARNs:

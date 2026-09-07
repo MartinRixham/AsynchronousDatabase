@@ -69,6 +69,25 @@ Resources:
               - ssm:CancelCommand
             Resource: "*"
 
+          # A stack update is what the three resizes inject with: the shape of the database tier is
+          # two parameters of the template, and moving one is an update carrying the parameter and
+          # the deployed template. The change set is the dry run of it that every one of their
+          # preflights makes. What CloudFormation then changes is the auto scaling group and
+          # nothing else, so that is the only permission it needs of the stack's own resources —
+          # standing up the stack in the first place is the deploy identity's job and not this
+          # policy's.
+          - Sid: ResizeTheTier
+            Effect: Allow
+            Action:
+              - cloudformation:DescribeStacks
+              - cloudformation:DescribeStackResource
+              - cloudformation:UpdateStack
+              - cloudformation:CreateChangeSet
+              - cloudformation:DescribeChangeSet
+              - cloudformation:DeleteChangeSet
+              - autoscaling:UpdateAutoScalingGroup
+            Resource: "*"
+
           - Sid: HoldTheEtcdGroupStill
             Effect: Allow
             Action:
