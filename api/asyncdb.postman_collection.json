@@ -924,6 +924,128 @@
 					"response": []
 				},
 				{
+					"name": "A value at the documented maximum",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{{largestValue}}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-largest",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-largest"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// The 16 MiB of the reference, exactly. Every layer in front of the store has a limit of",
+									"// its own and both of them defaulted below this one — nginx allowed a 1 MiB body and the",
+									"// Beast parser read 1 MiB of one — so fifteen sixteenths of the documented range was",
+									"// refused by the proxy or dropped on the wire, and nothing here asked for enough to see",
+									"// it. This is the request that says the documented limit is a limit a client really has.",
+									"pm.collectionVariables.set(\"largestValue\", \"v\".repeat(16 * 1024 * 1024));"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204 no content\", function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "It reads back whole",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-largest",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-largest"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with every byte of it\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text().length).to.eql(16 * 1024 * 1024);",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Delete the largest value",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-largest",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-largest"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Folder 5 scans the whole table, and 16 MiB of it is a scan nobody needs.",
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
 					"name": "A missing key reads 404",
 					"request": {
 						"method": "GET",
@@ -1329,6 +1451,93 @@
 									"pm.test(\"413 key_too_large\", function () {",
 									"    pm.response.to.have.status(413);",
 									"    pm.expect(pm.response.json().error.code).to.eql(\"key_too_large\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A key at 4 KiB that has to be encoded",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "at the limit"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{encodedKey}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{encodedKey}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// A key is counted in UTF-8 bytes and not in what it takes to send one: two bytes of",
+									"// e-acute travel as six characters, so the largest key the API allows is 12 KiB of",
+									"// request line. The oversized key above is ASCII and fits inside the 8 KiB of header",
+									"// nginx and Beast each read by default, which is why it never found this.",
+									"pm.collectionVariables.set(\"encodedKey\", encodeURIComponent(\"é\".repeat(2048)));"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "And reads back under the same encoding",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/{{encodedKey}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"{{encodedKey}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200 with the value\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text()).to.eql(\"at the limit\");",
 									"});"
 								]
 							}
@@ -2955,6 +3164,16 @@
 		},
 		{
 			"key": "oversizedKey",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "largestValue",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "encodedKey",
 			"value": "",
 			"type": "string"
 		}

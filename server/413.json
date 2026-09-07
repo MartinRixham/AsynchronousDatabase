@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "value_too_large",
+    "message": "Value is longer than 16777216 bytes."
+  }
+}

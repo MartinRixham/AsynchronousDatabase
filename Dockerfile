@@ -27,7 +27,7 @@ RUN apk update && \
     apk add libstdc++ rocksdb curl nginx
 COPY server/server.conf /etc/nginx/http.d/default.conf
 COPY --from=ui /ui/dist /usr/share/nginx/html
-COPY server/404.html server/50x.json /usr/share/nginx/html/
+COPY server/404.html server/50x.json server/413.json /usr/share/nginx/html/
 COPY --from=builder /build/bin/asyncdb .
 
 # The store. A volume is mounted over it — docker-compose names one for each node, and the AWS

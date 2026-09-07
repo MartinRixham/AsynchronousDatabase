@@ -268,6 +268,17 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
   builds a `router::request`, and turns an escaping `repository::storage_error` into its own status and
   any other exception into a 500 `storage_error`. HEAD answers the headers of the GET with no body and
   the length the body would have had.
+- **The session reads through a parser of its own, and that is what makes the documented limits
+  reachable.** Beast's defaults are a 1 MiB body and an 8 KiB header, against an API that documents a
+  16 MiB value and a 4 KiB key — and a key travels percent encoded, so three bytes to the byte and
+  12 KiB of request line at worst. Neither default is an error the server answers: **the read itself
+  ends in one and the connection closes with nothing written on it**, so an oversized request was a
+  dead socket rather than `value_too_large`, and a forwarded copy of a large value died between two
+  nodes. `read()` therefore sets `body_limit(record::max_value_size + 1)` — one byte over, so the
+  router is what refuses an oversized value — and `header_limit(3 * record::max_key_size + 8 KiB)`.
+  **`server/server.conf` carries the same two limits for the nginx in front of it** (`client_max_body_size`,
+  `large_client_header_buffers`), and a body over its limit is answered `413 value_too_large` from
+  `server/413.json` rather than nginx's own HTML. Change one of the four and change its pair.
 - **`url`** splits the target at its unencoded slashes *before* percent-decoding each segment, so a key
   containing `/`, `?` or a zero byte stays one segment. Query values are decoded the same way.
 - **`router::router`** matches routes by hand — `/health`, `/table`, `/table/{table}`,

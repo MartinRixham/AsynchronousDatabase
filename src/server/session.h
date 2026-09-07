@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -20,6 +21,11 @@ namespace server
 		boost::beast::flat_buffer buffer;
 
 		boost::beast::http::request<boost::beast::http::string_body> request;
+
+		// The request is read through a parser of this session's own rather than into the message
+		// directly, because that is the only place Beast's own limits can be raised to the ones
+		// this API documents. It is remade for every request, a parser being good for one.
+		std::optional<boost::beast::http::request_parser<boost::beast::http::string_body>> parser;
 
 		std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> http_response;
 

@@ -7,6 +7,7 @@
 #include <curl/curl.h>
 #include <boost/json.hpp>
 
+#include "record/record.h"
 #include "server/server.h"
 #include "listening.h"
 
@@ -180,12 +181,71 @@ TEST_F(server_test, write_then_read_a_record)
 	EXPECT_EQ(response.body, "Eleanor Whitmore");
 }
 
+// The documented limit is a value of 16 MiB and Beast's own default is a request body of one, so
+// without a body limit of its own the parser ends the read in an error and the session closes the
+// connection with no response at all — a documented limit the server never reaches, and a
+// forwarded copy of a large value that dies on the wire between two nodes.
+TEST_F(server_test, write_then_read_the_largest_value)
+{
+	request("PUT", "/table/account", "{}");
+
+	result written = request("PUT", "/table/account/key/4821", std::string(record::max_value_size, 'v'));
+
+	EXPECT_EQ(written.status, CURLE_OK);
+	EXPECT_EQ(written.code, 204);
+
+	result response = get("/table/account/key/4821");
+
+	EXPECT_EQ(response.code, 200);
+	EXPECT_EQ(response.body.size(), record::max_value_size);
+}
+
+// One byte over is the documented error rather than a closed connection, which is what the body
+// limit being one byte above the value limit is for: the parser takes it and the router refuses
+// it, instead of the parser refusing to read it and the session having nothing to answer with.
+TEST_F(server_test, write_a_value_that_is_too_large)
+{
+	request("PUT", "/table/account", "{}");
+
+	result response = request(
+		"PUT", "/table/account/key/4821", std::string(record::max_value_size + 1, 'v'));
+
+	EXPECT_EQ(response.status, CURLE_OK);
+	EXPECT_EQ(response.code, 413);
+	EXPECT_EQ(error_code(response), "value_too_large");
+}
+
 TEST_F(server_test, a_key_travels_percent_encoded)
 {
 	request("PUT", "/table/account", "{}");
 	request("PUT", "/table/account/key/user%2F4821%3Fa%3Db", "a value");
 
 	EXPECT_EQ(get("/table/account/key/user%2F4821%3Fa%3Db").body, "a value");
+}
+
+// The other documented limit that travels through Beast's own defaults. A key is 4 KiB and it
+// travels percent encoded in the request line, so a key of bytes that all have to be encoded is
+// three times that before the target is even decoded — and Beast reads 8 KiB of header by
+// default, which is a documented key the server never sees.
+TEST_F(server_test, write_then_read_the_largest_key)
+{
+	request("PUT", "/table/account", "{}");
+
+	// Two bytes of UTF-8 each, and neither of them a character a path may carry unencoded, so
+	// every byte of the key is three characters of the target.
+	std::string key;
+
+	for (size_t i = 0; i < record::max_key_size / 2; i++)
+	{
+		key += "%C3%A9";
+	}
+
+	result written = request("PUT", "/table/account/key/" + key, "a value");
+
+	EXPECT_EQ(written.status, CURLE_OK);
+	EXPECT_EQ(written.code, 204);
+
+	EXPECT_EQ(get("/table/account/key/" + key).body, "a value");
 }
 
 TEST_F(server_test, read_a_record_that_is_not_there)

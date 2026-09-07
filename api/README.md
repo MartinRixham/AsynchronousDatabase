@@ -61,8 +61,8 @@ that is a create.
 | 0 · Reset | Drop the tables a previous run left, so a re-run starts clean |
 | 1 · Health | Liveness, `write_stalled`, the nodes this instance sees, and a method it refuses |
 | 2 · Declare the table graph | What a service does at every start up: create, create again (200), create with different options (409), a dependency that is not a table (400), a name holding a character a table name may not (400), the reserved name `default` (400), a body that is not a JSON object (400), then inspect and list |
-| 3 · The record lifecycle | Write, read, `HEAD`, overwrite, a JSON value returned byte for byte, the empty value against the missing key, delete, and delete again |
-| 4 · Keys the API must not mangle | A space and a `é`, an encoded slash, a key that is not valid UTF-8 (400), a key over 4 KiB (413) |
+| 3 · The record lifecycle | Write, read, `HEAD`, overwrite, a JSON value returned byte for byte, the empty value against the missing key, a value at the documented 16 MiB, delete, and delete again |
+| 4 · Keys the API must not mangle | A space and a `é`, an encoded slash, a key that is not valid UTF-8 (400), a key over 4 KiB (413), and a key **at** 4 KiB whose every byte has to be encoded — 12 KiB of request line, which is the one the length limits in front of the database are actually measured against |
 | 5 · Scans | Prefix, `values=false`, `from` inclusive against `to` exclusive, `reverse`, two pages and the cursor between them, a foreign cursor (400), an inverted range (400), the whole table |
 | 6 · Delete a range | A range delete with no range (400), a prefix deleted whole, and a key outside it that survived |
 | 7 · Drop the tables | `204`, then `404`, then created again and empty — the data went with the column family |
