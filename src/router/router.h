@@ -1,6 +1,9 @@
 #ifndef ROUTER_ROUTER_H
 #define ROUTER_ROUTER_H
 
+#include <array>
+#include <cstddef>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -25,6 +28,14 @@ namespace router
 
 		cluster::cluster &nodes;
 
+		// Keys are striped over a fixed set of locks rather than given one each: a lock lives as
+		// long as one write and no longer, so what there has to be enough of is the writes in
+		// flight here — which the thread pool bounds — and not the keys in the store. Two keys
+		// that collide are two keys written one after the other and nothing worse.
+		static constexpr size_t write_stripes = 4096;
+
+		std::array<std::mutex, write_stripes> write_locks;
+
 	public:
 		explicit router(repository::repository &repo);
 
@@ -40,6 +51,10 @@ namespace router
 		response route_range(const request &request, const std::string &name);
 
 		response route_record(const request &request, const std::string &name, const std::string &key);
+
+		// The lock that orders writes to this key. Only the leader of the key's partition takes
+		// it: a copy applies the writes one leader sends it, in the order it is sent them.
+		std::mutex &write_lock(const std::string &key);
 
 		// Writes the record on this node when it holds a copy, and on every other node that holds
 		// one. A copy that refuses fails the request.

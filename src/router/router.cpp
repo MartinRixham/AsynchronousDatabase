@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -406,6 +408,11 @@ router::response router::router::route_record(
 
 		ordered.term = lead->term;
 
+		// Holding the key's lock across the write and the fan out is what the order *is*: the
+		// next write of the key does not start until every copy has taken this one, so no copy is
+		// ever applying two writes of one key at a time and they cannot settle in two orders.
+		std::lock_guard<std::mutex> ordering(write_lock(record.key));
+
 		return write_record(ordered, name, record, nodes.replicas(record.key));
 	}
 
@@ -435,6 +442,11 @@ router::response router::router::route_record(
 	}
 
 	return empty_response(boost::beast::http::status::not_found);
+}
+
+std::mutex &router::router::write_lock(const std::string &key)
+{
+	return write_locks[std::hash<std::string>()(key) % write_stripes];
 }
 
 // Every copy of a record is written before the write is answered, so a record is in every zone by

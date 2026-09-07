@@ -1,4 +1,10 @@
+#include <algorithm>
+#include <chrono>
+#include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <boost/beast.hpp>
@@ -1153,6 +1159,128 @@ TEST(router_cluster_test, order_a_delete_through_the_leader)
 	ASSERT_EQ(nodes.sent().size(), 1u);
 	EXPECT_EQ(nodes.sent()[0].first, there);
 	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
+}
+
+namespace
+{
+	// The zones of paired_zones, with a fan out slow enough to be caught overlapping another and a
+	// count of the most writes that were ever inside one at once.
+	class counting_cluster : public cluster::fake_cluster
+	{
+		mutable std::mutex counting;
+
+		mutable size_t inside = 0;
+
+		mutable size_t most = 0;
+
+		void enter() const
+		{
+			std::lock_guard<std::mutex> lock(counting);
+
+			inside++;
+			most = std::max(most, inside);
+		}
+
+		void leave() const
+		{
+			std::lock_guard<std::mutex> lock(counting);
+
+			inside--;
+		}
+
+	public:
+		counting_cluster():
+			fake_cluster(here, std::vector<::cluster::member> {
+				::cluster::member { here, "a" },
+				::cluster::member { partner, "a" },
+				::cluster::member { there, "b" },
+				::cluster::member { elsewhere, "b" }
+			})
+		{
+		}
+
+		// The fan out the ordering lock is held across, which is the whole of what these tests
+		// watch. It answers for the nodes rather than recording what they were asked, because a
+		// fake_cluster remembers that in a vector and two threads remembering at once is a race
+		// of the test's own making.
+		std::optional<router::response> send_all(
+			const std::vector<std::string> &,
+			const router::request &) const override
+		{
+			enter();
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			leave();
+
+			return std::optional<router::response>();
+		}
+
+		size_t most_at_once() const
+		{
+			std::lock_guard<std::mutex> lock(counting);
+
+			return most;
+		}
+	};
+
+	void write_together(router::router &router, const std::vector<std::string> &keys)
+	{
+		std::vector<std::thread> writers;
+
+		for (size_t i = 0; i < keys.size(); i++)
+		{
+			writers.push_back(std::thread(write_record, std::ref(router), "account", keys[i], "a value"));
+		}
+
+		for (size_t i = 0; i < writers.size(); i++)
+		{
+			writers[i].join();
+		}
+	}
+}
+
+// Two clients writing one key at one leader are ordered by it: the fan out of the second does not
+// start until every copy has taken the first, so no copy is ever applying two writes of one key at
+// a time and they cannot settle in two orders.
+TEST(router_cluster_test, order_concurrent_writes_of_one_key)
+{
+	repository::fake_repository repository;
+	counting_cluster nodes;
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.copies("4821", { here, partner });
+	nodes.led_by("4821", here, 41);
+
+	write_together(router, { "4821", "4821", "4821", "4821" });
+
+	EXPECT_EQ(nodes.most_at_once(), 1u);
+	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+}
+
+// The locks are striped and not one lock. Writes of different keys order against nothing and run
+// at once, which is what keeps every write on a node from queueing behind the busiest key on it.
+TEST(router_cluster_test, write_different_keys_at_once)
+{
+	repository::fake_repository repository;
+	counting_cluster nodes;
+	router::router router(repository, nodes);
+	std::vector<std::string> keys;
+
+	create_table(router, "account");
+
+	for (size_t i = 0; i < 8; i++)
+	{
+		keys.push_back("482" + std::to_string(i));
+
+		// A leader holding no copy of the key, so that a write fans out and touches no store:
+		// two threads writing one fake_repository is a race of the test's own making.
+		nodes.copies(keys.back(), { partner, there });
+		nodes.led_by(keys.back(), here, 41);
+	}
+
+	write_together(router, keys);
+
+	EXPECT_GT(nodes.most_at_once(), 1u);
 }
 
 // A read is not ordered by anybody: it is answered by a copy, and the leader is not in its way.
