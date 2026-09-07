@@ -428,17 +428,40 @@ none (which is also what makes the gate below answerable, since a missing reposi
 `describe-images` and reads as a release) and, **only if the tag in the `version` file does not already
 exist in ECR**, pushes it, writes that tag to the SSM parameter `/asyncdb/version` and git-tags the commit.
 It then mirrors the etcd tag `etcd-version` names into ECR if it is not there already and writes
-`/asyncdb/etcd` — unconditionally, whatever the version gate decided — `make create-stack`s the
-CloudFormation stack, waits for `/health` to name six nodes, runs the
-Postman collection against the stack's `Url` output with `newman`, then the Playwright journeys and
-then `perf/write.sh` and `perf/read.sh` against that same address, and `make delete-stack`s it again —
-whether they passed or not, so a failing assertion, journey or load run fails the build and still
+`/asyncdb/etcd` — unconditionally, whatever the version gate decided.
+
+**Everything that needs a running cluster is a second job, `deploy-and-verify`, and it runs once per
+version rather than once per push.** It `make create-stack`s the CloudFormation stack, waits for
+`/health` to name six nodes, runs the Postman collection against the stack's `Url` output with
+`newman`, then the Playwright journeys, then `perf/write.sh` and `perf/read.sh` against that same
+address, then `chaos/validate.sh` and `chaos/run.sh`, and `make delete-stack`s it again — whether they
+passed or not, so a failing assertion, journey, load run or experiment fails the build and still
 leaves nothing running. The teardown deletes only a stack that same run created, so a stack standing
 by hand makes `create-stack` fail and is then left alone (`ClusterALB` is a fixed name, so there can
 only be one).
-Bump `version` to cut a release; leaving it unchanged makes CI a no-op publish. AWS infrastructure
-lives in `cloudformation.yaml`, driven by the `Makefile` (`make create-stack` / `update-stack` /
-`delete-stack`), and is documented in `doc/deployment/`.
+
+**The deploy gate is a `verified/{version}` git tag, and it is not the release gate.** That one asks
+ECR whether the image is published, and the image is pushed *before* a single test runs against a
+stack — so a published version is not a version that passed, and gating the deploy on it would skip
+the whole suite for a version whose first run went red. `deploy-and-verify` therefore runs only when
+`git ls-remote --exit-code --tags origin refs/tags/verified/$VERSION` finds nothing, and the job's
+last step before the teardown pushes that tag. That step carries no `if:` of its own, which is the
+whole mechanism: a step with no condition runs only when every step before it succeeded. So a version
+that fails is deployed and retried on every push until it passes, and a version that has passed is
+never stood up again — which is what keeps nine instances, an ALB and about $2.80 of FIS
+action-minutes off a push that only touched a comment.
+
+**Nothing is held outside the repository to make that work.** `git tag -l 'verified/*'` is the list of
+versions that have been through the suite, `git push --delete origin verified/{version}` is how one is
+made to go through it again without bumping it, and the two tags on a released commit say the two
+different things: the bare `{version}` tag means published, `verified/{version}` means it passed. The
+gate asks the remote rather than the working tree, because the checkout is one commit deep and fetches
+no tags; `--exit-code` is 0 for found and 2 for not, and a remote that cannot be reached at all is 128,
+which reads as not verified and deploys. **The gate fails towards spending money, never towards
+skipping a suite that should have run.**
+Bump `version` to cut a release; leaving it unchanged makes CI a no-op publish that deploys nothing.
+AWS infrastructure lives in `cloudformation.yaml`, driven by the `Makefile` (`make create-stack` /
+`update-stack` / `delete-stack`), and is documented in `doc/deployment/`.
 
 `version` is the only place the asyncdb tag is written by hand (`etcd-version` is the same thing for
 the mirrored etcd tag — see [Machine images](#machine-images)). The template's `Version` parameter is an

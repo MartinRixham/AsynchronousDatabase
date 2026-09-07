@@ -1,7 +1,16 @@
 # The release gate
 
-The last five steps of the job are one decision — has this version been
-published already? — and the three things that happen if it has not.
+Most of `build-and-push` is one decision — has this version been published
+already? — and the three things that happen if it has not.
+
+It is not the only gate in the workflow, and the two are easy to confuse.
+This one decides whether the **image is published**. [The deploy
+gate](/pipeline/#the-deploy-gate) decides whether the **stack is stood up and
+tested**, and it reads a `verified/{version}` tag rather than ECR — because the
+push below happens before any of those tests run, so a published version is not
+yet a version that passed. A released commit ends up carrying both tags, and they
+say different things: the bare `0.0.2` means published, `verified/0.0.2` means it
+went through the suite and passed.
 
 ## Reading the version
 
@@ -136,4 +145,6 @@ is one, is the push.
 
 Leaving `version` alone is a deliberate no-op release: the build still runs in
 full, ECR already has the tag, `publish` is `false`, and the three publish steps
-skip.
+skip. Once that version has had one green run, the whole `deploy-and-verify` job
+skips with them, so a no-op release costs the image build and no AWS at all — see
+[the deploy gate](/pipeline/#the-deploy-gate).

@@ -12,6 +12,10 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
+    outputs:
+      verify: ${{ steps.check_verified.outputs.verify }}
+      version: ${{ steps.get_version.outputs.version }}
+
     steps:
 
     - name: Checkout code
@@ -37,6 +41,7 @@ jobs:
         VERSION=$(cat version)
         echo "Version: $VERSION"
         echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
 
     - name: Check if version exists in ECR
       id: check_version
@@ -53,6 +58,33 @@ jobs:
           echo "publish=false" >> $GITHUB_OUTPUT
         else
           echo "publish=true" >> $GITHUB_OUTPUT
+        fi
+
+    # The deploy gate, and deliberately not the release gate above it. That one asks whether the
+    # image is in ECR, and the image is pushed before a single test has run against a stack — so a
+    # published version is not a version that passed, and reusing `publish` here would skip the
+    # deploy for a version whose first run went red.
+    #
+    # This asks the other question: has this version already had a build that went green all the
+    # way through the chaos suite? A `verified/$VERSION` tag is the answer, pushed at the end of
+    # that run and nowhere else — so a version that fails is retried on every push until it
+    # passes, and a version that passed is never stood up again.
+    #
+    # The remote is asked rather than the local repository, because the checkout is one commit
+    # deep and fetches no tags. `--exit-code` is 0 when the ref is there and 2 when it is not; a
+    # remote that cannot be reached at all is 128, which reads here as "not verified" and deploys.
+    # That is the safe direction: this gate fails towards spending money, never towards skipping
+    # a suite that should have run.
+    - name: Check whether this version has passed already
+      id: check_verified
+      run: |
+        if git ls-remote --exit-code --tags origin "refs/tags/verified/$VERSION" > /dev/null 2>&1
+        then
+          echo "Version $VERSION has a passing build already. Deploying nothing."
+          echo "verify=false" >> $GITHUB_OUTPUT
+        else
+          echo "Version $VERSION has no passing build yet."
+          echo "verify=true" >> $GITHUB_OUTPUT
         fi
 
     - name: Tag and push Docker image to ECR
@@ -107,6 +139,31 @@ jobs:
           --type String \
           --value "$ETCD_VERSION" \
           --overwrite
+
+  # Everything that needs a running cluster, in a job of its own so that one condition gates all
+  # of it: a step added here is gated by being here, rather than by somebody remembering to
+  # repeat the condition on it. The whole job is the expensive half of the pipeline — nine
+  # instances, an ALB and the FIS experiments — and it runs once per version rather than once per
+  # push.
+  deploy-and-verify:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: needs.build-and-push.outputs.verify == 'true'
+
+    env:
+      VERSION: ${{ needs.build-and-push.outputs.version }}
+
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-west-2
 
     - name: Deploy the stack
       id: deploy
@@ -198,6 +255,24 @@ jobs:
 
     - name: Run the chaos suite
       run: chaos/run.sh
+
+    # The last thing before the teardown, and it carries no condition of its own: a step with no
+    # `if` runs only when every step before it succeeded, which is exactly what this records.
+    # From here on a push that does not bump `version` skips this whole job.
+    #
+    # A tag rather than anything held in AWS, so that what the pipeline knows about a version is
+    # in the repository beside the version itself: `git tag -l 'verified/*'` is the list of
+    # versions that have been through the suite, and deleting one is how a version is made to go
+    # through it again. It needs no credentials of its own — `actions/checkout` persisted the
+    # ones this pushes on — and no race, because the workflow's concurrency group serialises it.
+    - name: Record that this version passed
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag "verified/$VERSION"
+        git push origin "verified/$VERSION"
+
+        echo "Version $VERSION has passed. Subsequent pushes on it will deploy nothing."
 
     - name: Tear down the chaos role
       if: always() && steps.chaos_role.outputs.created == 'true'
