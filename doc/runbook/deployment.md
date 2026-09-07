@@ -220,7 +220,7 @@ the tag.
 
 ## The build failed after the stack came up
 
-The release gate runs against the deployed stack, in order: wait for `/health` to
+`deploy-and-verify` runs against the deployed stack, in order: wait for `/health` to
 name six nodes, then `newman`, then the Playwright journeys, then `perf/write.sh`
 and `perf/read.sh`. The stack is deleted afterwards **whether they passed or
 not**, so a failure leaves nothing running and nothing to inspect.

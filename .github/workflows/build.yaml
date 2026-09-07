@@ -43,44 +43,17 @@ jobs:
         echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-    - name: Check if version exists in ECR
-      id: check_version
+    - name: Create the asyncdb repository
       run: |
         aws ecr describe-repositories --repository-name asyncdb > /dev/null 2>&1 \
           || aws ecr create-repository --repository-name asyncdb > /dev/null
 
-        if aws ecr describe-images \
-          --repository-name asyncdb \
-          --image-ids imageTag=$VERSION \
-          --query 'imageDetails[0].imageTags[0]'
-        then
-          echo "Image version $VERSION already exists in ECR."
-          echo "publish=false" >> $GITHUB_OUTPUT
-        else
-          echo "publish=true" >> $GITHUB_OUTPUT
-        fi
-
-    # The deploy gate, and deliberately not the release gate above it. That one asks whether the
-    # image is in ECR, and the image is pushed before a single test has run against a stack — so a
-    # published version is not a version that passed, and reusing `publish` here would skip the
-    # deploy for a version whose first run went red.
-    #
-    # This asks the other question: has this version already had a build that went green all the
-    # way through the chaos suite? A `verified/$VERSION` tag is the answer, pushed at the end of
-    # that run and nowhere else — so a version that fails is retried on every push until it
-    # passes, and a version that passed is never stood up again.
-    #
-    # The remote is asked rather than the local repository, because the checkout is one commit
-    # deep and fetches no tags. `--exit-code` is 0 when the ref is there and 2 when it is not; a
-    # remote that cannot be reached at all is 128, which reads here as "not verified" and deploys.
-    # That is the safe direction: this gate fails towards spending money, never towards skipping
-    # a suite that should have run.
     - name: Check whether this version has passed already
       id: check_verified
       run: |
-        if git ls-remote --exit-code --tags origin "refs/tags/verified/$VERSION" > /dev/null 2>&1
+        if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" > /dev/null 2>&1
         then
-          echo "Version $VERSION has a passing build already. Deploying nothing."
+          echo "Version $VERSION has a passing build already. Publishing and deploying nothing."
           echo "verify=false" >> $GITHUB_OUTPUT
         else
           echo "Version $VERSION has no passing build yet."
@@ -88,31 +61,20 @@ jobs:
         fi
 
     - name: Tag and push Docker image to ECR
-      if: steps.check_version.outputs.publish == 'true'
+      if: steps.check_verified.outputs.verify == 'true'
       run: |
         IMAGE_URI=${{ steps.ecr-login.outputs.registry }}/asyncdb:$VERSION
         docker tag asyncdb:latest $IMAGE_URI
         docker push $IMAGE_URI
 
     - name: Record published version in SSM
-      if: steps.check_version.outputs.publish == 'true'
+      if: steps.check_verified.outputs.verify == 'true'
       run: |
         aws ssm put-parameter \
           --name /asyncdb/version \
           --type String \
           --value "$VERSION" \
           --overwrite
-
-    - name: Tag Git repo with version
-      if: steps.check_version.outputs.publish == 'true'
-      run: |
-        git fetch --tags
-        if ! git show -s $VERSION; then
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$VERSION"
-          git push origin "$VERSION"
-        fi
 
     - name: Mirror etcd into ECR
       run: |
@@ -140,11 +102,6 @@ jobs:
           --value "$ETCD_VERSION" \
           --overwrite
 
-  # Everything that needs a running cluster, in a job of its own so that one condition gates all
-  # of it: a step added here is gated by being here, rather than by somebody remembering to
-  # repeat the condition on it. The whole job is the expensive half of the pipeline — nine
-  # instances, an ALB and the FIS experiments — and it runs once per version rather than once per
-  # push.
   deploy-and-verify:
     runs-on: ubuntu-latest
     needs: build-and-push
@@ -222,12 +179,6 @@ jobs:
         path: automation/playwright-report/
         retention-days: 7
 
-    # Two runs, because size and count measure different things and neither subsumes the other.
-    # Many small requests are the throughput and the percentiles — two thousand of them is a
-    # distribution worth reading. A few large ones are the path a big value takes: spooled to disk
-    # by nginx, read whole by the parser, and fanned out to the copy in every zone, which is a load
-    # the deployment could not carry at all until both limits were raised to the documented 16 MiB.
-    # The second run drops and recreates the table, so it starts on an empty one as the first did.
     - name: Run the load tests
       env:
         THREADS: '8'
@@ -237,8 +188,6 @@ jobs:
         REQUESTS=250 VALUE_BYTES=1024 perf/write.sh
         REQUESTS=250 URL=$BASE/table/perf_load/key/0 perf/read.sh
 
-        # 8 × 32 of two megabytes is half a gigabyte in each direction, from a runner loading
-        # eu-west-2 over the internet. Raising the size is what brings the count down.
         REQUESTS=32 VALUE_BYTES=2097152 perf/write.sh
         REQUESTS=32 URL=$BASE/table/perf_load/key/0 perf/read.sh
 
@@ -253,43 +202,17 @@ jobs:
     - name: Validate the experiment templates
       run: chaos/validate.sh
 
-    # FIS bills per action-minute of an action that actually ran, and `fis_stop_now` in
-    # chaos/harness.sh takes each fault away as soon as that experiment's assertions are done —
-    # so for five of the seven a duration is now a **ceiling** and not the bill, and there is
-    # nothing to be saved by shortening one. They are deliberately left long: a fault that
-    # expires mid-assertion is a false failure and not a weaker test, because `scan-loses-a-node`
-    # asserts that a scan *fails* while a node is deaf.
-    #
-    # The exceptions are the two that still pay their whole duration, and only one of them can be
-    # made cheaper. `node-stops` has no duration on its action at all — it completes when the
-    # instance stops. `etcd-quorum-lost` stays on its timer because what starts the etcd members
-    # again is the action's own startInstancesAfterDuration, which an early stop may or may not
-    # honour; its comment has the reasoning. Its assertions are an `await` bounded by
-    # CHAOS_SETTLE, 10 writes and 60 reads against a cluster of one that answers fast either way
-    # — about 120 seconds — so PT3M is above even the worst case and saves the minute.
-    #
-    # A duration in seconds becomes PT$((seconds / 60))M, so keep any of these a whole number of
-    # minutes: 150 would be a document told to run 150 seconds inside an action stopped at PT2M.
     - name: Run the chaos suite
       env:
         CHAOS_ETCD_DURATION: PT3M
       run: chaos/run.sh
 
-    # The last thing before the teardown, and it carries no condition of its own: a step with no
-    # `if` runs only when every step before it succeeded, which is exactly what this records.
-    # From here on a push that does not bump `version` skips this whole job.
-    #
-    # A tag rather than anything held in AWS, so that what the pipeline knows about a version is
-    # in the repository beside the version itself: `git tag -l 'verified/*'` is the list of
-    # versions that have been through the suite, and deleting one is how a version is made to go
-    # through it again. It needs no credentials of its own — `actions/checkout` persisted the
-    # ones this pushes on — and no race, because the workflow's concurrency group serialises it.
     - name: Record that this version passed
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git tag "verified/$VERSION"
-        git push origin "verified/$VERSION"
+        git tag "$VERSION"
+        git push origin "$VERSION"
 
         echo "Version $VERSION has passed. Subsequent pushes on it will deploy nothing."
 

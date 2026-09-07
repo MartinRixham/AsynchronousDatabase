@@ -537,7 +537,7 @@ are bounded by anything else.
 **This page does not assert a throughput number, because the stack measures its
 own.** `perf/read.sh` and `perf/write.sh` drive a running deployment and report
 latency percentiles, and
-[the release runs them against the real stack](/pipeline/release) after the
+[the pipeline runs them against the real stack](/pipeline/#the-jobs) after the
 Postman collection and the browser journeys. That is the number to divide the
 fixed cost by, and it is worth re-measuring rather than inheriting: it moves
 with `InstanceType`, with value size, and with whether the load is hot enough to
@@ -557,7 +557,7 @@ without buying a copy.
 
 ## What the pipeline costs
 
-The [release](/pipeline/release) creates the whole stack, waits for six nodes,
+The [deploy job](/pipeline/#the-jobs) creates the whole stack, waits for six nodes,
 runs the Postman collection, the Playwright journeys and both load scripts, and
 deletes it again. At $0.182 an hour, **a stack standing for half an hour costs
 about eleven cents** — EC2 bills per second past a one minute minimum, and EBS
