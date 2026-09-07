@@ -32,6 +32,12 @@ count=$(echo "$deaf" | wc -l)
 expect "$count" 3 "one node was picked in each of three zones"
 [ "$count" = 3 ] || { verdict; exit 1; }
 
+# A node's own zone never includes itself, so a deaf node answers a scan out of its own store and
+# the one node of its zone it can still reach: the fault is in what arrives, and nothing stops it
+# asking. Half the nodes are deaf, so a scan through the load balancer is a coin toss, and the
+# assertion below is made of a node that hears.
+hearing=$(instances asyncdb | cut -f1 | grep -vxF "$deaf" | head -1)
+
 seconds=${CHAOS_DEAF_SECONDS:-300}
 
 # Everything addressed to port 8080 that is not addressed to another instance is a peer's request
@@ -39,6 +45,8 @@ seconds=${CHAOS_DEAF_SECONDS:-300}
 # What the container sends to a peer's 8080 still carries that peer's address and is left alone, so
 # the node goes deaf without going blind: it answers no peer and still forwards for a client.
 cidr=$(aws ec2 describe-vpcs --vpc-ids "$vpc" --query 'Vpcs[0].CidrBlock' --output text)
+
+match="-p tcp --dport 8080 ! -d $cidr"
 
 echo "  Blackholing port 8080 into the container on $(echo "$deaf" | tr '\n' ' ')"
 
@@ -61,7 +69,7 @@ cat > "$work/template.json" <<EOF
 			"parameters": {
 				"duration": "PT$((seconds / 60))M",
 				"documentArn": "arn:aws:ssm:$region::document/AWS-RunShellScript",
-				"documentParameters": $(blackhole_parameters "$seconds" "-p tcp --dport 8080 ! -d $cidr")
+				"documentParameters": $(blackhole_parameters "$seconds" "$match")
 			},
 			"targets": { "Instances": "Deaf" }
 		}
@@ -87,13 +95,16 @@ holds '(.nodes | length) == 6 and (.zones | length) == 3' 30 \
 expect_readable 40 8 "every key is read, from a copy that answers or from a deaf copy itself"
 printf '  ---- reads with a node deaf in every zone: %s\n' "$(codes)"
 
-# A scan is not that. Every zone is short a node, and there is no fourth zone.
-scan=$(scan_status)
-expect_not "$scan" 200 "a scan fails when every zone has a node that does not answer"
+# A scan is not that. Every zone is short a node, and there is no fourth zone — and it fails with
+# a 5xx rather than a refusal, which is the difference between a zone that cannot be asked and a
+# cursor that no zone would take.
+scan=$(node_status "$hearing" "/table/$table/key?limit=100")
+said="a scan fails with a 5xx, and not a refusal, when every zone has a node that does not answer"
 
 case $scan in
-	5*) result 0 "the scan fails with a 5xx and not a refusal — $scan" ;;
-	*) result 1 "the scan fails with a 5xx and not a refusal — $scan" ;;
+	5*) result 0 "$said — $scan from $hearing" ;;
+	'') result 1 "$said — $hearing could not be asked" ;;
+	*) result 1 "$said — $scan from $hearing" ;;
 esac
 
 # Writes are reported and not asserted on. The runbook says reads and writes of individual keys
@@ -103,11 +114,13 @@ esac
 printf '  ---- %s of 20 writes were refused while three nodes were deaf\n' "$(write_check 20)"
 
 fis_stop_now
+blackhole_clear "$match" $deaf
 
-await '(.nodes | length) == 6 and (.zones | length) == 3' "$settle" \
-	"every node is answering again"
+# The membership is what this fault never touched — the assertion above is that it held at six
+# nodes and three zones throughout — so it is no recovery check here. A write is: it needs every
+# copy of its key, and seven writes in eight touched a deaf node a moment ago.
+await_writes 20 "$settle" "every node answers its peers again"
 
 expect "$(scan_status)" 200 "the scan is answered once a zone is whole"
-expect_writes 20 "every write is taken once every copy answers"
 
 verdict

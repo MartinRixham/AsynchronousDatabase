@@ -161,6 +161,15 @@ node_health()
 	ssm_run "$1" 'curl -s --max-time 5 http://localhost:8080/health'
 }
 
+# node_status <instance> <path> — the status one node gives to a request made on the node itself.
+# A fault that leaves some nodes answering and others not is one no assertion through the load
+# balancer can make: which answer comes back then says as much about the routing as about the
+# fault.
+node_status()
+{
+	ssm_run "$1" "curl -s -o /dev/null --max-time 15 -w '%{http_code}' 'http://localhost:8080$2'"
+}
+
 # ---------------------------------------------------------------------------- the data
 
 seed()
@@ -308,6 +317,31 @@ expect_writes()
 	else
 		result 1 "$2 — $failed of $1 did not answer 2xx: $(codes)"
 	fi
+}
+
+# await_writes <how many> <timeout> <description> — every copy of a key takes a write again. A
+# write needs every copy, so this is the assertion that sees a node that has stopped answering its
+# peers and is still renewing its lease: the membership await waits on says nothing about that,
+# because a node in it is a node that renews and not a node that answers.
+await_writes()
+{
+	local deadline=$((SECONDS + $2)) failed
+
+	while :; do
+		failed=$(write_check "$1")
+
+		if [ "$failed" = 0 ]; then
+			result 0 "$3"
+			return 0
+		fi
+
+		[ "$SECONDS" -lt "$deadline" ] || break
+
+		sleep 5
+	done
+
+	result 1 "$3 — $failed of $1 did not answer 2xx: $(codes)"
+	return 1
 }
 
 scan_status()
@@ -499,9 +533,19 @@ expect_not()
 # (cluster::config::timeout_seconds), so a dropped packet is a node that hangs, and what these two
 # are about is a node that does not answer: a reset says so at once, the copy that does answer is
 # asked next, and node-latency is the experiment about waiting.
+#
+# **What ends the fault is blackhole_clear and not this script.** The timers here are what take the
+# rule out of a run that died holding it, and they are minutes long: an experiment that waited for
+# one would leave every experiment after it measuring this fault.
+blackhole_rule()
+{
+	printf '%s -j REJECT --reject-with tcp-reset' "$1"
+}
+
 blackhole_parameters()
 {
-	local seconds=$1 rule="$2 -j REJECT --reject-with tcp-reset"
+	local seconds=$1 rule
+	rule=$(blackhole_rule "$2")
 
 	jq -n --arg script "$(cat <<EOF
 set -o errexit
@@ -530,6 +574,37 @@ remove
 echo "removed: DOCKER-USER \$rule"
 EOF
 )" '{ commands: [ $script ] } | tojson'
+}
+
+# blackhole_clear <iptables match> <instance> ... — take the rule out over Run Command, which is
+# how these two faults are actually ended. Cancelling a Run Command does not run the trap in the
+# script that installed the rule, so a stopped experiment leaves it standing until one of that
+# script's own timers expires — long after the assertions are done, and against everything that
+# runs next. Deleting a rule that is not there is nothing, so this is right whatever the trap did.
+#
+# The agent answers a node that is deaf to its peers: a request the host makes to a published port
+# is translated on its way out of the host and never crosses FORWARD, which is where the rule is.
+blackhole_clear()
+{
+	local match=$1 rule delete check id answered
+	shift
+
+	rule=$(blackhole_rule "$match")
+
+	# Breaking out of a delete that failed matters more than it looks: a loop that cannot delete
+	# what it can still find is a Run Command that never returns.
+	delete="while iptables -C DOCKER-USER $rule 2> /dev/null; do"
+	delete="$delete iptables -D DOCKER-USER $rule || break; done"
+
+	# The delete is not trusted either. What comes back is what the chain says afterwards.
+	check="iptables -C DOCKER-USER $rule 2> /dev/null && echo present || echo cleared"
+
+	for id in "$@"; do
+		answered=$(ssm_run "$id" "$delete; $check")
+
+		[ "${answered:-}" = cleared ] \
+			|| echo "  $id is still holding the rule — ${answered:-it could not be asked}"
+	done
 }
 
 # fis_start <template file> — create the experiment template, start it, and remember both so
@@ -701,11 +776,11 @@ fis_await_end()
 # billed for two, where fis_await_end below pays the whole six. The durations stay long because a
 # fault that expires mid-assertion is a false failure, and cost nothing to keep long.
 #
-# A stopped experiment removes its own fault three ways, and never by being waited out: the
-# agentless actions undo what they installed, the AWSFIS-Run-* documents roll back when their
-# command is cancelled, and the script in blackhole_parameters traps the TERM that the cancellation
-# sends and deletes its rule. Nothing here takes that on trust: the recovery assertion after every
-# call is the check.
+# A stopped experiment removes its own fault, and never by being waited out — except for a rule
+# blackhole_parameters installed. The agentless actions undo what they installed and the
+# AWSFIS-Run-* documents roll back when their command is cancelled; cancelling AWS-RunShellScript
+# runs no trap, so the two experiments that use it follow this call with blackhole_clear. Nothing
+# here takes any of that on trust: the recovery assertion after every call is the check.
 fis_stop_now()
 {
 	local deadline state

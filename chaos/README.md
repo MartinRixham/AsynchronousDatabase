@@ -136,9 +136,15 @@ for exactly this, and it is the one a container's traffic passes through.
 The rule **rejects** rather than drops. A node waits thirty seconds on another node, so a dropped
 packet is a node that hangs and a reset is a node that does not answer, which is what these two
 are about — the copy that does answer is asked next, and `node-latency` is the experiment about
-waiting. The script takes the rule out again when its time is up, when it is signalled, and from a
-`setsid` of its own if it is killed outright, which is the same belt and braces the `AWSFIS-Run-*`
-documents get from `at`.
+waiting.
+
+**Both experiments take the rule out themselves**, with `blackhole_clear`, over the same Run
+Command the fault went in through. Cancelling a Run Command runs no trap in the script it
+cancelled, so the timers in that script — its own `sleep`, and a `setsid` of its own if it is
+killed outright — are what clear a rule a run died holding, and they are minutes long. Waiting for
+one of those is every experiment after this one measuring this fault instead of its own, which is
+what a rule left standing looks like: the membership is untouched, reads carry on, and every write
+and every table create fans out to a node that cannot be reached and answers `500`.
 
 `node-latency` needs none of this, because `tc` shapes the host's own interface and a container's
 traffic leaves through it like anything else. That is why it was the one SSM experiment that
@@ -181,6 +187,12 @@ balancer happens to send to one of the deaf nodes themselves, which are still in
 hold them. The experiment asserts that every key is read, and gives the load balancer the attempts
 it takes to come round to them.
 
+The scan is the same arithmetic from the other side. A node's own zone never includes itself, so a
+deaf node answers a scan out of its own store and the one node of its zone it can still reach —
+the rule is on what arrives, and nothing stops a deaf node asking. Half the nodes are deaf, so a
+scan through the load balancer is a coin toss, and the experiment asks a node that hears over Run
+Command instead.
+
 ## Everything is an environment variable
 
 As in [`perf/`](../perf).
@@ -208,12 +220,14 @@ what lets the durations stay generous: a fault that expires mid-assertion is a *
 rather than a weaker test, because `scan-loses-a-node` asserts that a scan **fails** while a node
 is deaf and goes red if the node comes back early. Shortening one of those five saves nothing now.
 
-A stopped experiment removes its own fault, and by three different routes. The agentless actions
-undo what they installed; the `AWSFIS-Run-*` documents roll back when their command is cancelled;
-and the script in `blackhole_parameters` traps the `TERM` that the cancellation sends and deletes
-its rule, which is what that trap is for — its detached safety net still fires later regardless,
-and removing a rule that is already gone is nothing. None of it is taken on trust: the recovery
-assertion that every experiment runs immediately afterwards is the check that the fault went.
+A stopped experiment removes its own fault. The agentless actions undo what they installed and
+the `AWSFIS-Run-*` documents roll back when their command is cancelled; the two that install a
+`DOCKER-USER` rule delete it themselves afterwards, because cancelling `AWS-RunShellScript` runs
+no trap. None of it is taken on trust: the recovery assertion that every experiment runs
+immediately afterwards is the check that the fault went — and it has to be an assertion the fault
+would fail. `scan-loses-a-node` waits on a **write**, not on the membership: the membership is the
+one thing that fault never changes, and a recovery check that cannot fail is how three deaf nodes
+survive into the next experiment.
 
 **Two still pay their whole duration.** `node-stops` has no duration on its action at all — it
 completes when the instance stops, and is one action-minute whatever the assertions do.

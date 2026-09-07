@@ -147,11 +147,15 @@ ran, and `fis_stop_now` takes each fault away as soon as that experiment's asser
 than watching it expire — so five of the seven are billed for what they used, and shortening one of
 those saves nothing. That is what lets the durations stay generous: **a fault that expires
 mid-assertion is a false failure and not a weaker test**, because `scan-loses-a-node` asserts that a
-scan *fails* while a node is deaf. A stopped experiment removes its own fault three ways — the
-agentless actions undo what they installed, the `AWSFIS-Run-*` documents roll back when their command
-is cancelled, and the script in `blackhole_parameters` traps the `TERM` that cancelling sends and
-deletes its rule, which is what that trap is for. None of it is taken on trust: the recovery assertion
-every experiment runs next is the check that the fault went.
+scan *fails* while a node is deaf. A stopped experiment removes its own fault: the agentless actions
+undo what they installed and the `AWSFIS-Run-*` documents roll back when their command is cancelled.
+**A `DOCKER-USER` rule does not** — cancelling `AWS-RunShellScript` runs no trap in the script it
+cancelled, and the timers in that script are minutes long — so the two experiments that install one
+call `blackhole_clear` after `fis_stop_now` and delete it themselves. None of it is taken on trust:
+the recovery assertion every experiment runs next is the check that the fault went, **and it has to
+be one the fault would fail**. A rule left standing changes no membership, so `scan-loses-a-node`
+waits on a write rather than on `/health`: a write needs every copy, and a node no peer can reach
+fails one.
 
 **Two still pay their whole duration.** `node-stops`' action carries no duration, so it is one
 action-minute however long its assertions take. `etcd-quorum-lost` keeps `fis_await_end` because what
@@ -173,7 +177,10 @@ pipeline deletes next — so `CHAOS_ETCD_DURATION` is a real duration there, and
   `etcd-unreachable` run `AWS-RunShellScript` and a rule of their own in the `DOCKER-USER` chain,
   because **`AWSFIS-Run-Network-Blackhole-Port` blocks nothing here**: it writes into `INPUT` and
   `OUTPUT`, and a container behind a published port is reached through `FORWARD` and sends through
-  it too, so the document reports success and injects nothing. The agentless three
+  it too, so the document reports success and injects nothing. A deaf node is still asked over Run
+  Command, because a request the host makes to a published port never crosses `FORWARD` — which is
+  how the rule is taken out again, and how `scan-loses-a-node` asks a scan of a node that hears
+  rather than of whichever one the load balancer picked. The agentless three
   (`aws:ec2:stop-instances`, `aws:network:disrupt-connectivity`) need nothing of the instances,
   which is why they are first. `chaos/README.md` is the page.
 - **`disk-fills` tests the proxy as much as the store.** nginx spools a request body over 8 KiB

@@ -35,6 +35,8 @@ echo "  Blackholing the path from $isolated to etcd."
 
 seconds=${CHAOS_ETCD_SECONDS:-240}
 
+match="-p tcp --dport 2379"
+
 # Nothing else on a database node is forwarded to port 2379, so the port alone is the etcd client
 # and no address is needed to name it. The node is left whole in every other direction: it serves
 # every request it is given and answers every peer, which is what makes this one node losing etcd
@@ -58,7 +60,7 @@ cat > "$work/template.json" <<EOF
 			"parameters": {
 				"duration": "PT$((seconds / 60))M",
 				"documentArn": "arn:aws:ssm:$region::document/AWS-RunShellScript",
-				"documentParameters": $(blackhole_parameters "$seconds" "-p tcp --dport 2379")
+				"documentParameters": $(blackhole_parameters "$seconds" "$match")
 			},
 			"targets": { "Instances": "Node" }
 		}
@@ -92,6 +94,7 @@ printf '  ---- %s of 60 reads answered something other than 2xx\n' "$missed"
 	&& echo "  ---- a node that has lost etcd but is still taking client traffic, exactly as documented"
 
 fis_stop_now
+blackhole_clear "$match" "$isolated"
 
 # It re-registers from scratch on the pass after a renewal fails rather than believing it is
 # still a member, which is why nothing has to be restarted.
