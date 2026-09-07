@@ -13,9 +13,8 @@
 namespace
 {
 	// A key is 4 KiB of UTF-8 and travels percent encoded, so three characters to the byte at
-	// worst. The rest is the header around it: the route, a table name of up to 64 characters,
-	// the host, the content type, and the two headers a forwarded write carries. Beast reads
-	// 8 KiB of header by default, which is less than the largest documented key on its own.
+	// worst. The rest is the header around it: the route, a table name, the host, the content
+	// type, and the two headers a forwarded write carries.
 	constexpr size_t max_header_size = 3 * record::max_key_size + 8 * 1024;
 
 	boost::beast::http::response<boost::beast::http::string_body> make_response(
@@ -167,11 +166,9 @@ void server::session::read()
 {
 	// Beast's defaults are both below what this API documents: a megabyte of body where a value
 	// is sixteen, and 8 KiB of header where a percent encoded key is twelve. Neither is an error
-	// the server answers — the read itself ends in one, and the session closes the connection
-	// with nothing written on it — so the documented limits were never reachable, and a copy of
-	// a large value forwarded between two nodes died on the wire. The body limit is one byte
-	// above the value limit, which is what leaves the router to refuse an oversized value and
-	// the client to be told value_too_large rather than nothing at all.
+	// the server answers — the read ends in one and the connection closes with nothing written on
+	// it — so the limits are raised here instead. The body limit is one byte above the value
+	// limit, which leaves the router to refuse an oversized value with value_too_large.
 	parser.emplace();
 	parser->body_limit(record::max_value_size + 1);
 	parser->header_limit(max_header_size);

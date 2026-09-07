@@ -11,8 +11,7 @@ std::shared_ptr<server::server> database_server;
 void handle_signal(int)
 {
 	// Closing the acceptor is what ends serving, and main leaves on its own once it has. Exiting
-	// from here instead would destroy the io_context under the threads still running it, and the
-	// process would hang on the way out rather than stop.
+	// here instead would destroy the io_context under the threads still running it.
 	database_server->close();
 }
 

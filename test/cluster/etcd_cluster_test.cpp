@@ -299,8 +299,8 @@ TEST(etcd_cluster_test, register_the_zone_the_node_is_in)
 	cluster.stop();
 }
 
-// A node registered by a version that had never heard of zones is a node in no zone rather than a
-// node the membership does not have, so a cluster half way through an upgrade still partitions.
+// A node registered as a bare address is a node in no zone rather than a node the membership does
+// not have, so a cluster of nodes that name no zone still partitions.
 TEST(etcd_cluster_test, read_a_node_that_registered_nothing_but_its_address)
 {
 	http::fake_client http;

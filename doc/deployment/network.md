@@ -62,14 +62,9 @@ gateway is a zonal one, so there is nothing zone-specific in it to get wrong.
 
 ## Why the instances are private
 
-Both tiers used to sit in public subnets with `MapPublicIpOnLaunch`, because
-both pull as they start — the database instances from ECR, the etcd instances
-from `quay.io` — and the cheap way to let them was to give every instance a
-public address. The security groups were then the only thing between nine
-instances and the internet.
-
-They are private now, and the pulls go out over **an egress-only internet
-gateway instead of a NAT gateway**. What a private subnet is allowed to reach is
+Both tiers pull as they start — the database instances from ECR, the etcd
+instances from `quay.io` — and the pulls go out over **an egress-only internet
+gateway rather than a NAT gateway**. What a private subnet is allowed to reach is
 the difference between the three answers there: a NAT gateway is a route to all
 of the internet and back through the translation it holds, VPC endpoints are a
 route to the named AWS services and nothing else, and an egress-only internet
@@ -79,23 +74,23 @@ nothing that was not asked for gets in — and it does no translation, because
 there is nothing to translate: the addresses on the far side of it are the
 instance's own.
 
-There was a period with the endpoints, and what ended it was `chaos/`. Four of
-its seven experiments inject their fault through the SSM agent, and the two that
-run an `AWSFIS-Run-*` document install `at` and `tc` from the distribution's
-repositories before they do anything. With no route off the instance they failed
-at that first step, so four of [the runbook's](/runbook/) failure modes had no
-test. They have one now.
+**A route off the instance is what `chaos/` needs.** Four of its seven
+experiments inject their fault through the SSM agent, and the two that run an
+`AWSFIS-Run-*` document install `at` and `tc` from the distribution's
+repositories before they do anything, so without one four of
+[the runbook's](/runbook/) failure modes would have no test.
 
-**It is also the cheap answer**, which the endpoints were not: six interface
-endpoints in three availability zones was eighteen endpoint-hours an hour and
-[about half the fixed cost of the stack](/deployment/cost#standing-still), and
-an egress-only internet gateway is free. What that saving costs is honest to
-say: an instance can now open a connection to any address on the IPv6 internet,
-where before it could reach seven named services. Nothing can open one to an
-instance, which is the half that matters most and the half the gateway
-guarantees rather than leaves to a rule.
+**It is also the cheap answer.** Six interface endpoints in three availability
+zones would be eighteen endpoint-hours an hour and
+[about half the fixed cost of the stack](/deployment/cost#standing-still), where
+an egress-only internet gateway is free. What that costs is honest to say: an
+instance can open a connection to any address on the IPv6 internet, rather than
+to seven named services. Nothing can open one to an instance, which is the half
+that matters most and the half the gateway guarantees rather than leaves to a
+rule.
 
-`EnableDnsSupport` and `EnableDnsHostnames` are still on, and now they are what
+`EnableDnsSupport` and `EnableDnsHostnames` are on, and they are what resolves
+the public names to the AAAA records behind them.
 resolves the public names to the AAAA records behind them.
 
 ## The route out
@@ -203,19 +198,18 @@ the other instances; the IPv6 half is the wide rule it looks like, and
 
 ## Getting onto an instance
 
-There is no SSH. Both tiers used to open 22 from `0.0.0.0/0` and set
-`KeyName: asyncdb`, and both are gone: an instance with no public address is not
-reachable from outside the VPC, there is no bastion in the template, and a key
-pair that cannot be used is a prerequisite the stack no longer needs.
+There is no SSH: no port 22 in either security group and no `KeyName` on either
+launch template. An instance with no public address is not reachable from
+outside the VPC, there is no bastion in the template, and a key pair that cannot
+be used is a prerequisite the stack does not need.
 
 **Session Manager is the way in**, and it works the way everything else on an
-instance does now: the agent opens the connection outwards, over
+instance does: the agent opens the connection outwards, over
 [the route out](#the-route-out), to Systems Manager's dual-stack endpoints —
 which is what the `UseDualStackEndpoint` line in the user data is for. Nothing
 is opened towards the instance, by Session Manager or by anything else.
-The database tier already carried `AmazonSSMManagedInstanceCore` on
-`InstanceRole`; the etcd tier had no role at all and now has `EtcdRole`, which
-carries that policy alongside the `ec2:DescribeInstances` it
+The database tier carries `AmazonSSMManagedInstanceCore` on `InstanceRole`; the
+etcd tier carries it on `EtcdRole`, alongside the `ec2:DescribeInstances` it
 [finds its peers with](/deployment/etcd#the-membership-the-instances-imply) and
 the `AmazonEC2ContainerRegistryReadOnly` it
 [pulls etcd with](/deployment/etcd#where-the-image-comes-from).
@@ -224,9 +218,8 @@ the `AmazonEC2ContainerRegistryReadOnly` it
 aws ssm start-session --target i-0123456789abcdef0
 ```
 
-It is a better door than the one it replaced — no key to distribute, no port
-open to anybody, and the access is IAM and CloudTrail rather than a file on
-somebody's laptop.
+It is a better door than SSH — no key to distribute, no port open to anybody, and
+the access is IAM and CloudTrail rather than a file on somebody's laptop.
 
 ## The API port is not the load balancer's
 

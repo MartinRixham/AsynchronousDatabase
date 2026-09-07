@@ -22,9 +22,9 @@ namespace server
 
 		boost::beast::http::request<boost::beast::http::string_body> request;
 
-		// The request is read through a parser of this session's own rather than into the message
-		// directly, because that is the only place Beast's own limits can be raised to the ones
-		// this API documents. It is remade for every request, a parser being good for one.
+		// The request is read through a parser of this session's own, because that is the only
+		// place Beast's limits can be raised to the ones this API documents. A parser is good for
+		// one request, so it is remade for each.
 		std::optional<boost::beast::http::request_parser<boost::beast::http::string_body>> parser;
 
 		std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> http_response;

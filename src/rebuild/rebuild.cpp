@@ -14,9 +14,8 @@
 namespace
 {
 	// Everything a cluster sends carries the forwarded header, so a scan asked this way is that
-	// one node's own share rather than its whole zone's merged answer. That is what lets a rebuild
-	// ask each node of a zone once and add up what they hold, instead of reading one copy of the
-	// keyspace once per node in it.
+	// one node's own share rather than its whole zone's merged answer — which lets a rebuild ask
+	// each node of a zone once and add up what they hold.
 	router::request scan_request(const std::string &table, const std::string &from, bool has_from, size_t page)
 	{
 		router::request request;
@@ -33,10 +32,8 @@ namespace
 		return request;
 	}
 
-	// Every round trip a rebuild makes is bounded by the client that makes it, and a rebuild is
-	// bounded by the clock instead: it is the whole of them together that holds a node out of the
-	// membership, and how many of them there are is a count of tables, pages and nodes rather than
-	// anything decided here.
+	// Every round trip inside is bounded by the client that makes it; a rebuild is bounded by the
+	// clock instead, because it is all of them together that holds a node out of the membership.
 	bool out_of_time(const std::chrono::steady_clock::time_point &deadline)
 	{
 		return std::chrono::steady_clock::now() >= deadline;
@@ -106,8 +103,7 @@ namespace
 	}
 
 	// One node's share of one table, a page at a time. Paging is by bound and not by cursor: a
-	// cursor names the instance that issued it, so a node that restarts under a rebuild would
-	// refuse the next page, where a key is a position any node will take.
+	// cursor names the instance that issued it, where a key is a position any node will take.
 	bool copy_table(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
@@ -122,9 +118,8 @@ namespace
 
 		while (true)
 		{
-			// The page boundary is where a rebuild is given up, because it is the only place it
-			// can be: what is written already is this node's own, and the page not asked for is
-			// the only thing lost by stopping here.
+	// The page boundary is the only place a rebuild can be given up: what is written already
+	// is this node's own, and the page not asked for is all that is lost.
 			if (out_of_time(deadline))
 			{
 				DEBUG("A scan of \"" + name + "\" on " + node + " ran out of time for a rebuild.");
@@ -171,10 +166,8 @@ namespace
 				read_any = true;
 
 				// Only what this node will hold. The membership was read before the node
-				// registered, and a node is a member of its own cluster whatever etcd says, so the
-				// copies of a key are already the copies it will have once it joins — and a record
-				// written here that this node does not own would be a stale copy the moment the
-				// key was written again.
+				// registered, and a node is a member of its own cluster whatever etcd says, so
+				// the copies of a key are already the ones it will have once it joins.
 				if (nodes.replicas(key).local)
 				{
 					repository.write_record(name, record::valid_record(key, field(object, "value")));
@@ -189,8 +182,8 @@ namespace
 				return true;
 			}
 
-			// A page that carried nothing to resume from, or nothing but the key it resumed at, is
-			// a page that asking again would ask for for ever.
+			// A page that carried nothing to resume from, or nothing but the key it resumed at,
+			// is a page that asking again would ask for for ever.
 			if (!has_last || !read_any)
 			{
 				DEBUG("A scan of \"" + name + "\" on " + node + " made no progress, so the rebuild stops.");
@@ -220,9 +213,8 @@ namespace
 			return false;
 		}
 
-		// The schema first, because a record can only be written where its table is. It is written
-		// rather than declared: the graph was validated when it was created, and putting a table
-		// back is not creating one, so nothing here has to name its dependencies in order.
+		// The schema first, because a record can only be written where its table is. Putting a
+		// table back is not creating one, so nothing here has to name its dependencies in order.
 		for (size_t i = 0; i < tables.size(); i++)
 		{
 			repository.create_table(tables[i]);
@@ -232,8 +224,8 @@ namespace
 		{
 			const std::string &name = tables[i].name;
 
-			// All of them, and it stops at the first that does not answer: what the nodes of a zone
-			// hold is one whole copy only when every one of them has said what it holds.
+			// All of them, and it stops at the first that does not answer: what the nodes of a
+			// zone hold is one whole copy only when every one of them has said what it holds.
 			bool whole = std::all_of(
 				zone.begin(),
 				zone.end(),
@@ -266,7 +258,7 @@ size_t rebuild::rebuild(
 	}
 
 	// The first group is this node's own zone. What this node is missing is missing from that zone
-	// as a whole — its own share is what it lost — so the copy to read is in another one.
+	// as a whole, so the copy to read is in another one.
 	std::vector<std::vector<std::string>> zones = nodes.zones();
 
 	if (zones.size() < 2)
@@ -300,9 +292,9 @@ size_t rebuild::rebuild(
 			return restored;
 		}
 
-		// A zone with a node that did not answer is a zone that cannot give the whole of what it
-		// holds, so the whole of it is asked of the next zone instead. What was written already is
-		// this node's own, and is written again with the same value.
+		// A zone with a node that did not answer cannot give the whole of what it holds, so the
+		// whole of it is asked of the next zone. What was written already is written again with
+		// the same value.
 		DEBUG("A node of a zone did not answer, so the rebuild asks the next zone.");
 	}
 

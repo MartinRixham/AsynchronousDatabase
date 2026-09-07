@@ -44,8 +44,7 @@ namespace
 	}
 
 	// What a node writes about itself: where it answers and which zone it stands in. A value that
-	// is not a document at all is a node of a version that knew nothing about zones, and it is
-	// read as the address it is rather than dropped from the membership.
+	// is not a document at all is a bare address, and is read as a node in no zone.
 	cluster::member read_member(const std::string &value)
 	{
 		boost::system::error_code error;
@@ -177,8 +176,8 @@ void cluster::etcd_cluster::stop()
 	}
 
 	// Revoking takes the node's key with it, so a node that is shut down leaves at once rather
-	// than when its lease runs out. Failing to revoke is not a failure to leave: everything is
-	// often shut down together, and etcd may already be gone.
+	// than when its lease runs out. Failing to revoke is not a failure to leave: etcd may already
+	// be gone.
 	if (lease != 0 && !etcd_client.revoke(lease))
 	{
 		DEBUG(
@@ -211,8 +210,6 @@ cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 
 	// The copies are the copies of the key's *partition*, so that every key in it is held by the
 	// same three nodes — which is what makes a partition a thing that can be led.
-	//
-	// The name of the namespace is hidden here by the name of the base class.
 	std::vector<member> owners =
 		::cluster::owners_of(::cluster::partition_name(::cluster::partition_of(key)), registered);
 	placement where;
@@ -293,8 +290,8 @@ bool cluster::etcd_cluster::accept(const std::string &key, int64_t term)
 
 	std::map<size_t, int64_t>::const_iterator seen = terms.find(partition);
 
-	// A write no leader ordered is a cluster that has no leadership, and it is applied as it always
-	// was. A cluster that does have one never sends a term of nothing.
+	// A write no leader ordered is a cluster that has no leadership, and it is applied here. A
+	// cluster that does have one never sends a term of nothing.
 	if (term == 0)
 	{
 		return true;
@@ -321,7 +318,6 @@ std::vector<std::vector<std::string>> cluster::etcd_cluster::zones() const
 		return std::vector<std::vector<std::string>>();
 	}
 
-	// The name of the namespace is hidden here by the name of the base class.
 	return ::cluster::zones_of(registered, configuration.node, configuration.zone);
 }
 
@@ -416,10 +412,8 @@ void cluster::etcd_cluster::read_leaders()
 	std::map<size_t, leadership> known;
 	size_t claims = 0;
 
-	// The partitions are walked from an offset of this node's own rather than from the first one,
-	// so that nodes claim different parts of the ring instead of racing each other for the same
-	// partitions on every pass — which spreads leadership by arithmetic rather than by luck, and
-	// spends fewer round trips losing.
+	// The partitions are walked from an offset of this node's own, so that nodes claim different
+	// parts of the ring rather than racing for the same partitions on every pass.
 	size_t offset = ::cluster::score(configuration.node, "leader") % partition_count;
 
 	for (size_t i = 0; i < partition_count; i++)
@@ -431,8 +425,7 @@ void cluster::etcd_cluster::read_leaders()
 		if (holder != held.end())
 		{
 			// The term is not in the value, so a leadership read back from the range is the node
-			// alone until this instance claims it or is told the revision another way. Reading it
-			// is what routes a write; leading it is what fences one.
+			// alone until this instance claims it. Reading it routes a write; leading it fences one.
 			leadership led;
 
 			led.known = true;
@@ -445,10 +438,9 @@ void cluster::etcd_cluster::read_leaders()
 			continue;
 		}
 
-		// Nothing leads it, so this node claims it if it is one of the copies — and if it has not
-		// already claimed as many as it takes on one pass. What is left over is claimed on the
-		// next one, by this node or by another copy of it, and until then a write of it is
-		// answered as having no leader.
+		// Nothing leads it, so this node claims it if it is one of the copies and has not already
+		// claimed as many as it takes on one pass. What is left over is claimed on the next pass,
+		// and until then a write of it is answered as having no leader.
 		if (claims >= configuration.claims_per_refresh || !holds(registered, partition))
 		{
 			continue;

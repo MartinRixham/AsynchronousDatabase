@@ -12,9 +12,8 @@ table=${TABLE:-perf_load}
 
 # A value may be 16 MiB, and this is a kilobyte, because the request count it pairs with is
 # REQUESTS=5000 on sixteen threads — eighty thousand of anything larger is a run measured in
-# gigabytes. Size and count trade against each other: raise this and lower those together,
-# which is what build.yaml does to load the deployed stack with values of a size the proxy and
-# the parser in front of the store used to refuse outright.
+# gigabytes. Size and count trade against each other: raise this and lower those together, which
+# is what build.yaml does to load the deployed stack.
 value_bytes=${VALUE_BYTES:-1024}
 content_type=application/octet-stream
 

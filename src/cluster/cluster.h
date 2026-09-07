@@ -37,10 +37,9 @@ namespace cluster
 	// time: it applies a write itself and sends it to the copies, so that two clients writing one
 	// key are ordered by one node rather than racing at each copy.
 	//
-	// The term is etcd's revision of the claim, so a later leader of a partition always has a
-	// higher term than the leader before it, and a write carrying an older one is refused by the
-	// copies. That is what stops a leader that has lost its lease, and does not know it yet, from
-	// writing behind the leader that replaced it.
+	// The term is etcd's revision of the claim, so a later leader always has a higher term than
+	// the one before it, and a write carrying an older one is refused by the copies. That is what
+	// stops a leader that has lost its lease from writing behind the leader that replaced it.
 	struct leadership
 	{
 		// False when no node holds the partition — nothing has claimed it yet, or etcd cannot be
@@ -97,13 +96,11 @@ namespace cluster
 		// in the order they were named — or nothing at all when every one of them took it.
 		//
 		// A cluster that can ask them at once asks them at once. A write is not done until every
-		// copy has taken it, and asking them one after another holds the thread serving the write
-		// for a round trip each: a node has as many threads as it has cores, and every one of
-		// them waiting on another node is a node that cannot answer at all — its health check
-		// included, which is what has it replaced by an instance holding none of its data.
+		// copy has taken it, and asking one after another holds the thread serving the write for a
+		// round trip each — and a thread waiting on another node cannot answer anything else, its
+		// health check included.
 		//
-		// Asking them at once means asking every one of them even though an earlier one refused.
-		// That is a request that need not have been sent rather than a wrong answer: writing a
+		// Asking at once means asking every node even though an earlier one refused. Writing a
 		// record twice is writing it once, and the client is told to run the whole write again.
 		virtual std::optional<router::response> send_all(
 			const std::vector<std::string> &node_list,

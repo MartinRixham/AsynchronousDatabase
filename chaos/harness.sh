@@ -148,9 +148,8 @@ ssm_run()
 		--query 'StandardOutputContent' --output text 2> /dev/null
 }
 
-# The base image is the ECS-optimised AMI, which runs an agent container of its own — so the
-# asyncdb container is the one whose image says asyncdb, and never `docker ps -q | head -1`,
-# which is how a rebuild that had plainly happened was read off the wrong container's logs.
+# The base image is the ECS-optimised AMI, which runs an agent container of its own, so the asyncdb
+# container is the one whose image says asyncdb and never `docker ps -q | head -1`.
 container_logs()
 {
 	echo 'docker logs $(docker ps --format "{{.ID}} {{.Image}}" | awk "/asyncdb/{print \$1; exit}") 2>&1'
@@ -285,8 +284,8 @@ codes()
 	sort "$work/codes" | uniq -c | sort -rn | awk '{ printf "%s×%s ", $1, $2 }'
 }
 
-# expect_reads / expect_writes <how many> <description> — the check and the evidence together.
-# A bare count is what made a failed run of this suite unreadable once.
+# expect_reads / expect_writes <how many> <description> — the check and the evidence together. A
+# bare count says an assertion failed and only the codes say how.
 expect_reads()
 {
 	local failed
@@ -490,14 +489,11 @@ expect_not()
 # blackhole_parameters <seconds> <iptables match> — the documentParameters of an
 # aws:ssm:send-command action that stops a node answering, for the two experiments that need one.
 #
-# It is a script of our own and not AWSFIS-Run-Network-Blackhole-Port, because that document
-# writes its rules into INPUT and OUTPUT and asyncdb is a container behind a published port:
-# everything a peer sends it is DNATed and forwarded, so it goes through FORWARD and never INPUT,
-# and everything the container sends is forwarded too and never OUTPUT. The document ran, reported
-# success and blocked nothing — three nodes that were meant to be deaf answered a scan and refused
-# none of the writes, and a node that was meant to have lost etcd renewed its lease throughout.
-# DOCKER-USER is the chain docker leaves in FORWARD for exactly this, and it is the one that a
-# container's traffic passes through.
+# It is a script of our own and not AWSFIS-Run-Network-Blackhole-Port, because that document writes
+# its rules into INPUT and OUTPUT and asyncdb is a container behind a published port: everything a
+# peer sends it is DNATed and forwarded, so it goes through FORWARD and never INPUT, and everything
+# the container sends is forwarded too and never OUTPUT — so the document reports success and
+# blocks nothing. DOCKER-USER is the chain docker leaves in FORWARD for exactly this.
 #
 # It rejects rather than drops. A node waits thirty seconds on another node
 # (cluster::config::timeout_seconds), so a dropped packet is a node that hangs, and what these two
@@ -542,9 +538,8 @@ fis_start()
 {
 	local answer
 
-	# What the service said is the diagnosis and there is nowhere else to read it — an
-	# experiment that never started leaves no experiment to ask about. Every one of these
-	# failed identically once because this was thrown away.
+	# What the service said is the diagnosis and there is nowhere else to read it: an experiment
+	# that never started leaves no experiment to ask about.
 	answer=$(aws fis create-experiment-template --cli-input-json "file://$1" \
 		--query 'experimentTemplate.id' --output text 2>&1)
 
@@ -701,18 +696,16 @@ fis_await_end()
 # fis_stop_now [timeout] — the assertions are done, so take the fault away rather than sit and
 # watch it expire. Every experiment that calls this follows it with the recovery it asserts on.
 #
-# **This is what makes a duration a ceiling rather than the bill.** FIS charges per action-minute
-# of an action that actually ran, so an experiment stopped two minutes into a six minute template
-# is billed for two — where fis_await_end below pays the whole six for a fault nothing is looking
-# at any more. The durations stay long because a fault that expires mid-assertion is a false
-# failure, and they now cost nothing to keep long.
+# **This is what makes a duration a ceiling rather than the bill.** FIS charges per action-minute of
+# an action that actually ran, so an experiment stopped two minutes into a six minute template is
+# billed for two, where fis_await_end below pays the whole six. The durations stay long because a
+# fault that expires mid-assertion is a false failure, and cost nothing to keep long.
 #
-# A stopped experiment removes its own fault, by three different routes and never by being waited
-# out: the agentless actions undo what they installed, the AWSFIS-Run-* documents roll back when
-# their command is cancelled, and the script in blackhole_parameters traps the TERM that the
-# cancellation sends and deletes its rule — which is what that trap is there for. Its detached
-# safety net still fires later regardless, and removing a rule that is already gone is nothing.
-# Nothing here takes that on trust: the recovery assertion after every call is the check.
+# A stopped experiment removes its own fault three ways, and never by being waited out: the
+# agentless actions undo what they installed, the AWSFIS-Run-* documents roll back when their
+# command is cancelled, and the script in blackhole_parameters traps the TERM that the cancellation
+# sends and deletes its rule. Nothing here takes that on trust: the recovery assertion after every
+# call is the check.
 fis_stop_now()
 {
 	local deadline state
@@ -724,8 +717,8 @@ fis_stop_now()
 
 	echo "  The assertions are done. Stopping the fault rather than waiting it out."
 
-	# It can have ended on its own between the last assertion and here — a body that ran longer
-	# than the fault — and that is not a failure, it is the old behaviour. Watch for the end.
+	# It can have ended on its own between the last assertion and here, which is not a failure, so
+	# watch for the end.
 	if ! aws fis stop-experiment --id "$experiment" > /dev/null 2>&1; then
 		echo "  It could not be stopped, so waiting for it to end instead."
 		fis_await_end "${1:-300}"

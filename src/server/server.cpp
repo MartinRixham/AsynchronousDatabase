@@ -16,19 +16,15 @@
 
 namespace
 {
-	// A thread waiting on a neighbour is doing no work on this node, so the pool is a count of
-	// requests that can be in flight rather than a count of cores. Eight of them per core is
-	// enough for a node fronting a write while it leads another, with room for the health check
-	// the load balancer replaces the instance over.
+	// A thread waiting on a neighbour is doing no work here, so the pool counts requests that can
+	// be in flight rather than cores.
 	constexpr int threads_per_core = 8;
 
 	// hardware_concurrency() is allowed to answer nothing, and a pool of nothing serves nothing.
 	constexpr int fewest_threads = 16;
 
-	// Eight a core is a multiplier rather than a plan, and on a machine with a great many of them
-	// it is more threads than a node has anything to do with — and, because each of them keeps its
-	// own curl handles, more connections to every neighbour than a neighbour wants. A node that
-	// really needs more is told so with ASYNCDB_THREADS.
+	// Each thread keeps its own curl handles, so a very large pool is more connections to every
+	// neighbour than a neighbour wants. A node that needs more is told so with ASYNCDB_THREADS.
 	constexpr int most_threads = 128;
 }
 
@@ -36,10 +32,8 @@ std::string server::data_directory()
 {
 	const char *configured = getenv("ASYNCDB_DATA");
 
-	// The image mounts a volume here, so an instance that is started again — a container that was
-	// restarted, or a host that rebooted — opens the store the one before it wrote rather than an
-	// empty one. A node holding nothing still answers for the keys it owns, and what it answers
-	// is that they are not there.
+	// The image mounts a volume here, so an instance that is started again opens the store the one
+	// before it wrote rather than an empty one.
 	return configured == NULL || *configured == '\0' ? "/var/lib/asyncdb" : configured;
 }
 
@@ -105,12 +99,10 @@ server::server::server(
 		throw std::runtime_error(ERROR("Error binding to socket: " + error.message()));
 	}
 
-	// Binding is what settles the port, so a server constructed on port 0 can be asked which one
-	// it took before it is serving. Listening is what makes the kernel take connections, and it
-	// is held back until serve() has filled the store: a bound socket that is not listening
-	// refuses at once, where a listening one that nothing is accepting on takes the connection
-	// and answers nothing — which is a health check and a neighbour waiting out their timeouts
-	// rather than being told to go elsewhere.
+	// Binding settles the port, so a server constructed on port 0 can be asked which one it took
+	// before it serves. Listening is held back until serve() has filled the store: a bound socket
+	// that is not listening refuses at once, where a listening one nothing accepts on takes the
+	// connection and answers nothing.
 	port_number = acceptor.local_endpoint().port();
 
 	DEBUG("Server bound to port: " + std::to_string(port_number) + ".");
@@ -132,24 +124,17 @@ void server::server::listen()
 
 void server::server::serve()
 {
-	// A node that came back empty is filled from a zone that still holds its records, and it is
-	// filled *before* it registers. A node that is not registered is nobody's copy, so this costs
-	// no read and holds up no write; registering first would make every write to this node's
-	// partitions wait for it, because every copy has to take a write.
+	// A node that came back empty is filled from a zone that still holds its records, and filled
+	// *before* it registers: a node that is not registered is nobody's copy, so this holds up no
+	// write, where registering first would make every write to its partitions wait for it.
 	//
-	// What keeps a cluster starting together from waiting on itself is that a node reads its
-	// membership out of etcd, and a node that has not registered is not written there yet — so the
-	// nodes a rebuild does find are ones that finished their own and are serving. It is not that
-	// the membership excludes this node: read_members() puts it back whatever etcd says, which is
-	// what makes "will I own this key?" answerable before joining. A membership handed in rather
-	// than discovered is not one to act on at all, because nothing in it says which of its nodes
-	// are listening yet.
+	// The nodes a rebuild finds are the ones already registered, so a cluster starting together
+	// does not wait on itself. read_members() puts this node back whatever etcd says, which is
+	// what makes "will I own this key?" answerable before joining.
 	//
-	// The rebuild is best effort, and nothing it does is worth dying over: a store that refuses a
-	// write, or a neighbour that answers something unreadable, would otherwise take the process
-	// down before it ever registered — and, restarted, take it down again in the same place. A
-	// node that starts thin is a copy the cluster has; one that never starts is a copy it waits
-	// for and never gets.
+	// It is best effort: a store that refuses a write, or a neighbour that answers something
+	// unreadable, would otherwise take the process down before it ever registered, and again on
+	// every restart. A node that starts thin is a copy the cluster has.
 	if (own_nodes.discover())
 	{
 		try
@@ -166,12 +151,12 @@ void server::server::serve()
 		}
 	}
 
-	// Joining is what makes this instance one of several, and it is nothing at all when no etcd
-	// is configured, which is how a single instance keeps the whole keyspace to itself.
+	// Joining is nothing at all when no etcd is configured, which is how a single instance keeps
+	// the whole keyspace to itself.
 	own_nodes.start();
 
 	// The store is filled and the node has joined, so the port is opened to the connections that
-	// were being refused while it was not ready to answer them.
+	// were refused while it was not ready to answer them.
 	listen();
 
 	accept();
@@ -199,11 +184,9 @@ void server::server::on_accept(boost::beast::error_code error, boost::asio::ip::
 {
 	if (error)
 	{
-		// Closing the acceptor is how serving is stopped, so an accept that ends this way has
-		// ended because it was meant to, and saying "error" about it is how a clean shutdown
-		// comes to look like a failure. Accepting again would spin on the same error, and an
-		// accept that is always pending holds a reference to the server, so neither it nor
-		// anything it owns would ever be destroyed.
+		// The acceptor was closed, so this accept ended because it was meant to. Accepting again
+		// would spin on the same error, and an always-pending accept holds a reference to the
+		// server, so nothing it owns would ever be destroyed.
 		if (!acceptor.is_open())
 		{
 			DEBUG("Stopped accepting connections.");
@@ -233,8 +216,8 @@ void server::server::hold(const std::shared_ptr<session> &connection)
 {
 	std::lock_guard<std::mutex> lock(session_mutex);
 
-	// The connections that have ended are forgotten here rather than by anything of their own,
-	// which keeps the cost of remembering them to the connections that are still open.
+	// Connections that have ended are forgotten here, which keeps the cost of remembering them to
+	// the ones still open.
 	sessions.erase(
 		std::remove_if(
 			sessions.begin(),
@@ -278,10 +261,9 @@ void server::server::close()
 	// thread asked for it.
 	boost::asio::dispatch(acceptor.get_executor(), [this]() { acceptor.close(); });
 
-	// Closing the acceptor stops connections being made, not connections that were made already.
-	// A neighbour keeps its connection to this node open on purpose, and so does the nginx in
-	// front of it, so a connection waiting for a request that is not coming would hold serving
-	// open until it timed out.
+	// Closing the acceptor stops connections being made, not connections already made. A neighbour
+	// and the nginx in front of this node both keep theirs open, so a connection waiting for a
+	// request that is not coming would hold serving open until it timed out.
 	for (size_t i = 0; i < live.size(); i++)
 	{
 		std::shared_ptr<session> connection = live[i].lock();

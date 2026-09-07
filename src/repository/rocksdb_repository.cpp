@@ -241,8 +241,7 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 
 		// The size is asked of the slices rather than of strings copied out of them, so a record
 		// the budget refuses is one this never allocated. It is never weighed against an empty
-		// page: a record larger than the whole budget is a page of its own, and not a scan stuck
-		// on the key it cannot carry.
+		// page: a record larger than the whole budget is a page of its own.
 		size_t size = it->key().size() + (range.values ? it->value().size() : 0);
 
 		if (!page.records.empty() && bytes + size > scan::max_page_bytes)
@@ -303,11 +302,10 @@ void repository::rocksdb_repository::delete_records(const std::string &table_nam
 	written(database->Delete(rocksdb::WriteOptions(), handle, last), what);
 }
 
-// Every write goes through here rather than through check() alone. A write that failed for want
-// of space leaves RocksDB refusing every write after it: the background error is sticky, and a
-// disk with room on it again is not something the store notices by itself. The next write is what
-// asks it to look, which is what makes doc/runbook/storage.md true — free the space and writes
-// carry on, with nothing restarted and no instance replaced.
+// Every write goes through here rather than through check() alone. A write that failed for want of
+// space leaves RocksDB refusing every write after it: the background error is sticky, and a disk
+// with room on it again is not something the store notices by itself. The next write is what asks
+// it to look, which is what makes doc/runbook/storage.md true.
 //
 // Back pressure is not that. Incomplete, Busy and TryAgain are a store that is working and saying
 // so, and there is nothing there to resume.

@@ -27,16 +27,11 @@ namespace server
 	std::string data_directory();
 
 	// How many threads serve requests, from ASYNCDB_THREADS. **These threads are not sized by
-	// cores**, because what they spend their lives doing is waiting on another node rather than
-	// working on this one: a request forwarded to the node that owns its key, or a write ordered
-	// by the leader of its partition, holds the thread it arrived on until the answer comes back.
-	// A pool the size of `hardware_concurrency()` is two threads on a two core instance, and two
-	// requests waiting on a neighbour are then the whole server — health check included.
-	//
-	// So the default is sized for requests in flight instead — eight threads a core, between
-	// sixteen and a hundred and twenty-eight, the floor being for a machine that reports no cores
-	// at all. Each thread keeps its own curl handles, so this is also how many connections a node
-	// holds open to each of its neighbours, which is what the ceiling is for.
+	// cores**: a request forwarded to the node that owns its key, or a write ordered by the leader
+	// of its partition, holds the thread it arrived on until the answer comes back, so the pool
+	// counts requests in flight. The default is eight threads a core, between sixteen and a
+	// hundred and twenty-eight — the floor for a machine that reports no cores, and the ceiling
+	// because each thread keeps its own curl handles and so its own connections to each neighbour.
 	int thread_pool_size();
 
 	class session;

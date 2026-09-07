@@ -1,10 +1,10 @@
 # Rebuilding a node
 
 A replaced instance is an empty database: its root volume went with the instance,
-and nothing in the cluster used to put that copy back — there is no read repair,
-no anti-entropy, no hinted handoff and no replication log.
+and nothing else in the cluster puts that copy back — there is no read repair, no
+anti-entropy, no hinted handoff and no replication log.
 
-**A node now fills itself in on the way up.** Before it registers in etcd, an
+**A node fills itself in on the way up.** Before it registers in etcd, an
 instance that finds its store empty reads a zone that still holds its records and
 writes back the ones it is about to own. No operator step, no script.
 

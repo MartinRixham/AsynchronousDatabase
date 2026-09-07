@@ -24,10 +24,8 @@
 # This is the most invasive experiment in the suite — a full root volume is a docker daemon and
 # an SSM agent with nowhere to write either — and it fills the whole disk, because anything short
 # of the whole disk is not this failure at all. AWSFIS-Run-Disk-Fill's Percent is a percentage of
-# the disk and not of what is free on it, so ninety per cent of a thirty gigabyte volume left
-# three gigabytes to write into and every write was taken. Only Percent 100 fills what is free.
-# The fault goes in through the SSM agent, as the note on the SSM faults in chaos/README.md
-# describes.
+# the disk and not of what is free on it, so only Percent 100 fills what is free. The fault goes
+# in through the SSM agent, as the note on the SSM faults in chaos/README.md describes.
 
 source "$(dirname "$0")/harness.sh"
 
@@ -71,11 +69,9 @@ EOF
 
 # write_refusals <body file> <key prefix> — the number of thirty writes that were refused, with
 # every refusal's code and status kept in $work/refusals and every key that was taken kept in
-# $work/taken. A count says an assertion failed and only the codes say how, which is the job
-# read_check does in harness.sh. The status is kept beside the code because it is what says which
-# layer refused: a 500 carrying `unavailable` is the proxy and a 500 carrying `storage_error` is
-# the store, and telling the two apart is the whole of what this experiment got wrong before — it
-# asserted the store's codes against writes the store was never given.
+# $work/taken. A count says an assertion failed and only the codes say how. The status is kept
+# beside the code because it is what says which layer refused: a 500 carrying `unavailable` is the
+# proxy and a 500 carrying `storage_error` is the store.
 write_refusals()
 {
 	local i body code refused=0

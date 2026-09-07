@@ -32,10 +32,9 @@ cut_off=$(instances asyncdb | awk -v z="$zone" '$2 == z { print $1 }')
 witness=$(instances asyncdb | awk -v z="$zone" '$2 != z { print $1 }' | head -1)
 
 # What the membership will be left with, worked out from the membership and not from the
-# instances: the group balances across zones but drifts as instances are replaced, and an
-# instance it has just launched is running and not yet registered, so subtracting instances from
-# instances was right only by luck. It is asked before the fault, because afterwards the load
-# balancer answers with whichever side it routed to.
+# instances: the group balances across zones but drifts as instances are replaced, and an instance
+# it has just launched is running and not yet registered. It is asked before the fault, because
+# afterwards the load balancer answers with whichever side it routed to.
 addresses=$(aws ec2 describe-instances --instance-ids $cut_off \
 	--query 'Reservations[].Instances[].PrivateIpAddress' --output text \
 	| tr '\t' '\n' | jq -Rsc 'split("\n") | map(select(length > 0))')

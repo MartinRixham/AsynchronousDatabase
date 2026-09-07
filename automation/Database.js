@@ -1,7 +1,5 @@
-// The tables of the instance the tests are running against, over the same API the UI itself uses.
-// A test seeds the graph its journey starts on through this, and reads back what the page wrote —
-// so what a create really answers, and what a list really holds, is what the assertions see. What
-// each response is comes from doc/database/tables.md.
+// The tables of the instance the tests are running against, over the same API the UI itself uses,
+// so what a create really answers is what the assertions see. doc/database/tables.md is the spec.
 export default class Database {
 
 	#request;
@@ -11,10 +9,8 @@ export default class Database {
 		this.#request = request;
 	}
 
-	// Drops every table there is, so a test starts on an empty graph whatever the run before it
-	// left behind. The graph the page draws is every table the instance holds, which is why a test
-	// owns the whole database rather than a corner of it. Dropping a table takes its records with
-	// the column family, so nothing survives this.
+	// Drops every table there is, so a test starts on an empty graph. The graph the page draws is
+	// every table the instance holds, which is why a test owns the whole database.
 	async reset() {
 
 		for (const table of await this.tables()) {
@@ -47,7 +43,7 @@ export default class Database {
 	}
 
 	// The fixture is not the thing under test, so an unexpected answer from it is a failure of the
-	// instance and not of the journey, and says so with the status and the body it came back with.
+	// instance and not of the journey.
 	async #send(pending, status) {
 
 		const response = await pending;

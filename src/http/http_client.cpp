@@ -15,9 +15,8 @@ namespace
 	}
 
 	// One handle for the life of a thread, because a handle is what holds open connections: a node
-	// talks to the same few neighbours over and over, and a new handle each time would mean a new
-	// connection each time. A handle belongs to one thread at a time, and this one never leaves the
-	// thread it was made on.
+	// talks to the same few neighbours over and over. A handle belongs to one thread at a time,
+	// and this one never leaves the thread it was made on.
 	class handle
 	{
 		CURL *easy;
@@ -46,9 +45,8 @@ namespace
 		}
 	};
 
-	// Resetting forgets the options of the request before — a body, or the "no body" of a HEAD,
-	// would otherwise be carried into the next one — and keeps the connections, the name lookups
-	// and the TLS sessions the handle has already made.
+	// Resetting forgets the options of the request before — a body, or the "no body" of a HEAD —
+	// and keeps the connections, name lookups and TLS sessions the handle has already made.
 	CURL *thread_handle()
 	{
 		thread_local class handle handle;
@@ -61,10 +59,9 @@ namespace
 		return handle.get();
 	}
 
-	// The handles a fan out runs on, and the multi handle it runs them in. They belong to the
-	// thread the single handle does, and for the same reason: the multi handle is what holds the
-	// connections of every transfer run in it, so a node writing to the same copies over and over
-	// keeps its connections to them rather than making them again each time.
+	// The handles a fan out runs on, and the multi handle it runs them in. The multi handle holds
+	// the connections of every transfer run in it, so they belong to one thread as the single
+	// handle does.
 	class group
 	{
 		CURLM *multi;
@@ -79,9 +76,8 @@ namespace
 
 		~group()
 		{
-			// Every handle is taken out of the multi handle as its fan out ends, so nothing here
-			// is still in it. They go first all the same, because a handle outliving the multi
-			// handle it ran in is the one that would be left holding a connection of its own.
+			// A handle outliving the multi handle it ran in is one left holding a connection of
+			// its own, so the handles go first.
 			handles.clear();
 
 			if (multi != NULL)
@@ -99,8 +95,7 @@ namespace
 			return multi;
 		}
 
-		// As many handles as the widest fan out this thread has run, kept from one to the next and
-		// reset rather than remade, for the same reason the single handle is.
+		// As many handles as the widest fan out this thread has run, reset rather than remade.
 		CURL *at(size_t index)
 		{
 			while (handles.size() <= index)
@@ -126,9 +121,8 @@ namespace
 		return group;
 	}
 
-	// The options of a request, which are the same whether it runs on its own or beside others.
-	// The list of headers belongs to the caller: the handle outlives it, and has to be told to
-	// forget it before it goes.
+	// The options of a request, the same whether it runs on its own or beside others. The list of
+	// headers belongs to the caller, and the handle has to be told to forget it before it goes.
 	struct curl_slist *apply(CURL *curl, const http::request &request, std::string *body, long timeout)
 	{
 		struct curl_slist *headers = NULL;
@@ -155,8 +149,8 @@ namespace
 		{
 			curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
 		}
-		// The body is not copied into the handle, so the request it belongs to has to outlive the
-		// transfer — which it does: a fan out is run before the requests it was given go.
+		// The body is not copied into the handle, so the request has to outlive the transfer —
+		// which it does: a fan out is run before the requests it was given go.
 		else if (!request.body.empty() || request.method == "PUT" || request.method == "POST")
 		{
 			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request.body.c_str());
@@ -166,8 +160,7 @@ namespace
 		return headers;
 	}
 
-	// What a handle has to say once its transfer has ended, whether it ran on its own or in a
-	// multi handle beside others.
+	// What a handle has to say once its transfer has ended, on its own or in a multi handle.
 	void complete(CURL *curl, CURLcode code, const std::string &url, http::response *response)
 	{
 		if (code == CURLE_OK)
@@ -197,10 +190,9 @@ namespace
 		}
 	}
 
-	// Runs every transfer in the multi handle until none of them is still going, and reads each
-	// answer off the handle that carried it. One thread waits on all of their sockets at once,
-	// which is the whole point: the thread is held for as long as the slowest of them takes
-	// rather than for the sum of them.
+	// Runs every transfer in the multi handle until none is still going, and reads each answer off
+	// the handle that carried it. One thread waits on all of their sockets at once, so it is held
+	// for as long as the slowest takes rather than for the sum of them.
 	void run(CURLM *multi)
 	{
 		int running = 0;
@@ -212,8 +204,8 @@ namespace
 			if (code == CURLM_OK && running > 0)
 			{
 				// A poll with nothing to wait on returns rather than blocking, and one that could
-				// block for ever is a fan out that never ends, so it is given a bound. The timeout
-				// of each transfer is what actually ends a node that has stopped answering.
+				// block for ever is a fan out that never ends, so it is given a bound. Each
+				// transfer's own timeout is what ends a node that has stopped answering.
 				code = curl_multi_poll(multi, NULL, 0, 1000, NULL);
 			}
 
@@ -236,8 +228,8 @@ namespace
 				continue;
 			}
 
-			// Each handle carries which answer is its own, so the transfers are read back in
-			// whatever order they finished in and still answered in the order they were asked.
+			// Each handle carries which answer is its own, so transfers read back in whatever
+			// order they finished in are still answered in the order they were asked.
 			char *carried = NULL;
 			char *url = NULL;
 
@@ -261,8 +253,7 @@ http::curl_client::curl_client(long timeout):
 {
 }
 
-// A client with no way of running several requests at once runs them one after another, which is
-// the answer this gives and the order it gives it in.
+// A client with no way of running several requests at once runs them one after another.
 std::vector<http::response> http::client::send_all(const std::vector<request> &requests) const
 {
 	std::vector<response> responses;
@@ -300,16 +291,15 @@ http::response http::curl_client::send(const request &request) const
 	return response;
 }
 
-// Every request at once, in one multi handle on this thread. A node writing a record to the copies
-// of it waits for the slowest of them rather than for one after another, which is what keeps the
-// thread it is serving on free: a node has as many of those as it has cores, and a thread waiting
-// on a round trip is a thread the next request cannot be served on.
+// Every request at once, in one multi handle on this thread, so a node writing a record to its
+// copies waits for the slowest rather than for one after another — which is what keeps the thread
+// it is serving on free.
 std::vector<http::response> http::curl_client::send_all(const std::vector<request> &requests) const
 {
 	std::vector<response> responses(requests.size());
 
-	// Nothing to overlap. One request goes on the handle that already holds the connections of
-	// every other request this thread has sent on its own.
+	// Nothing to overlap. One request goes on the handle that already holds this thread's
+	// connections.
 	if (requests.size() < 2)
 	{
 		if (requests.size() == 1)
@@ -349,8 +339,8 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 
 		lists[i] = apply(easy, requests[i], &responses[i].body, timeout_seconds);
 
-		// The answers are held still for the whole fan out — the vector is sized before any of
-		// this — so a handle can carry a pointer to its own.
+		// The answers are held still for the whole fan out, so a handle can carry a pointer to
+		// its own.
 		curl_easy_setopt(easy, CURLOPT_PRIVATE, reinterpret_cast<char *>(&responses[i]));
 
 		if (curl_multi_add_handle(multi, easy) == CURLM_OK)
@@ -364,8 +354,7 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 		{
 			responses[i].message = "Failed to add a curl handle to the fan out.";
 
-			// The handle is not going to be run, so it is told to forget the list before the
-			// list goes, the same as one that was.
+			// The handle is not going to be run, so it is told to forget the list all the same.
 			curl_easy_setopt(easy, CURLOPT_HTTPHEADER, NULL);
 			curl_slist_free_all(lists[i]);
 

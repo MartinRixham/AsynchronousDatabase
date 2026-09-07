@@ -97,26 +97,23 @@ every action, parameter and target arn when a template is created, so this is th
 same mistake by running the suite is the length of the experiment that hits it. It needs the
 stack up, because the arns in a template name real instances and subnets.
 
-It is worth running after any change to an experiment. Two mistakes that cost a full run to find
-would have been caught by it in seconds: a template the credentials were not allowed to create,
-and `completeIfInstancesTerminated` without the `startInstancesAfterDuration` the service
-insists goes with it.
+It is worth running after any change to an experiment. Credentials that are not allowed to create
+a template, and `completeIfInstancesTerminated` without the `startInstancesAfterDuration` the
+service insists goes with it, are caught in seconds here rather than by a full run.
 
 ## The faults that go in through SSM
 
 Four of the seven inject their fault with `aws:ssm:send-command`, and they run by default like
-the other three. They did not always: the documents they run install what they need — `atd` for
-the rollback timer, `tc` for the latency — from the distribution's own repositories, and for as
-long as [the network](../doc/deployment/network.md) was seven VPC endpoints and no route out, the
-four failed at their precondition and were skipped behind a `CHAOS_SSM=1` that nobody set.
+the other three. The documents they run install what they need — `atd` for the rollback timer,
+`tc` for the latency — from the distribution's own repositories, which
+[the route out](../doc/deployment/network.md#the-route-out) is what makes reachable: an
+egress-only internet gateway is a route to the internet that opens outwards only and over IPv6
+only, so `dnf` reaches the Amazon Linux repositories and the SSM agent reaches Systems Manager
+over its dual-stack endpoint.
 
-The endpoints are [gone](../doc/deployment/network.md#the-route-out). What replaced them is an
-egress-only internet gateway, which is a route to the internet that only opens outwards and only
-over IPv6 — so `dnf` reaches the Amazon Linux repositories, the SSM agent reaches Systems
-Manager over its dual-stack endpoint, and the documents do what they say. The cost of that is
-paid in the deployment rather than here: **the faults now depend on an instance being able to
-install a package while it is under test**, and a repository that does not answer is an
-experiment that fails at its precondition rather than an assertion that did not hold. FIS
+The cost of that is paid in the deployment rather than here: **the faults depend on an instance
+being able to install a package while it is under test**, and a repository that does not answer is
+an experiment that fails at its precondition rather than an assertion that did not hold. FIS
 reports that as an experiment that `failed` with a reason, which the harness prints.
 
 The other three need none of it, because the fault is a network access control list or an

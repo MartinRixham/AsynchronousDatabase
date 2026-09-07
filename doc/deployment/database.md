@@ -16,12 +16,11 @@ policies and one inline policy of its own:
 | `AmazonSSMManagedInstanceCore` | Session Manager, which is [the only way onto an instance](/deployment/network#getting-onto-an-instance) |
 | `discovery`, inline | `ec2:DescribeInstances`, which is how the user data below [finds the etcd tier](/deployment/etcd#how-the-database-tier-finds-it) |
 
-There **was** a fourth, `service-role/AmazonEC2ContainerServiceforEC2Role`. It is
-the policy the ECS agent needs, and it was here because the instances launch from
-the ECS-optimised image — which they are taken for
-[the Docker daemon on it and not for ECS](/deployment/#parameters). There is no
-cluster in this stack for an agent to register with, so the widest of the four
-grants was buying nothing, and it is gone.
+`service-role/AmazonEC2ContainerServiceforEC2Role`, the policy the ECS agent
+needs, is deliberately **not** among them. The instances launch from the
+ECS-optimised image because of
+[the Docker daemon on it and not for ECS](/deployment/#parameters), and there is
+no cluster in this stack for an agent to register with.
 
 The inline one is the tier's own, and it is the same policy
 [the etcd tier carries](/deployment/etcd). `ec2:DescribeInstances` takes no
@@ -91,16 +90,12 @@ is very nearly a no-op and a directory for the bind mount below, what follows is
 [the dual-stack preparation](/deployment/network#the-route-out) a private subnet
 with no IPv4 route out needs, and the rest is a login, a pull and a run.
 
-That is the whole of the host preparation, and it is worth saying what used to be
-here instead. The user data once opened with a `yum -y update` and a
-download-and-install of AWS CLI v2, because `get-login-password` is a v2 command
-and Amazon Linux ships v2 but not on every variant — call it two minutes, inside
-a `HealthCheckGracePeriod` of 200 seconds, on every instance, at every launch.
-That is what a Packer bake was introduced to do once rather than six times, and
-then Amazon Linux 2023 turned out to ship the CLI, which left the bake holding a
-`dnf -y update` and a `mkdir`. **A patch level baked in March is staler in June
-than the base image AWS republished in May**, so the bake was removed and the
-two lines that survived it are these.
+That is the whole of the host preparation. Nothing updates packages and nothing
+installs the AWS CLI: Amazon Linux 2023 ships v2, which is what
+`get-login-password` needs, and **a patch level baked in March is staler in June
+than the base image AWS republished in May**, so patching belongs to the base
+image rather than to boot. Every second spent here is spent on every instance at
+every launch, inside a `HealthCheckGracePeriod` of 200 seconds.
 
 The image is **not** on the AMI, and never was. It moves every release, so
 baking it would put an image build on the release path; at a few tens of
@@ -127,8 +122,8 @@ a database of its own:
 
 - **`ASYNCDB_ETCD`** is every running etcd instance's private address on 2379,
   comma separated, which is the form that survives one of them being down. It
-  used to be `Fn::FindInMap` of three fixed addresses; the etcd tier is
-  [a group that discovers itself](/deployment/etcd) now, so there are no
+  comma separated, which is the form that survives one of them being down. The
+  etcd tier is [a group that discovers itself](/deployment/etcd), so there are no
   addresses to write down and this tier asks the same question the etcd tier
   asks — `DescribeInstances`, filtered to `Name=etcd` in this VPC. The retry is
   for the order the two groups come up in, and **the answer is read once**: an
@@ -172,20 +167,20 @@ BlockDeviceMappings:
       DeleteOnTermination: true
 ```
 
-There was no `BlockDeviceMappings` here at all, and an instance took whatever the
-AMI's snapshot specified: thirty gigabytes of **gp2**. The size was never the
-problem — the IO credits were. gp2 earns three IOPS per gigabyte, so a thirty
-gigabyte volume has a baseline of a hundred, burstable to three thousand only
-while the bucket lasts. RocksDB is an LSM tree: a write is a write-ahead log
-append now and a compaction read-and-rewrite later, so a run of sustained writes
-spends credits faster than it earns them and then falls to the baseline —
-`write_stalled` on a volume that looked fast for the first few minutes of a load
-test.
+The mapping is declared rather than left to the AMI's snapshot, which specifies
+thirty gigabytes of **gp2**. The size is not the problem — the IO credits are.
+gp2 earns three IOPS per gigabyte, so a thirty gigabyte volume has a baseline of
+a hundred, burstable to three thousand only while the bucket lasts. RocksDB is an
+LSM tree: a write is a write-ahead log append now and a compaction
+read-and-rewrite later, so a run of sustained writes spends credits faster than
+it earns them and then falls to the baseline — `write_stalled` on a volume that
+looked fast for the first few minutes of a load test.
 
 **gp3 has no credits.** Three thousand IOPS and 125 MB/s are the floor, not a
 burst, they are the same in the tenth minute as in the first, and at this size
-gp3 is slightly cheaper than the gp2 it replaces. Declaring the mapping also
-means the number is the template's rather than the AMI's, so a new ECS AMI cannot
+gp3 is slightly cheaper than gp2. Declaring the mapping also means the number is
+the template's rather than the AMI's, so a new ECS AMI cannot change it
+underneath the stack.
 change it underneath the stack.
 
 `/dev/xvda` is the root device of the AMI, so this is the volume

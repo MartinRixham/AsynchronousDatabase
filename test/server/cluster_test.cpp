@@ -64,7 +64,6 @@ namespace
 
 		::cluster::placement replicas(const std::string &key) const override
 		{
-			// The name of the namespace is hidden here by the name of the base class.
 			std::vector<::cluster::member> owners = ::cluster::owners_of(key, member_list);
 			::cluster::placement where;
 
@@ -639,8 +638,8 @@ TEST_F(cluster_test, a_write_ordered_in_a_term_that_has_passed_is_refused)
 	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
 }
 
-// A cluster with no leadership at all — no zones, or no etcd to elect through — writes the way it
-// always did, from wherever the write landed to every copy.
+// A cluster with no leadership at all — no zones, or no etcd to elect through — writes from
+// wherever the write landed to every copy.
 TEST_F(cluster_test, a_write_is_unordered_when_no_node_leads_anything)
 {
 	zone_the_cluster();

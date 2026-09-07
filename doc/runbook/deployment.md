@@ -89,16 +89,16 @@ and not from the first check. Into the 200 has to fit a `docker login`, a cold
 — which answers at once when the etcd tier is up and waits **up to a minute**
 when it is not.
 
-**Three and a bit minutes is not a generous margin for that sequence**, and the
-minute is the part that is new. It holds because the pull is from ECR in the same
-region and the discovery call normally returns immediately, but a slow endpoint
-or a larger image eats it, and the failure looks like an instance that never
-comes up rather than like a timeout. There is room to raise it — nothing waits on
-the grace period except the first health check of a genuinely dead instance. The
-`yum -y update` and the install of AWS CLI v2 that used to be in here are
-[gone](/deployment/database#the-launch-template): Amazon Linux 2023 ships the
-CLI, and the base image is taken as AWS publishes it rather than patched at
-boot, so neither costs anything here any more.
+**Three and a bit minutes is not a generous margin for that sequence.** It holds
+because the pull is from ECR in the same region and the discovery call normally
+returns immediately, but a slow endpoint or a larger image eats it, and the
+failure looks like an instance that never comes up rather than like a timeout.
+There is room to raise it — nothing waits on the grace period except the first
+health check of a genuinely dead instance. Nothing in the user data updates
+packages or installs the AWS CLI
+([by design](/deployment/database#the-launch-template)): Amazon Linux 2023 ships
+the CLI, and the base image is taken as AWS publishes it rather than patched at
+boot, so neither costs anything here.
 
 ## The group does not replace a failed application
 
@@ -140,8 +140,9 @@ the same work from the beginning.
 ## Instances are replaced in a loop
 
 Under the `EC2` health check this is an *instance* fault rather than an
-application one, so it is rarer than it used to be — but the group will still
-churn if instances are failing their EC2 status checks, and any manual instance
+application one, so it is rare — but the group will still churn if instances are
+failing their EC2 status checks, and any manual instance refresh will churn if
+the image cannot be pulled.
 refresh will churn if the image cannot be pulled.
 
 **Stop the churn before diagnosing it**, because every replacement is another
@@ -169,7 +170,7 @@ resume. The usual causes are the pull and the grace period.
 Three things the template needs and does not create:
 **an ECR repository `asyncdb` in `eu-west-2`**, **the SSM parameter
 `/asyncdb/version`**, and **the image tag itself pushed under that name**. A key
-pair is not one of them any more.
+pair is not one of them.
 
 ```bash
 aws ssm put-parameter --name /asyncdb/version --type String \

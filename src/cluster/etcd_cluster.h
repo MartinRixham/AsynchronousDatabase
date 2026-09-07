@@ -28,8 +28,7 @@ namespace cluster
 		std::string node;
 
 		// The availability zone this node stands in. Every zone holds a copy of every record, so
-		// naming a second zone is what turns partitioning into replication; naming none leaves the
-		// cluster with the one copy it had.
+		// naming a second zone is what turns partitioning into replication.
 		std::string zone;
 
 		// How long the membership of a node outlives the node itself.
@@ -43,10 +42,9 @@ namespace cluster
 
 		std::string leader_prefix = "/asyncdb/leader/";
 
-		// How many partitions a node claims on one pass. Claiming costs a round trip to etcd
-		// each, and there are 256 of them, so a node takes a few at a time rather than all of
-		// them at once — several nodes claiming from their own offsets settle a cold cluster in
-		// a pass or two between them.
+		// How many partitions a node claims on one pass. A claim costs a round trip and there are
+		// 256 of them, so nodes claiming from their own offsets settle a cold cluster in a pass or
+		// two between them.
 		size_t claims_per_refresh = 64;
 
 		long timeout_seconds = 30;
@@ -116,13 +114,11 @@ namespace cluster
 
 		// Reads the membership without joining it, so that a node can see what it is about to hold
 		// before anything is routed to it. It is what a rebuild runs on: a node that has not
-		// registered is nobody's copy, so it can take as long as it needs without a read being
-		// answered from it or a write waiting on it.
+		// registered is nobody's copy, so it can take as long as it needs.
 		//
-		// False when there was no etcd to read one from, which is an instance standing alone and a
-		// cluster a test handed in rather than one this node discovered. Nothing that was not read
-		// here is a membership a rebuild should act on: the nodes in it were never asked whether
-		// they are serving yet.
+		// False when there was no etcd to read one from, which is an instance standing alone or a
+		// cluster a test handed in. A membership that was not read here is not one a rebuild should
+		// act on: its nodes were never asked whether they are serving yet.
 		bool discover();
 
 		void stop();

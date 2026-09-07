@@ -23,7 +23,7 @@ table::table table::parse_table(
 				name +
 				"\" is not 1 to " +
 				std::to_string(max_name_size) +
-				" characters of [a-z0-9_-], or is reserved.");
+				" characters of [A-Za-z0-9_ -], or is reserved.");
 	}
 
 	// A dependency is a name and nothing else: the API records the edge, it does not run the work.

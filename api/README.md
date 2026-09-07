@@ -82,11 +82,9 @@ that is a create.
   `node2` and `node3` are then the one instance, and each request is answered where it lands rather
   than forwarded. Nothing else in the collection is conditional, so every environment runs the whole
   thing and every one of them comes back green.
-- **Table names are wider than `doc/database/reference.md` says.** The server takes letters of
-  either case, digits, spaces, `_` and `-`, so the collection asserts `invalid_table_name` on a name
-  holding a `.` rather than on a capital. The reference still says `[a-z0-9_-]`.
+- **Table names take spaces and capitals.** The server takes letters of either case, digits,
+  spaces, `_` and `-`, so the collection asserts `invalid_table_name` on a name holding a `.`.
 
-An encoded slash in a key used to be one of these — nginx's `rewrite` worked on the decoded path, so
-`%2F` reached the server as a real slash and the request was a different route. `server/server.conf`
-now strips `/asyncdb` from `$request_uri` instead, which is the target as it was sent, so the two
-requests that write and read such a key are exercised through the proxy as well.
+An encoded slash in a key is exercised through the proxy as well: `server/server.conf` strips
+`/asyncdb` from `$request_uri`, which is the target as it was sent, so `%2F` reaches the server
+encoded rather than as a real slash naming a different route.

@@ -279,11 +279,9 @@ std::optional<boost::json::object> etcd::client::call(
 	size_t attempts = every_member ? endpoints.size() : std::min<size_t>(endpoints.size(), 1);
 
 	// Asking the members in turn, beginning with the one that answered last. A member that cannot
-	// be reached, or that is up but not serving, is a reason to ask the next one; anything it
-	// answers is the answer the whole cluster would give, and asking again would only be slower.
-	//
-	// The calls repeated this way are safe to repeat: writing the same key is idempotent, and a
-	// lease granted twice because the first answer was lost expires on its own.
+	// be reached, or is up but not serving, is a reason to ask the next; anything it answers is
+	// the answer the whole cluster would give. The calls repeated this way are safe to repeat:
+	// writing the same key is idempotent, and a lease granted twice expires on its own.
 	for (size_t i = 0; i < attempts; i++)
 	{
 		size_t member = (current + i) % endpoints.size();

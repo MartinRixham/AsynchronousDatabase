@@ -102,8 +102,8 @@ tests out of ECR, so the push comes three steps before anything is deployed, and
 a published version is not a version that passed. So the tag this reads is pushed
 nowhere near the push: [the step that pushes it](#recording-the-pass) is the last
 one before the teardown. **A `0.0.2` tag means the version passed**; that it was
-published is ECR's business and `/asyncdb/version`'s, and neither of them is
-asked a question by this workflow any more.
+published is ECR's business and `/asyncdb/version`'s, and this workflow asks
+neither of them a question.
 
 Nothing is held outside the repository to make this work — no parameter, no
 bucket, no database. The remote is asked rather than the working tree, because
@@ -121,8 +121,8 @@ The consequences worth knowing:
   tag in ECR is frozen at the build that went green, and the git tag names the
   commit it was built from. Pushes that do not touch
   `version` — a comment, a README, a fix to a test that does not need a cluster —
-  cost the image build and nothing else. That is nine `t3.micro`, an ALB and
-  roughly $2.80 of FIS action-minutes a push that no longer happens.
+  cost the image build and nothing else, which is nine `t3.micro`, an ALB and
+  roughly $2.80 of FIS action-minutes a push that is never spent.
 - **The gate fails open.** `--exit-code` is `0` for a ref that is there and `2`
   for one that is not, but a remote that cannot be reached at all is `128`, and
   the `else` branch takes that too. Unreachable reads as unverified and deploys,
@@ -133,11 +133,11 @@ The consequences worth knowing:
 - **To make a version run the suite again without bumping it**, delete the tag:
   `git push --delete origin 0.0.2`. The next push republishes the image from
   whatever `master` is then, so this is a rebuild and not a re-test.
-- **The failure direction now costs more than money.** Unreachable reads as
-  unverified, and unverified now publishes as well as deploys — so a version that
-  had passed can have its image rewritten by a build of a later commit, which
-  then has to pass the whole suite itself to be tagged. Still the safe direction
-  for the suite; no longer free.
+- **The failure direction costs more than money.** Unreachable reads as
+  unverified, and unverified publishes as well as deploys — so a version that had
+  passed can have its image rewritten by a build of a later commit, which then
+  has to pass the whole suite itself to be tagged. Still the safe direction for
+  the suite, and not a free one.
 - **The gate keys on `version` alone.** `etcd-version` moves for its own reasons
   and is [mirrored unconditionally](#mirroring-etcd), so bumping *it* without
   bumping `version` publishes a new etcd tag that no run deploys against. Bump
@@ -257,12 +257,9 @@ and `etcd`'s by the same two lines inside [the mirror](#mirroring-etcd). Both
 are idempotent — the `describe` is the whole test, and on every run after the
 first there is nothing to do.
 
-**It used to matter where it sat**, and it no longer does. The gate between it
-and the push was once a `describe-images`, which a missing repository made *fail*
-rather than answer "no such tag" — and a failure there read as a release. Now
-that [nothing asks the registry a question](/pipeline/release#why-the-registry-could-not-be-the-gate),
-this step is only what the `docker push` needs, and the mirror below creates its
-own repository beside its own push for the same reason.
+**Where it sits does not matter.** Nothing between it and the push asks the
+registry a question, so this step is only what the `docker push` needs, and the
+mirror below creates its own repository beside its own push for the same reason.
 
 ## Mirroring etcd
 
@@ -291,12 +288,11 @@ fi
 aws ssm put-parameter --name /asyncdb/etcd --type String --value "$ETCD_VERSION" --overwrite
 ```
 
-It is the shape [the asyncdb publish used to
-have](/pipeline/release#why-the-registry-could-not-be-the-gate) — ask ECR whether
-it is there, and push only if it is not — and it keeps it, because none of what
-made that a poor gate applies to a tag nothing here builds. A mirrored tag is
-either the bytes quay.io published under it or nothing; there is no second commit
-that would have produced a better one. Two differences worth knowing:
+It is the other shape — ask ECR whether the tag is there, and push only if it is
+not — and it is the right one here, because none of what makes that a poor gate
+for asyncdb applies to a tag nothing here builds. A mirrored tag is either the
+bytes quay.io published under it or nothing; there is no second commit that would
+have produced a better one. Two differences worth knowing:
 
 - **It is not guarded by `verify`.** The `version` gate decides whether *this
   repository's* image is published; `etcd-version` moves for its own reasons and

@@ -338,8 +338,7 @@ TEST(partition_test, a_node_alone_in_its_zone_asks_nobody_for_a_scan)
 	EXPECT_EQ(zones[2], std::vector<std::string>({ "http://asyncdb-3:8080" }));
 }
 
-// A cluster that was never told about zones is one zone of every node, so a scan asks all of them,
-// which is what it did before there were zones at all.
+// A cluster that was never told about zones is one zone of every node, so a scan asks all of them.
 TEST(partition_test, members_in_no_zone_are_one_zone_of_every_other_node)
 {
 	std::vector<std::vector<std::string>> zones = cluster::zones_of(zoneless(three), three[0], "");

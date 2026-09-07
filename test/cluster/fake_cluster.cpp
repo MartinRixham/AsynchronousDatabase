@@ -113,7 +113,7 @@ void cluster::fake_cluster::applied(const std::string &key, int64_t term)
 }
 
 // A key nothing was said about is a cluster with no leadership at all, which is how every test
-// that is not about leadership goes on writing the way it always did.
+// that is not about leadership writes.
 std::optional<cluster::leadership> cluster::fake_cluster::leader(const std::string &key) const
 {
 	std::map<std::string, leadership>::const_iterator led = leaders.find(key);

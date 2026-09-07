@@ -183,8 +183,7 @@ TEST_F(server_test, write_then_read_a_record)
 
 // The documented limit is a value of 16 MiB and Beast's own default is a request body of one, so
 // without a body limit of its own the parser ends the read in an error and the session closes the
-// connection with no response at all — a documented limit the server never reaches, and a
-// forwarded copy of a large value that dies on the wire between two nodes.
+// connection with no response at all.
 TEST_F(server_test, write_then_read_the_largest_value)
 {
 	request("PUT", "/table/account", "{}");

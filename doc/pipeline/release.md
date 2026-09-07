@@ -3,17 +3,14 @@
 Most of `build-and-push` is one decision — has this version passed the suite
 already? — and the two things that happen if it has not.
 
-There used to be two decisions here, and they were easy to confuse. This page
-asked ECR whether the image was published; [the deploy
-gate](/pipeline/#the-gate) asked a git tag whether the version had been
-tested. **They are now the same gate**, read in two places: the image is
-published for a version that has not passed, and republished on every push until
-it does.
+There is one gate, read in two places: this page publishes the image for a
+version that has not passed, and [the deploy gate](/pipeline/#the-gate) stands
+the stack up for the same versions. The image is republished on every push until
+the version passes.
 
-## Why the registry could not be the gate
+## Why the registry is not the gate
 
-The obvious gate is the registry — is `asyncdb:0.0.2` there already? — and it was
-this one for a long time:
+The obvious gate is the registry — is `asyncdb:0.0.2` there already?
 
 ```yaml
 if aws ecr describe-images \
@@ -23,27 +20,25 @@ then
   echo "publish=false" >> $GITHUB_OUTPUT
 ```
 
-It could never have been the *deploy* gate, because [the stack pulls the image it
-tests out of ECR](/deployment/#parameters): the push has to come first, so a
-published version is not yet a version that passed, and skipping the suite for
-anything already in the registry would skip it for a version whose first run went
-red.
+It cannot be the *deploy* gate, because [the stack pulls the image it tests out
+of ECR](/deployment/#parameters): the push comes first, so a published version is
+not yet a version that passed, and skipping the suite for anything already in the
+registry would skip it for a version whose first run went red.
 
-What is less obvious is that it was a poor **publish** gate too. It froze the
-image at the first commit that carried the version, so on a red version:
+It is a poor **publish** gate too. It would freeze the image at the first commit
+that carried the version, so on a red version:
 
-- the fix pushed at the next commit was built by CI and thrown away;
-- the stack the suite then ran against pulled the **first** commit's image;
-- and a green run recorded a pass for code that had never been in the image it
-  tested.
+- the fix pushed at the next commit is built by CI and thrown away;
+- the stack the suite runs against pulls the **first** commit's image;
+- and a green run records a pass for code that was never in the image it tested.
 
-Which is why the fix is [a mutable tag](#overwriting-the-tag) rather than a
+Which is why the answer is [a mutable tag](#overwriting-the-tag) rather than a
 second gate.
 
 ## Overwriting the tag
 
 `create-repository` sets no `--image-tag-mutability`, so the repository is
-`MUTABLE`, which is the default — and nothing here ever wanted otherwise.
+`MUTABLE`, which is the default and what this wants.
 `asyncdb:0.0.2` is therefore rewritten by every push that carries version `0.0.2`
 and has not passed yet, and the last one to be written is the one the suite runs
 against and the one the git tag names.
@@ -91,14 +86,11 @@ for what it reads and how it fails. Two steps in *this* job hang off it as well:
       --overwrite
 ```
 
-The tag and the push are **one step**, which they once were not: the `docker
-push` lived in a second step of its own and was commented out, so a release
-recorded a version that never left the runner. It is worth keeping in mind
-because the gate no longer notices: it asks git, not the registry, so a push that
-silently does nothing is a version the suite tests as whatever ECR happens to
-hold under that tag. If that is nothing, the instances have no container, the
-cluster never reaches six nodes and the run fails on the wait — which is the
-detection, and it is a coarse one.
+The tag and the push are **one step**, and the gate does not notice a push that
+silently does nothing: it asks git, not the registry, so such a version is tested
+as whatever ECR happens to hold under that tag. If that is nothing, the instances
+have no container, the cluster never reaches six nodes and the run fails on the
+wait — which is the detection, and it is a coarse one.
 
 **The `put-parameter` is the other half of publishing.** `/asyncdb/version` is
 what [the template resolves at deploy time](/deployment/#parameters), so this line
@@ -110,10 +102,8 @@ later, which is how the suite comes to test what this job just built.
 
 Neither ECR repository is a thing anybody creates by hand, and `asyncdb`'s is made
 by the step above the gate — `describe-repositories` or else `create-repository`,
-[as the mirror does for `etcd`](/pipeline/#making-the-repositories). It was once
-part of the ECR gate itself, and had to be: a missing repository fails
-`describe-images`, which that gate read as "not published yet". Now that nothing
-asks the registry a question, it is only what the `docker push` needs.
+[as the mirror does for `etcd`](/pipeline/#making-the-repositories). It is what
+the `docker push` needs and nothing more.
 
 ## Cutting a release
 

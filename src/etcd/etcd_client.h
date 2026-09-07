@@ -25,12 +25,9 @@ namespace etcd
 	};
 
 	// etcd speaks gRPC, but every call it offers is also a POST of a JSON document to its gateway,
-	// where a key and a value travel base64 encoded. That is the whole reason there is no gRPC
-	// dependency here: libcurl and Boost.JSON are already in the build.
-	//
-	// Every member of an etcd cluster answers for the whole of it, so the client is given all of
-	// them and asks the next one when the one it was using does not answer. One thread drives a
-	// client: the membership of a cluster is kept up by a thread of its own.
+	// where a key and a value travel base64 encoded — which is why there is no gRPC dependency
+	// here. Every member answers for the whole cluster, so the client is given all of them and
+	// asks the next when the one it was using does not answer. One thread drives a client.
 	class client
 	{
 		const http::client &http_client;
@@ -55,9 +52,8 @@ namespace etcd
 		bool put(const std::string &key, const std::string &value, int64_t lease) const;
 
 		// Writes the key only if nothing holds it, which is how a node is elected: the one whose
-		// write created the key leads, and the others are told who did. The revision the key was
-		// created at comes back with it, and it is the term — etcd's revisions only ever rise, so
-		// a later leader of the same partition always has a higher one than the leader before it.
+		// write created the key leads, and the others are told who did. The revision it was
+		// created at is the term, and etcd's revisions only ever rise.
 		//
 		// Nothing at all is a call that failed, which is neither a claim won nor one lost.
 		std::optional<claim> create(const std::string &key, const std::string &value, int64_t lease) const;

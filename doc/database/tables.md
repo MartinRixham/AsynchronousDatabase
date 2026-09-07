@@ -1,6 +1,6 @@
 # Tables
 
-A table is a named keyspace, and a RocksDB column family. Names are `[a-z0-9_-]`,
+A table is a named keyspace, and a RocksDB column family. Names are `[A-Za-z0-9_ -]`,
 between 1 and 64 characters. `default` is reserved for the column family RocksDB
 always has.
 

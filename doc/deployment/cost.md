@@ -80,18 +80,17 @@ existing.
 
 That is **$0.182 an hour**, or about $1,590 a year, for an empty database. Three
 things in it are worth saying out loud:
-
-- **The route out is free, and it used to be half the bill.** Six interface
-  endpoints in three availability zones was eighteen hourly charges and $144.54
-  a month — 52% of a total that was $277.41 — because an interface endpoint is
-  charged per zone whether anything goes through it or not. An egress-only
-  internet gateway is charged for none of that: no hourly rate, no per-zone
-  multiplier, and no data charge beyond the
-  [data out to the internet](#reads-writes-and-gigabytes) that any route would
-  have carried. A NAT gateway, the other way of having a route out, would have
-  been $32.85 a month for one and $98.55 for one per zone. **What the change
-  spends instead of money is reach**: nine instances that could open a
-  connection to seven named services can now open one to any IPv6 address there
+- **The route out is free, and the alternatives are not.** Six interface
+  endpoints in three availability zones would be eighteen hourly charges and
+  $144.54 a month, because an interface endpoint is charged per zone whether
+  anything goes through it or not; a NAT gateway would be $32.85 a month for one
+  and $98.55 for one per zone. An egress-only internet gateway is charged for
+  none of that: no hourly rate, no per-zone multiplier, and no data charge beyond
+  the [data out to the internet](#reads-writes-and-gigabytes) that any route
+  would have carried. **What it spends instead of money is reach**: nine
+  instances that could open a connection to seven named services can open one to
+  any IPv6 address there is, which is
+  [argued where the route is](/deployment/network#the-route-out).
   is, which is [argued where the route is](/deployment/network#the-route-out).
 - **The etcd tier is a fifth of the bill**, and it holds
   [six keys on a ten second lease](/database/cluster#membership). It is
@@ -513,8 +512,8 @@ S3 at $0.024 or DynamoDB at $0.28 is comparing against a durable gigabyte.
 
 The gp3 IO is the part that is genuinely included: 3,000 IOPS and 125 MB/s come
 with the volume rather than as a line item, which is part of
-[why gp3 replaced gp2](/deployment/database#the-root-volume) — the IO that was
-being rationed by credits is now free and the volume is slightly cheaper.
+[why the volume is gp3 and not gp2](/deployment/database#the-root-volume) — IO
+that gp2 rations by credits is free here, and the volume is slightly cheaper.
 
 And the ceiling is a wall, not a bill. The volume is the *root* volume, shared
 with the OS, the docker image store and the logs; RocksDB is an LSM tree and a

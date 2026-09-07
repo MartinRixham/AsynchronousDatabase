@@ -1,10 +1,8 @@
 import { request } from "@playwright/test";
 
 // Nothing is started for the tests, so the run stops here — with the address it tried and how to
-// give it one — rather than in a browser that was served nothing. The instance is allowed a short
-// while to answer, which is what makes `podman-compose up -d && npm test` work: compose returns as
-// soon as the containers are made, and the database still has to open RocksDB and register itself
-// with etcd.
+// give it one — rather than in a browser that was served nothing. The short wait is what makes
+// `podman-compose up -d && npm test` work: compose returns before the database has opened RocksDB.
 export default async function globalSetup(config) {
 
 	const baseURL = config.projects[0].use.baseURL;

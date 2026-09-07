@@ -35,25 +35,24 @@ it.
 
 ## Why not a discovery service
 
-The stack used to mint a token from `discovery.etcd.io` in a Lambda-backed
-custom resource and pass it to an auto scaling group, and then it did away with
-both and fixed three addresses in a `Mappings` block instead. Neither is what is
-here now, and both are worth recording:
+Two other ways to bootstrap an etcd cluster suggest themselves — a token from
+`discovery.etcd.io`, and three fixed addresses in a `Mappings` block — and
+neither is used here:
 
 - **The token service is unmaintained.** It runs on the v2 storage engine that
   v3 replaced, and etcd 3.6 removes v2 discovery outright. A stack whose creation
   depends on a third party's deprecated endpoint answering is a stack that rolls
   back the day it stops.
-- **There was no version to upgrade to.** v3 discovery — `--discovery-token`
+- **There is no version to upgrade to.** v3 discovery — `--discovery-token`
   with `--discovery-endpoints` — bootstraps from *another* etcd cluster, which is
   no use to the only etcd cluster in the stack.
-- **A token is used up once.** `size=3` filled by the first three to arrive, so a
-  replacement instance booting with the same token joined nothing. The auto
-  scaling group it was supposed to make self-healing could not heal it.
-- **Fixed addresses could not heal either.** They made the bootstrap trivial and
-  the *replacement* impossible: `update-stack` recreated an instance at the same
+- **A token is used up once.** `size=3` is filled by the first three to arrive,
+  so a replacement instance booting with the same token joins nothing. The auto
+  scaling group it is supposed to make self-healing cannot heal it.
+- **Fixed addresses cannot heal either.** They make the bootstrap trivial and the
+  *replacement* impossible: `update-stack` recreates an instance at the same
   address with an empty data directory and a new member id, and the survivors
-  still held the old id for that name. It would not rejoin, and the remedy was a
+  still hold the old id for that name. It does not rejoin, and the remedy is a
   hand on `etcdctl`.
 
 `DescribeInstances` is none of those things. It is an AWS API that is already
@@ -98,10 +97,10 @@ gets it. The tag is
 [mirrored into ECR by the build](/pipeline/#mirroring-etcd), and the pull here is
 the same login and the same dual-stack registry name the
 [database tier](/deployment/database#the-launch-template) uses. The tier does
-have [a route to the internet](/deployment/network#the-route-out) now, where it
-used not to, so this is no longer the only way the image could reach an
-instance — it is still the way it does, because a boot that depends on a third
-party's registry answering is a boot that fails when it does not.
+have [a route to the internet](/deployment/network#the-route-out), so this is not
+the only way the image could reach an instance — it is the way it does, because a
+boot that depends on a third party's registry answering is a boot that fails when
+it does not.
 That is why `EtcdRole` carries `AmazonEC2ContainerRegistryReadOnly` alongside its
 `DescribeInstances`.
 
@@ -184,7 +183,7 @@ etcdctl() {
 
 ### The member dance, automated
 
-This is the part that used to be a paragraph of instructions:
+The member dance, in the boot script rather than in a runbook page:
 
 ```bash
 echo "$MEMBERS" | while IFS=, read -r ID STATUS MEMBER PEER REST; do

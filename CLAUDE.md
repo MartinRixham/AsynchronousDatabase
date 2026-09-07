@@ -166,17 +166,16 @@ pipeline deletes next — so `CHAOS_ETCD_DURATION` is a real duration there, and
 - **Order matters.** The agentless faults are first; `etcd-quorum-lost` is last, because it is
   the only one that leaves the cluster having been wrong about itself, and the pipeline deletes
   the stack next.
-- **Four of the seven inject through `aws:ssm:send-command`**, and they were skipped behind a
-  `CHAOS_SSM=1` for as long as the instances had no route out; they run by default now that
-  [the private subnets have one](#release). `node-latency` and `disk-fills` run an
-  `AWSFIS-Run-*` document, which installs `at` and `tc` from the distribution repositories — so
-  what they depend on is an instance being able to install a package while it is under test.
-  `scan-loses-a-node` and `etcd-unreachable` run `AWS-RunShellScript` and a rule of their own in
-  the `DOCKER-USER` chain, because **`AWSFIS-Run-Network-Blackhole-Port` blocks nothing here**:
-  it writes into `INPUT` and `OUTPUT`, and a container behind a published port is reached through
-  `FORWARD` and sends through it too, so the document reported success and injected nothing. The
-  agentless three (`aws:ec2:stop-instances`, `aws:network:disrupt-connectivity`) need nothing of
-  the instances, which is why they are still first. `chaos/README.md` is the page.
+- **Four of the seven inject through `aws:ssm:send-command`**, which needs the private subnets'
+  [route out](#release). `node-latency` and `disk-fills` run an `AWSFIS-Run-*` document, which
+  installs `at` and `tc` from the distribution repositories — so what they depend on is an
+  instance being able to install a package while it is under test. `scan-loses-a-node` and
+  `etcd-unreachable` run `AWS-RunShellScript` and a rule of their own in the `DOCKER-USER` chain,
+  because **`AWSFIS-Run-Network-Blackhole-Port` blocks nothing here**: it writes into `INPUT` and
+  `OUTPUT`, and a container behind a published port is reached through `FORWARD` and sends through
+  it too, so the document reports success and injects nothing. The agentless three
+  (`aws:ec2:stop-instances`, `aws:network:disrupt-connectivity`) need nothing of the instances,
+  which is why they are first. `chaos/README.md` is the page.
 - **`disk-fills` tests the proxy as much as the store.** nginx spools a request body over 8 KiB
   to a temporary file, so a full volume answers `500 unavailable` out of `server/50x.json` before
   the database is asked at all — which is why the experiment writes in two sizes, a megabyte the
@@ -189,13 +188,12 @@ pipeline deletes next — so `CHAOS_ETCD_DURATION` is a real duration there, and
   actions and a `PassRole` scoped to `ChaosRole` to the IAM groups in the `Operators` parameter
   (default `builders`, which holds the pipeline's identity). Nothing else in the account grants
   FIS anything, so outside a chaos run nobody here can start an experiment. `make
-  update-chaos-stack` is how a chaos stack that predates the policy gets it.
+  update-chaos-stack` applies a change to a chaos stack that is already standing.
 - **Run `chaos/validate.sh` after touching an experiment.** Creating a template is where the
   service checks every action, parameter and target arn in it, so create-then-delete is the
-  whole of "would this run?" for two API calls and no fault. Both bugs that cost a full run to
-  find — a template the credentials could not create, and `completeIfInstancesTerminated`
-  without the `startInstancesAfterDuration` the service insists goes with it — are caught by it
-  in seconds.
+  whole of "would this run?" for two API calls and no fault — credentials that cannot create a
+  template, and a parameter the service insists goes with another, are caught in seconds rather
+  than by a full run.
 
 ### Running the whole thing
 
@@ -220,10 +218,21 @@ Set the first two and the instance joins.
 **a key belongs to one of 256 partitions, the membership is grouped by zone, and the partition is
 hashed once inside each group**, so every zone holds exactly one copy of every partition — and the
 copies of a partition are the same three nodes for every key in it, which is what lets one of them
-lead it. No zone named anywhere is one zone holding all the nodes, which
-is the one copy this always kept. `docker-compose.yml` runs two zones (nodes 1 and 2 in `one`,
-node 3 in `two`) so the compose cluster both partitions and replicates; `cloudformation.yaml` reads
+lead it. No zone named anywhere is one zone holding all the nodes, and so one copy of the keyspace.
+`docker-compose.yml` runs two zones (nodes 1 and 2 in `one`, node 3 in `two`) so the compose
+cluster both partitions and replicates; `cloudformation.yaml` reads
 the real AZ out of IMDS, which is three zones of one node each.
+
+## Comments and documentation
+
+- **Comment only what the code cannot say**, and keep it short. Most code needs none. An invariant, a
+  constraint imposed from outside the file, or a reason the obvious thing is wrong is worth a line or
+  two; a paragraph almost never is, and a comment restating the code is worse than no comment.
+- **Write about the design as it stands, never about how it got that way.** No changelogs, no "used
+  to", no "this replaced X", no account of the bug that prompted the current shape. State the rule
+  and the reason it holds now. `git log` is where the past is kept.
+- Both apply everywhere: `CLAUDE.md`, `doc/`, every `README.md`, and comments in C++, JavaScript,
+  shell, YAML and config alike.
 
 ## Libraries
 
@@ -299,10 +308,10 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
   reachable.** Beast's defaults are a 1 MiB body and an 8 KiB header, against an API that documents a
   16 MiB value and a 4 KiB key — and a key travels percent encoded, so three bytes to the byte and
   12 KiB of request line at worst. Neither default is an error the server answers: **the read itself
-  ends in one and the connection closes with nothing written on it**, so an oversized request was a
-  dead socket rather than `value_too_large`, and a forwarded copy of a large value died between two
-  nodes. `read()` therefore sets `body_limit(record::max_value_size + 1)` — one byte over, so the
-  router is what refuses an oversized value — and `header_limit(3 * record::max_key_size + 8 KiB)`.
+  ends in one and the connection closes with nothing written on it**, which is a dead socket rather
+  than `value_too_large` and kills a forwarded copy of a large value between two nodes. `read()`
+  therefore sets `body_limit(record::max_value_size + 1)` — one byte over, so the router is what
+  refuses an oversized value — and `header_limit(3 * record::max_key_size + 8 KiB)`.
   **`server/server.conf` carries the same two limits for the nginx in front of it** (`client_max_body_size`,
   `large_client_header_buffers`), and a body over its limit is answered `413 value_too_large` from
   `server/413.json` rather than nginx's own HTML. Change one of the four and change its pair.
@@ -352,9 +361,7 @@ and, off the router, `cluster::cluster` → `http::client` → the other nodes a
   every dependency must name an existing table — so the dependency graph can never contain a
   dangling edge. `PUT /table/{table}` is idempotent: the same options again are `200`, and
   different ones are `409`, which is why a cycle cannot be built.
-  **The accepted characters are `[A-Za-z0-9_ -]`** — either case, digits, space, underscore, hyphen —
-  which `doc/database/`, `reference.md` and `is_valid_name`'s own error message all still describe as
-  `[a-z0-9_-]`; `api/README.md` asserts against the wider set the code actually takes.
+  **The accepted characters are `[A-Za-z0-9_ -]`** — either case, digits, space, underscore, hyphen.
 - `record::parse_record` enforces the limits (4 KiB of key, 16 MiB of value) and that a key is valid
   UTF-8. A value is never looked at — every string is a value, and the empty one is told from a missing
   key by the status code, which is why `read_record` returns a `std::optional`.
@@ -465,16 +472,14 @@ whole mechanism: a step with no condition runs only when every step before it su
 version that fails is published and retried on every push until it passes, and a version that has
 passed is neither republished nor stood up again — which is what keeps nine instances, an ALB and
 about $2.80 of FIS action-minutes off a push that only touched a comment. **A version tag means
-passed, and never merely published**; what a version was published from is ECR and
-`/asyncdb/version`, and neither is asked a question by the workflow any more.
+passed, and never merely published**; the workflow asks git alone, and neither ECR nor
+`/asyncdb/version` is a question it puts.
 
 **The image tag in ECR is therefore overwritten**, for as long as the version has not passed — the
 repository is created mutable, which is the default. It has to be: the stack pulls the image it
-tests out of ECR, so the push comes before the suite, and the previous arrangement of gating the
-push on `describe-images` froze the image at the *first* commit carrying that version. A fix pushed
-on a red version was then built by CI and thrown away, the stack tested the broken image, and a
-green run recorded a pass for code that had never been in it. The window in which a version's bytes
-move is exactly the window before it passes, so **do not pull a version that has no git tag**.
+tests out of ECR, so the push comes before the suite, and every commit carrying a red version has
+to be the one the suite then runs against. The window in which a version's bytes move is exactly
+the window before it passes, so **do not pull a version that has no git tag**.
 
 **Nothing is held outside the repository to make that work**: `git tag -l` is the list of versions
 that have been through the suite, and `git push --delete origin {version}` is how one is made to go
@@ -482,9 +487,7 @@ through it again without bumping it — which rebuilds and republishes it, rathe
 is in ECR. The gate asks the remote rather than the working tree, because the checkout is one commit
 deep and fetches no tags; `--exit-code` is 0 for found and 2 for not, and a remote that cannot be
 reached at all is 128, which reads as not verified and both publishes and deploys. **The gate fails
-towards spending money, never towards skipping a suite that should have run** — and, since the two
-gates became one, towards rewriting the image of a version that had passed with a build that then
-has to pass the suite itself to be tagged.
+towards spending money, never towards skipping a suite that should have run.**
 Bump `version` to cut a release; leaving it unchanged makes CI a no-op publish that deploys nothing.
 AWS infrastructure lives in `cloudformation.yaml`, driven by the `Makefile` (`make create-stack` /
 `update-stack` / `delete-stack`), and is documented in `doc/deployment/`.
@@ -515,8 +518,8 @@ for the CLI (`ecr.…api.aws`, `ec2.…api.aws`), pull from `332187735950.dkr-ec
 rather than `dkr.ecr.eu-west-2.amazonaws.com`, and write `UseDualStackEndpoint` into
 `/etc/amazon/ssm/amazon-ssm-agent.json` before restarting the agent, which is what keeps Session
 Manager and the `AWSFIS-Run-*` documents working. Get one of those wrong and the instance boots
-with no container and is replaced by another that does the same. This replaced seven VPC
-endpoints that were about half the stack's fixed cost; `doc/deployment/network.md` is the page.
+with no container and is replaced by another that does the same. `doc/deployment/network.md` is
+the page.
 
 The database tier is **six** instances, `DesiredCapacity: 6` across three subnets, which an auto
 scaling group balances into two per availability zone — three copies of the keyspace (one per zone,
@@ -541,15 +544,11 @@ already on it and **not** for ECS: there is no cluster, no task definition and n
 anything. Each tier's user data does its own host preparation, which is `systemctl enable --now
 docker`, one `mkdir` and the dual-stack lines above, and then pulls its container from ECR.
 
-There was a Packer bake here (`ami/`, `.github/workflows/ami.yaml`, `/asyncdb/ami/{database,etcd}`)
-and it is gone. Its one load-bearing product was the etcd container, which a private subnet then
-had no route to quay.io to pull: **the build now mirrors that tag into this account's ECR
-instead**, which takes quay.io off the boot path the same way and puts the tag on the pipeline that
-already runs rather than on one somebody has to remember to run. What was left of the bake
-afterwards was a `dnf -y update` that goes stale the day it is taken, against a base image AWS
-republishes patched. The cost of the change is that two instances of one auto scaling group
-launched a fortnight apart can be two different operating systems; that is accepted, and pinning it
-again is one parameter override away.
+**The etcd container is mirrored into this account's ECR rather than baked**, which keeps quay.io
+off the boot path — a private subnet has no route to it — and puts the tag on the pipeline that
+already runs. The price of taking a base image AWS republishes patched is that two instances of one
+auto scaling group launched a fortnight apart can be two different operating systems; that is
+accepted, and pinning it is one parameter override away.
 
 **The etcd tag is written by hand in one place, `etcd-version`.** The build reads it, mirrors
 `quay.io/coreos/etcd:$ETCD_VERSION` into ECR if it is not there already, and writes
