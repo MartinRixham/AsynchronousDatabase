@@ -97,7 +97,8 @@ because an experiment has the cluster to itself by design. Four is also where sh
 They also cost money for as long as they run: `nodes-added` is nine database instances rather than
 six for the length of it. Nothing is left behind — every one of them puts the shape back, and the
 suite stops if it did not. The faults themselves are minutes; the waiting is the
-deployment's own timings — a ten second lease, a sixty second load balancer health check, a two
+deployment's own timings — a ten second lease, a sixty second load balancer health check, a
+[thirty second deregistration delay](../doc/deployment/database.md#the-load-balancer), a two
 hundred second grace period — and `CHAOS_SETTLE` and `CHAOS_RECOVERY` are how much of each is
 allowed for.
 

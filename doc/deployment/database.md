@@ -281,7 +281,7 @@ There is also no `UpdatePolicy`, so
 | Resource | Is |
 | --- | --- |
 | `ApplicationLoadBalancer` | Named `${AWS::StackName}-alb`, `internet-facing`, in the three public subnets — [the only thing in them](/deployment/network) — in `ALBSecurityGroup`. The name is the stack's because a load balancer name is unique to a region, and [the pipeline stands up four stacks at once](/pipeline/#the-shares) |
-| `ALBTargetGroup` | HTTP, port 80, `TargetType: instance`, health check `GET /asyncdb/health` |
+| `ALBTargetGroup` | HTTP, port 80, `TargetType: instance`, health check `GET /asyncdb/health`, thirty second deregistration delay |
 | `ALBListener` | HTTP on port 80, one default action forwarding to the target group |
 
 Port 80 on an instance is nginx, so the target group is the UI and the
@@ -308,6 +308,14 @@ nginx serving `index.html` out of `/usr/share/nginx/html`, and it answers as soo
 as nginx is up whether or not there is a database behind it. The two are started
 together by the image's `CMD nginx & ./asyncdb` and nothing makes one wait for the
 other, so checking the static file would be checking the wrong process.
+
+**Deregistration is thirty seconds, and not the five minutes it defaults to.** A
+draining target is a running instance: it goes on renewing its etcd lease
+throughout, so it is still in the membership and still a copy every write waits
+for, long after the load balancer has stopped sending it anything. The default is
+five minutes in which the cluster is a node larger than the group is, and a
+shrink and a replacement both spend it. Thirty seconds is longer than any request
+this API answers, [a 16 MiB body included](/database/reference).
 
 Sessions are not sticky, and do not need to be: every node
 [answers for every key](/database/cluster), asking the owner when it is not the

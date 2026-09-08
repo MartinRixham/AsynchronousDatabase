@@ -417,6 +417,13 @@ Resources:
       Protocol: HTTP
       TargetType: instance
       HealthCheckPath: /asyncdb/health
+      TargetGroupAttributes:
+        # A draining target is a running instance: it goes on renewing its lease, so it is still
+        # in the membership and still a copy every write waits for, for the whole of this. The
+        # default is five minutes of a node the cluster counts and the load balancer no longer
+        # sends to. Thirty seconds is longer than any request this API answers.
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
