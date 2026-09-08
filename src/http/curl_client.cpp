@@ -1,9 +1,9 @@
-#include <memory>
-
 #include <curl/curl.h>
 
 #include "log.h"
-#include "http_client.h"
+#include "group.h"
+#include "handle.h"
+#include "curl_client.h"
 
 namespace
 {
@@ -14,37 +14,9 @@ namespace
 		return size * count;
 	}
 
-	class handle
-	{
-		CURL *easy;
-
-	public:
-		handle():
-			easy(curl_easy_init())
-		{
-		}
-
-		~handle()
-		{
-			if (easy != NULL)
-			{
-				curl_easy_cleanup(easy);
-			}
-		}
-
-		handle(const handle &) = delete;
-
-		handle &operator=(const handle &) = delete;
-
-		CURL *get() const
-		{
-			return easy;
-		}
-	};
-
 	CURL *thread_handle()
 	{
-		thread_local class handle handle;
+		thread_local http::handle handle;
 
 		if (handle.get() != NULL)
 		{
@@ -54,61 +26,9 @@ namespace
 		return handle.get();
 	}
 
-	class group
+	http::group &thread_group()
 	{
-		CURLM *multi;
-
-		std::vector<std::unique_ptr<class handle>> handles;
-
-	public:
-		group():
-			multi(curl_multi_init())
-		{
-		}
-
-		~group()
-		{
-			// A handle outliving the multi handle it ran in is one left holding a connection of
-			// its own, so the handles go first.
-			handles.clear();
-
-			if (multi != NULL)
-			{
-				curl_multi_cleanup(multi);
-			}
-		}
-
-		group(const group &) = delete;
-
-		group &operator=(const group &) = delete;
-
-		CURLM *get() const
-		{
-			return multi;
-		}
-
-		// As many handles as the widest fan out this thread has run, reset rather than remade.
-		CURL *at(size_t index)
-		{
-			while (handles.size() <= index)
-			{
-				handles.push_back(std::make_unique<class handle>());
-			}
-
-			CURL *easy = handles[index]->get();
-
-			if (easy != NULL)
-			{
-				curl_easy_reset(easy);
-			}
-
-			return easy;
-		}
-	};
-
-	group &thread_group()
-	{
-		thread_local class group group;
+		thread_local http::group group;
 
 		return group;
 	}
@@ -294,7 +214,7 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 		return responses;
 	}
 
-	class group &group = thread_group();
+	http::group &group = thread_group();
 	CURLM *multi = group.get();
 
 	if (multi == NULL)

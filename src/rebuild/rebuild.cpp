@@ -6,6 +6,7 @@
 #include <boost/json.hpp>
 
 #include "log.h"
+#include "cluster/placements.h"
 #include "record/record.h"
 #include "table/table.h"
 #include "url/url.h"

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "etcd/etcd_client.h"
+#include "http/curl_client.h"
 #include "http/http_client.h"
 #include "cluster.h"
 #include "member.h"

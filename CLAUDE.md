@@ -53,6 +53,11 @@ Notes:
 - Formatting is enforced by `.clang-format` (tabs, Allman braces, 120 columns, `SortIncludes: false`).
 - Naming is `snake_case` throughout, including class names, and each layer lives in its own namespace
   matching its directory.
+- **One class to a file**, and the file is named after it — `curl_client` in `src/http/curl_client.h`,
+  its definitions in `curl_client.cpp`. A helper only one `.cpp` reaches is still a file of its own.
+  A struct that is only data sits beside whatever it belongs to (`http::request` in `http_client.h`,
+  `cluster::placement` in `cluster.h`), and a test fixture belongs in the test file it is the fixture
+  for; nothing else shares.
 
 ### UI (`ui/`)
 

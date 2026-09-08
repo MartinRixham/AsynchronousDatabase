@@ -6,7 +6,7 @@
 
 #include <gtest/gtest.h>
 
-#include "http/http_client.h"
+#include "http/curl_client.h"
 #include "server/listening.h"
 #include "server/server.h"
 

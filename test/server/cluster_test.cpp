@@ -9,10 +9,8 @@
 #include <curl/curl.h>
 #include <boost/json.hpp>
 
-#include "cluster/cluster.h"
-#include "cluster/forwarder.h"
 #include "cluster/partition.h"
-#include "http/http_client.h"
+#include "cluster/test_cluster.h"
 #include "server/server.h"
 #include "listening.h"
 
@@ -24,136 +22,6 @@ namespace
 
 		return size * count;
 	}
-
-	// Two real servers on two real ports, which are known only once they are listening, so the
-	// membership is told to the cluster rather than read from etcd. Everything else — who owns a
-	// key, and how a request reaches the node that does — is the cluster the server runs.
-	class test_cluster : public cluster::cluster
-	{
-		std::string self;
-
-		std::string zone;
-
-		std::string leader_node;
-
-		int64_t term = 0;
-
-		std::vector<::cluster::member> member_list;
-
-		http::curl_client curl;
-
-	public:
-		test_cluster():
-			curl(http::curl_client(10, 2))
-		{
-		}
-
-		void join(
-			const std::string &node,
-			const std::string &node_zone,
-			const std::vector<::cluster::member> &members)
-		{
-			self = node;
-			zone = node_zone;
-			member_list = members;
-		}
-
-		std::vector<::cluster::member> members() const override
-		{
-			return member_list;
-		}
-
-		::cluster::placement replicas(const std::string &key) const override
-		{
-			std::vector<::cluster::member> owners = ::cluster::owners_of(key, member_list);
-			::cluster::placement where;
-
-			where.local = false;
-
-			for (size_t i = 0; i < owners.size(); i++)
-			{
-				if (owners[i].node == self)
-				{
-					where.local = true;
-				}
-				else
-				{
-					where.nodes.push_back(owners[i].node);
-				}
-			}
-
-			return where;
-		}
-
-		std::vector<std::string> peers() const override
-		{
-			std::vector<std::string> peers;
-
-			for (size_t i = 0; i < member_list.size(); i++)
-			{
-				if (member_list[i].node != self)
-				{
-					peers.push_back(member_list[i].node);
-				}
-			}
-
-			return peers;
-		}
-
-		std::vector<std::vector<std::string>> zones() const override
-		{
-			return ::cluster::zones_of(member_list, self, zone);
-		}
-
-		// The leader is told to the cluster rather than claimed in etcd, the same way the
-		// membership is: what is under test here is what a leader does, not how it is chosen.
-		void led_by(const std::string &node, int64_t node_term)
-		{
-			leader_node = node;
-			term = node_term;
-		}
-
-		std::optional<::cluster::leadership> leader(const std::string &) const override
-		{
-			if (leader_node.empty())
-			{
-				return std::nullopt;
-			}
-
-			::cluster::leadership led;
-
-			led.known = true;
-			led.local = leader_node == self;
-			led.node = leader_node;
-			led.term = term;
-
-			return led;
-		}
-
-		size_t leads() const override
-		{
-			return leader_node == self ? ::cluster::partition_count : 0;
-		}
-
-		bool accept(const std::string &, int64_t sent) override
-		{
-			return sent == 0 || sent >= term;
-		}
-
-		router::response send(const std::string &node, const router::request &request) const override
-		{
-			return ::cluster::forward(curl, node, request);
-		}
-
-		// The real fan out over real sockets, so that a write reaching every copy at once is
-		// exercised here rather than only in production.
-		std::optional<router::response> send_all(
-			const std::vector<std::string> &node_list,
-			const router::request &request) const override
-		{
-			return ::cluster::refusal(::cluster::forward_all(curl, node_list, request));
-		}
-	};
 
 	struct answer
 	{
@@ -168,9 +36,9 @@ namespace
 class cluster_test : public ::testing::Test
 {
 protected:
-	test_cluster first_cluster;
+	cluster::test_cluster first_cluster;
 
-	test_cluster second_cluster;
+	cluster::test_cluster second_cluster;
 
 	std::shared_ptr<server::server> first;
 
