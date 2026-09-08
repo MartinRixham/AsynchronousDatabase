@@ -149,14 +149,14 @@ jobs:
       matrix:
         include:
           - stack: asyncdb-one
-            experiments: zone-retired
-          - stack: asyncdb-two
             suites: 'true'
-            experiments: nodes-added
+            experiments: node-stops zone-lost
+          - stack: asyncdb-two
+            experiments: etcd-unreachable nodes-added
           - stack: asyncdb-three
-            experiments: node-stops nodes-removed
+            experiments: nodes-removed zone-retired
           - stack: asyncdb-four
-            experiments: zone-lost scan-loses-a-node etcd-unreachable node-latency disk-fills etcd-quorum-lost
+            experiments: scan-loses-a-node node-latency disk-fills etcd-quorum-lost
 
     env:
       VERSION: ${{ needs.build.outputs.version }}

@@ -16,6 +16,14 @@
 # the copy is taken away on purpose and the instances holding it are terminated, so putting the zone
 # back is a copy that has to be built rather than one that was waiting.
 #
+# **The zone is emptied rather than waited out.** A group told it no longer spans a subnet moves what
+# is in it when it gets round to it, which is a quarter of an hour of a cluster doing nothing and is
+# the scheduler's own pacing rather than anything this system does. So the instances in the retired
+# zone are stopped as soon as the update lands, the way doc/runbook/deployment.md empties an instance
+# the group will not act on: the health check is EC2, so the group terminates them and launches their
+# replacements in the two subnets it has left. Both go at once, which is the harder half of it — the
+# zones that stay redraw their split while the replacements are still booting.
+#
 # Both moves redraw the split inside the zones that stay, and both are asked of the stores
 # themselves: a zone that gains a node has a node that has to fetch what it now owns, and a zone
 # that loses one has a node that has to be handed what the other let go. Neither is visible through
@@ -27,7 +35,7 @@
 # Two is the floor and three is the ceiling: there is no fourth subnet to grow into, so the increase
 # is asserted on the way back rather than as a fault of its own.
 #
-#   CHAOS_RESIZE   how long a rebalanced group is given to reach the new shape   1800 seconds
+#   CHAOS_RESIZE   how long a resized group is given to reach the new shape   1800 seconds
 
 source "$(dirname "$0")/harness.sh"
 
@@ -36,29 +44,75 @@ banner "A zone is retired" "Two copies carry the keyspace, and the third is rebu
 setup
 seed
 
-# Rebalancing out of a zone is slower than changing a capacity: the group launches the replacement
-# before it terminates what it is replacing, one at a time, and MaxSize allows one spare.
+# What is waited for is two replacements launching and joining, and not a scheduler deciding. The
+# ceiling stays generous: a fault that expires mid-assertion is a false failure.
 resize=${CHAOS_RESIZE:-1800}
 
 expect "$(shape)" '[6,3,[2]]' "the tier is six nodes in three zones of two"
 
 before=$(instances asyncdb | awk '{ print $2 }' | sort -u)
 
+# The instances the group is no longer allowed to keep: everything outside the subnets it spans,
+# read from the group itself rather than from the template, so which subnet the parameter drops is
+# the deployment's business and not this script's.
+retiring()
+{
+	local group spans
+
+	group=$(aws cloudformation describe-stack-resource --stack-name "$stack" \
+		--logical-resource-id AutoScalingGroup \
+		--query 'StackResourceDetail.PhysicalResourceId' --output text)
+
+	spans=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$group" \
+		--query 'AutoScalingGroups[0].VPCZoneIdentifier' --output text | tr ',' ' ')
+
+	instances asyncdb | awk -v spans=" $spans " '{ if (index(spans, " " $3 " ") == 0) print $1 }'
+}
+
+stopped=
+
 inject()
 {
 	echo "  Updating $stack to span two availability zones."
 
-	stack_update Zones=2
+	stack_update Zones=2 || return 1
+
+	stopped=$(retiring)
+
+	[ -n "$stopped" ] || {
+		echo "  The group spans every subnet its instances are in. Nothing was retired." >&2
+		return 1
+	}
+
+	echo "  Stopping$(echo " $stopped" | tr '\n' ' ')— the zone is emptied rather than waited out."
+
+	aws ec2 stop-instances --instance-ids $stopped > /dev/null
 }
 
+# The update back is the whole of the healing: the instances stopped here are ones the group has
+# terminated and replaced by now. Starting one that it did not is best effort and for that case
+# alone, the way node-stops does it — a stack left two nodes short is worse than a run that took
+# longer.
 heal()
 {
+	local id state
+
 	stack_update Zones=3
+
+	for id in $stopped; do
+		state=$(aws ec2 describe-instances --instance-ids "$id" \
+			--query 'Reservations[].Instances[].State.Name' --output text 2> /dev/null)
+
+		[ "$state" = stopped ] && aws ec2 start-instances --instance-ids "$id" > /dev/null 2>&1
+	done
+
+	return 0
 }
 
 preflight()
 {
 	may_resize Zones=2
+	may_stop $(instances asyncdb | cut -f1)
 	may_run $(instances asyncdb | cut -f1)
 }
 

@@ -20,7 +20,7 @@ broke came back, and an assertion that did not hold is a non-zero exit — which
 | `disk-fills` | [RocksDB returned an error](../doc/runbook/storage.md), [the disk is filling](../doc/runbook/storage.md) | `fallocate` over what is left of the root volume |
 | `nodes-added` | [Growing a cluster](../doc/runbook/storage.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update taking the tier to **nine** instances, and back to six |
 | `nodes-removed` | [No rebalancing](../doc/runbook/storage.md) | A stack update taking the tier to **three** instances, and back to six |
-| `zone-retired` | [Fewer zones than the deployment has](../doc/runbook/membership.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update giving the group **two** subnets instead of three, and back |
+| `zone-retired` | [Fewer zones than the deployment has](../doc/runbook/membership.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update giving the group **two** subnets instead of three, and `ec2:StopInstances` on what is left in the third |
 
 The last three [assert the two invariants a resize has to leave behind](#the-two-invariants-they-assert),
 which is what the cluster's [reconcile](../doc/runbook/rebuild.md#when-ownership-moves) exists to
@@ -74,25 +74,31 @@ chaos/node-stops.sh
 
 ### What it costs
 
-**Eighty minutes for all ten, and the resizes are sixty of it.** Measured:
+**Forty minutes for all ten, and the resizes are twenty of it.** Measured:
 
 | | |
 | --- | --- |
-| `zone-retired` | 24 min |
-| `nodes-added` | 20 min |
-| `nodes-removed` | 19 min |
-| the other seven, between them | 17 min |
+| `nodes-added` | 9.5 min |
+| `zone-retired` | 6 min |
+| `nodes-removed` | 5 min |
+| the other seven, between them | 20 min |
+
+`nodes-added` is the longest because nine instances are three launches and a rebuild apiece, and
+there is no way to ask for them sooner.
 
 The three resizes are all waiting: each is two stack updates, and an update that adds instances is
-a launch, a pull and a rebuild before the membership says anything has happened. `zone-retired` is
-the slowest, because rebalancing out of a zone is one instance at a time — the group launches the
-replacement before terminating what it replaces, and `MaxSize` allows one spare.
+a launch, a pull and a rebuild before the membership says anything has happened. A replacement is
+**a minute and a bit** of that, measured by `node-stops`, so what an experiment costs is the number
+of instances it waits for and not their size. Nothing here waits on an auto scaling group's own
+rebalancing: `zone-retired` [empties the zone rather than waiting to be rebalanced out of
+it](#the-faults-that-are-a-stack-update), which is a quarter of an hour of the scheduler's pacing
+that says nothing about this system.
 
 That arithmetic is why [the pipeline runs four stacks at once](../doc/pipeline/index.md#the-shares)
-rather than one, with `zone-retired` alone in a share: nothing here is parallel on a single stack,
-because an experiment has the cluster to itself by design. Four is also where sharding stops paying
-— a share spends about six minutes standing its cluster up, and no arrangement can finish before
-`zone-retired` does.
+rather than one: nothing here is parallel on a single stack, because an experiment has the cluster
+to itself by design. Standing a cluster up and tearing it down is eight minutes a share whatever it
+then runs, so the ten are spread to land the four shares within a minute or two of each other rather
+than to fill three of them and leave a fourth long.
 
 They also cost money for as long as they run: `nodes-added` is nine database instances rather than
 six for the length of it. Nothing is left behind — every one of them puts the shape back, and the
@@ -205,8 +211,9 @@ route names, which is not `eth0` on an instance of this generation.
 
 ## The faults that are a stack update
 
-`nodes-added`, `nodes-removed` and `zone-retired` break nothing. The shape of the database tier is
-two parameters of `cloudformation.yaml` — `Nodes`, how many instances the group runs, and `Zones`,
+`nodes-added`, `nodes-removed` and `zone-retired` break no node's ability to answer. The shape of
+the database tier is two parameters of `cloudformation.yaml` — `Nodes`, how many instances the
+group runs, and `Zones`,
 how many subnets it is given — and moving one of them is an `UpdateStack` carrying that parameter,
 the deployed template, and every other parameter as it stands. The auto scaling group does the rest:
 it balances what it is given over the subnets it spans, and an instance reads its own availability
@@ -224,9 +231,22 @@ into and one zone is no replication at all. So the increase is asserted on the w
 as a fault of its own — the retirement is the fault, and putting the zone back is a copy that has to
 be *built* rather than one that was waiting, which is the half `zone-lost` cannot test.
 
+**`zone-retired` empties the retired zone itself**, and it is the one place a resize touches an
+instance. A group given one subnet fewer moves what is in the one it lost when it gets round to it —
+a quarter of an hour of a cluster doing nothing, and the scheduler's own pacing rather than anything
+here. So the instances outside the subnets the group now spans are stopped as soon as the update
+lands, which is [what an operator does to an instance the group will not
+act on](../doc/runbook/deployment.md#the-group-does-not-replace-a-failed-application): the health
+check is `EC2`, so the group terminates them and launches their replacements in the two subnets it
+has left. Both go at once, which is the harder half of it — the zones that stay redraw their split
+while the replacements are still booting. What is given up is the one fact that belongs to the
+scheduler and not to this system: that the group would have got there unaided.
+
 `heal` is the update back, so a run that dies inside one still leaves the stack the shape it found
-it. The template is `--use-previous-template` throughout: what is under test is the stack the
-pipeline stood up, and carrying the checkout's template would be a second change nobody asked for.
+it. Starting a stopped instance is best effort beside it, for the case the group has not already
+terminated one. The template is `--use-previous-template` throughout: what is under test is the
+stack the pipeline stood up, and carrying the checkout's template would be a second change nobody
+asked for.
 
 ### The two invariants they assert
 

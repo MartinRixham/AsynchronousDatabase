@@ -12,13 +12,12 @@ rewrites the version's image in ECR. The other half of CI is
 `.github/workflows/pull-request.yaml`, which is
 [two jobs and no AWS at all](#the-pull-request-build).
 
-**Four stacks, because the chaos suite is the pipeline.** Eighty of the hundred
-and ten minutes a run used to take were `chaos/run.sh`, and sixty of those were
-the three experiments that resize the tier and then wait for an auto scaling group
-to do it. Nothing about them is parallel on one stack — an experiment has the
-cluster to itself by design — so the way to run them at once is to have several
-clusters. [The shares](#the-shares) are balanced by measured time, and four is
-where adding stacks stops helping.
+**Four stacks, because the chaos suite is the pipeline.** Forty of the sixty-odd
+minutes the suite would take on one stack are `chaos/run.sh`, and half of that is
+the three experiments that resize the tier and wait for instances to launch.
+Nothing about them is parallel on one stack — an experiment has the cluster to
+itself by design — so the way to run them at once is to have several clusters, and
+[the shares](#the-shares) carry about ten minutes of experiments each.
 
 ```
               push to main or master                     concurrency: build-and-push
@@ -304,15 +303,20 @@ was the one that granted them.
 
 ### The shares
 
-The matrix is three entries, and what is in each is a balance of measured time
+The matrix is four entries, and what is in each is a balance of measured time
 rather than a category:
 
 | Share | Runs | About |
 | --- | --- | --- |
-| `asyncdb-one` | `zone-retired` | 31 min |
-| `asyncdb-two` | the API, browser and load suites, then `nodes-added` | 30 min |
-| `asyncdb-three` | `node-stops`, `nodes-removed` | 28 min |
-| `asyncdb-four` | `zone-lost`, `scan-loses-a-node`, `etcd-unreachable`, `node-latency`, `disk-fills`, `etcd-quorum-lost` | 25 min |
+| `asyncdb-one` | the API, browser and load suites, then `node-stops`, `zone-lost` | 23 min |
+| `asyncdb-two` | `etcd-unreachable`, `nodes-added` | 23 min |
+| `asyncdb-three` | `nodes-removed`, `zone-retired` | 23 min |
+| `asyncdb-four` | `scan-loses-a-node`, `node-latency`, `disk-fills`, `etcd-quorum-lost` | 23 min |
+
+The suites are a lump of their own — about four minutes — so the share carrying
+them carries two of the shorter experiments beside it, and `nodes-added`, which is
+the longest thing in the suite at nine and a half, is most of the second share on
+its own.
 
 Ordering still matters *inside* a share — `etcd-quorum-lost` last, because it is
 the only one that leaves a cluster wrong about itself — but not across them: a
@@ -320,19 +324,24 @@ share has a cluster of its own and deletes it afterwards.
 
 ### Why four
 
-Because the fourth stack is the last one that buys anything. Two numbers set the
-floor, and both are measured:
+Because the fixed cost of a stack is most of a share. Two numbers set the floor,
+and both are measured:
 
 | | |
 | --- | --- |
-| `create-stack` and waiting for six nodes | **5m40** — fixed, per stack, whatever it then runs |
-| `zone-retired`, the longest experiment | **24m20** — one experiment, one cluster, not divisible |
+| `create-stack`, waiting for six nodes, and the teardown | **8m** — fixed, per stack, whatever it then runs |
+| `nodes-added`, the longest experiment | **9m30** — one experiment, one cluster, not divisible |
 
-So no arrangement of stacks finishes sooner than about **thirty-one minutes**,
-and four shares already reach it: `zone-retired` is alone in one, and the eighty
-minutes of everything else split three ways is under twenty-four each. A fifth
-stack shortens nothing, and thirteen — one an experiment — shortens nothing
-either, while asking the region for thirteen VPCs against a default of five.
+Forty minutes of experiments and four of suites over four stacks is about ten
+minutes of work a share, against eight of standing the cluster up and taking it
+down — so **a fifth stack saves two or three minutes and pays a whole VPC, a load
+balancer and nine instances for them**, and thirteen, one an experiment, finishes
+no sooner than `nodes-added` plus the eight, while asking the region for thirteen
+VPCs against a default of five.
+
+Two stacks would be about **thirty-five minutes** and three about **twenty-seven**,
+against twenty-three for four. Four is the last one that takes more off the clock
+than it costs to stand up.
 
 What more stacks would buy is **isolation**: inside a share, an experiment runs
 on a cluster the one before it broke and healed. `chaos/run.sh` refuses to start

@@ -185,7 +185,13 @@ fails one.
   there are — a zone holds exactly one — and `Nodes` is how many ways a zone splits the copy it
   holds. `zone-retired` takes the replication factor from three to two and back, `nodes-added`
   takes the tier to nine instances and `nodes-removed` to three, and `heal` is the update back, so
-  a run that dies inside one leaves the stack the shape it found it. They carry
+  a run that dies inside one leaves the stack the shape it found it. **`zone-retired` then stops
+  the instances the group is no longer allowed to keep**, because a group given one subnet fewer
+  rebalances out of the one it lost in its own time — a quarter of an hour of the scheduler's
+  pacing, which says nothing about this system. Stopping them is what `doc/deployment/database.md`
+  documents as the procedure: the health check is `EC2`, so the group terminates them and launches
+  the replacements in the subnets it still spans, and both go at once, so the zones that stay
+  redraw their split while the replacements are still booting. They carry
   `--use-previous-template`: what is under test is the stack the pipeline stood up. Three is the
   ceiling for `Zones` and two the floor, so **the increase in replication is asserted on the way
   back** rather than as a fault of its own — and that half is what `zone-lost` cannot test, because
@@ -525,10 +531,10 @@ waits for `/health` to name six nodes, runs `chaos/validate.sh` and `chaos/run.s
 experiments the matrix names it in `CHAOS_EXPERIMENTS`, and `make delete-stack`s it again whether
 they passed or not. **The share carrying `matrix.suites` also runs the Postman collection, the
 Playwright journeys and `perf/write.sh` / `perf/read.sh` first**, before anything has broken its
-stack. The shares are balanced by measured time — one of the three resize experiments each, which
-are twenty minutes apiece against seventeen for everything else in the suite together — and
-`doc/pipeline/index.md` is the page. **An experiment nobody names in the matrix is an experiment
-nobody runs**: there is no default list in the workflow.
+stack. The shares are balanced by measured time — about ten minutes of experiments each out of the
+forty the ten of them take, with the suites counting as four beside them — so all four land within a
+minute or two of twenty-three. `doc/pipeline/index.md` is the page. **An experiment nobody names in
+the matrix is an experiment nobody runs**: there is no default list in the workflow.
 
 `release` then pushes the git tag and `cleanup` deletes the chaos permissions. A share's teardown
 deletes only a stack that share created, so a stack standing under one of those three names makes
@@ -536,9 +542,9 @@ deletes only a stack that share created, so a stack standing under one of those 
 with nothing and only costs quota. **Four stacks at once is four VPCs, four load balancers and
 thirty-six `t3.micro`**, against a default of five VPCs to a region — so the account has room for
 the run and a default VPC and nothing else, which is what sizes it. **Four is where more stacks
-stop helping**: a share pays about six minutes to stand its cluster up and `zone-retired` is
-twenty-four minutes on its own, so no arrangement finishes sooner than about thirty and four shares
-already reach it.
+stop paying**: a share pays about eight minutes to stand its cluster up and tear it down against
+about ten of work, so a fifth stack takes two or three minutes off a twenty-three minute run and
+costs a whole VPC, a load balancer and nine instances for them.
 
 **There is one gate, and it is the `{version}` git tag.** It is the `if:` on `publish` and
 **nowhere else in the workflow** — no step repeats it, and every job that costs anything is

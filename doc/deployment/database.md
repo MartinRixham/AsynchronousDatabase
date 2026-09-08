@@ -244,10 +244,23 @@ from it. What no mechanism recovers is a key whose owner in *every* zone was
 terminated by the same update, which is why **capacity still moves three at a
 time and at a quiet moment**.
 
+**Taking a zone away is the update and then emptying it.** Lowering `Zones` says
+which subnets the group may use and nothing about the instances already in the one
+it lost: the group rebalances out of that subnet in its own time, which is a
+quarter of an hour of a cluster carrying a copy nobody wants. Stop those instances
+once the update lands and the group has an unhealthy instance instead of an
+unbalanced one — the same
+[EC2 health check](/runbook/deployment#the-group-does-not-replace-a-failed-application)
+that replaces any other, launching each replacement in a subnet it still spans.
+The zone is empty in a couple of minutes rather than fifteen, and the instances
+that were holding its copy go with it either way.
+
 `chaos/nodes-added`, `chaos/nodes-removed` and `chaos/zone-retired` move one of
 these parameters each and then ask every node what is in its store, asserting
 what a resize has to leave behind: every zone holding the same keys, and no key
-held by two nodes of one zone.
+held by two nodes of one zone. `zone-retired` empties the retired zone the way
+this section describes, so what the pipeline runs is the procedure and not a
+faster stand-in for it.
 
 `HealthCheckType` is `EC2`, the default, so the group replaces an instance whose
 *instance* has failed — a failed EC2 status check — and **not** one whose
