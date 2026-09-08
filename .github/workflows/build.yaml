@@ -244,8 +244,8 @@ jobs:
       run: |
         export BASE=$URL/asyncdb
 
-        REQUESTS=250 VALUE_BYTES=1024 perf/write.sh
-        REQUESTS=250 URL=$BASE/table/perf_load/key/0 perf/read.sh
+        THREADS=32 REQUESTS=64 VALUE_BYTES=1024 perf/write.sh
+        THREADS=32 REQUESTS=64 URL=$BASE/table/perf_load/key/0 perf/read.sh
 
         REQUESTS=32 VALUE_BYTES=2097152 perf/write.sh
         REQUESTS=32 URL=$BASE/table/perf_load/key/0 perf/read.sh

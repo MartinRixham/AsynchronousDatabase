@@ -284,7 +284,7 @@ harness as `STACK` and `CHAOS_STACK`:
 | Wait for the cluster to come up | `/asyncdb/health` until `.nodes` is **six**, ninety attempts ten seconds apart |
 | Install newman, Run the API collection | `if: matrix.suites` — [the Postman collection](https://github.com/MartinRixham/AsynchronousDatabase/tree/master/api) against `$URL/asyncdb` |
 | Install the browser tests, Run the browser tests | `if: matrix.suites` — Playwright with `ASYNCDB_URL=$URL`, and an `upload-artifact@v4` of the report `if: failure()` |
-| Run the load tests | `if: matrix.suites` — `perf/write.sh` then `perf/read.sh`, eight threads, 250 requests, and a `DELETE` of `perf_load` once both have run |
+| Run the load tests | `if: matrix.suites` — `perf/write.sh` then `perf/read.sh`, twice over: sixty-three kilobyte requests a thread on thirty-two threads, then thirty-two two megabyte ones on eight, and a `DELETE` of `perf_load` once all four have run |
 | Validate the experiments | `chaos/validate.sh` — this share's preflights, nothing applied |
 | Run the chaos suite | `chaos/run.sh` — this share's experiments, in the order the matrix names them |
 | Stack events | `make describe-stack`, `if: failure()` |
@@ -495,10 +495,22 @@ Everything else in the repository is a thing a person runs:
 - `perf/` — the load harness likewise: `perf/write.sh` and then `perf/read.sh`
   over the load balancer, failing the build if the cluster answers any of that
   load with anything but a 2xx curl also carried to the end of its body. A write run leaves its table standing for the
-  read run that follows it, so **the step drops `perf_load` itself** once both
-  have run: the last of them writes two megabyte values, and a table of those
+  read run that follows it, so **the step drops `perf_load` itself** once all
+  four have run: the last of them writes two megabyte values, and a table of those
   left on the cluster is what every `reconcile` pass of the chaos suite then
   pages through.
+
+  **The two payload sizes are bound by different things, so they carry different
+  thread counts.** A runner reaches the load balancer over the public internet at
+  something like a hundred and forty milliseconds, which is two orders of
+  magnitude more than anything the cluster does with a kilobyte: those runs
+  report a latency that is the wire and a throughput that is `THREADS` divided
+  by the round trip, so the only way to spend less of the pipeline on the same
+  number of requests is to have more of them in flight. Thirty-two is where the
+  runner still has one curl a request and the cluster is still idle. The two
+  megabyte runs are the other case — half a gigabyte in each direction saturates
+  the runner's uplink long before its concurrency matters — so raising theirs
+  would buy nothing, and eight is left alone.
 - `chaos/` — the last thing the deploy step's stack sees, and the only thing that
   breaks it on purpose. Each experiment injects one of
   [the runbook's failure modes](/runbook/) with the AWS CLI and asserts that the
