@@ -703,6 +703,28 @@ shape()
 		| jq -c '[ (.nodes | length), (.zones | length), ([ .zones[] | length ] | unique) ]'
 }
 
+# What the auto scaling groups have tried lately, reported and never asserted on. A membership
+# that never arrived and an instance that was never launched read the same from outside, and this
+# is the only thing that tells them apart: /health says the shape the cluster has and the group
+# says the shape it wants, and neither of them says why the two differ. A launch the account had
+# no room for is a failed activity here and nothing at all anywhere else.
+scaling_activities()
+{
+	local logical group
+
+	for logical in AutoScalingGroup EtcdAutoScalingGroup; do
+		group=$(aws cloudformation describe-stack-resource --stack-name "$stack" \
+			--logical-resource-id "$logical" \
+			--query 'StackResourceDetail.PhysicalResourceId' --output text 2> /dev/null)
+
+		[ -n "$group" ] && [ "$group" != None ] || continue
+
+		aws autoscaling describe-scaling-activities --auto-scaling-group-name "$group" \
+			--query 'Activities[:5].[StatusCode,StartTime,StatusMessage,Description]' \
+			--output text 2> /dev/null | sed "s/^/  ---- $logical /"
+	done
+}
+
 # await <jq predicate> <timeout> <description> — the cluster reaching a state, or not.
 await()
 {
@@ -733,6 +755,10 @@ await()
 		result 1 "$3 — health says $(echo "$last" \
 			| jq -c '{nodes: (.nodes | length), zones: (.zones | length), leads}' 2> /dev/null)"
 	fi
+
+	# A shape this waited for is a shape instances have to arrive for, so what the groups tried
+	# is part of the failure and not a separate investigation.
+	scaling_activities
 
 	return 1
 }

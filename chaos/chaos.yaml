@@ -38,6 +38,7 @@ Resources:
               - ssm:ListCommandInvocations
               - ssm:GetCommandInvocation
               - autoscaling:DescribeAutoScalingGroups
+              - autoscaling:DescribeScalingActivities
             Resource: "*"
 
           - Sid: StopTheStackAndStartItAgain

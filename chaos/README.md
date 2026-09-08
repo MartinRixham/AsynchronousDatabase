@@ -115,6 +115,9 @@ defaults to `builders`, the group holding the identity the pipeline runs as. Not
 the account grants the destructive half of that, which is deliberate: **outside a chaos run,
 nobody in this account can stop an instance of either tier or run a shell command on one.**
 
+It reads as well as breaks: the instances, subnets and network acls a fault has to find, and the
+scaling activities a failed assertion reports.
+
 Only the stop and start are scoped by tag. The rest is `Resource: "*"`, because the stack
 standing at all is the grant, and it stands for a run.
 
@@ -378,3 +381,9 @@ A `PASS`/`FAIL` line is an assertion. A `----` line is something measured and re
 asserted on — the reads a client lost while the load balancer had not yet noticed a dead target
 are the load balancer's health check interval and not the database, and latency here is
 [the same as it is in `perf/`](../perf): reported, never a threshold.
+
+A shape the cluster never reached carries one `----` line more: the last few scaling activities of
+both auto scaling groups. **A membership that never arrived and an instance that was never
+launched read the same from outside**, and this is what tells them apart — `/health` says the
+shape the cluster has and the group says the shape it wants, and a launch the account had no room
+for is a `Failed` activity there and nothing at all anywhere else.
