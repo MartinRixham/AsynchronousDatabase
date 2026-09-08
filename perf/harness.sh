@@ -39,13 +39,15 @@ request()
 }
 
 # %{num_connects} is 0 for a reused connection, so the sum is the number of connections opened.
-# A transfer that fails reports status 000 and curl carries on to the next url.
+# A transfer that fails reports status 000 and curl carries on to the next url, but only while it
+# fails before the response line: a connection that drops part way through a body leaves the status
+# the server sent, so %{exitcode} is what tells a whole answer from a truncated one.
 worker()
 {
 	echo "Starting thread $1." >&2
 
 	curl --silent --show-error --config "$work/requests.$1" \
-		--write-out '%{http_code} %{time_total} %{num_connects}\n' \
+		--write-out '%{http_code} %{time_total} %{num_connects} %{exitcode}\n' \
 		> "$work/out.$1" 2> "$work/err.$1"
 }
 
@@ -111,10 +113,10 @@ report()
 
 	count=$(wc -l < "$work/times")
 
-	# A transfer that never answered reports status 000, so anything but a 2xx is a request the
-	# server did not serve, and a missing line is a request that did not report at all.
+	# Anything but a 2xx curl also carried to the end of its body is a request the server did not
+	# serve, and a missing line is a request that did not report at all.
 	local answered
-	answered=$(cut -d ' ' -f 1 "$work/all" | grep -c '^2') || answered=0
+	answered=$(awk '$1 ~ /^2/ && $4 == 0 { served++ } END { print served + 0 }' "$work/all")
 	failed=$((threads * requests - answered))
 
 	printf '\n%s responses in %d.%02ds over %s connections\n\n' \
@@ -161,7 +163,7 @@ measure()
 	# The run is a test and not only a measurement: a load a server answers with errors, or does
 	# not answer at all, is a failure, and the exit status is what says so to whatever ran it.
 	if [ "$failed" -gt 0 ]; then
-		printf '\n %s of %s requests did not answer 2xx.\n' \
+		printf '\n %s of %s requests did not answer a 2xx in full.\n' \
 			"$failed" "$((threads * requests))" >&2
 
 		return 1

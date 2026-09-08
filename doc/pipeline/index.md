@@ -485,7 +485,7 @@ Everything else in the repository is a thing a person runs:
   [nothing is deployed](#the-pull-request-build).
 - `perf/` — the load harness likewise: `perf/write.sh` and then `perf/read.sh`
   over the load balancer, failing the build if the cluster answers any of that
-  load with anything but a 2xx. A write run leaves its table standing for the
+  load with anything but a 2xx curl also carried to the end of its body. A write run leaves its table standing for the
   read run that follows it, so **the step drops `perf_load` itself** once both
   have run: the last of them writes two megabyte values, and a table of those
   left on the cluster is what every `reconcile` pass of the chaos suite then

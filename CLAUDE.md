@@ -117,8 +117,10 @@ otherwise spends a second of curl's own timeout per request wherever the proxy i
 1150 ms a write against the binary alone, against 190 ms through nginx.
 
 **They are tests as well as measurements.** A request the server answers with anything but a 2xx —
-including the `000` of a transfer that never answered — makes the run exit non-zero, which is what
-lets `build.yaml` run them last against the deployed stack and fail the build on them. Latency is
+including the `000` of a transfer that never answered, and the 2xx of one whose body the connection
+cut short — makes the run exit non-zero, which is what lets `build.yaml` run them last against the
+deployed stack and fail the build on them. A status alone would miss the second: it is the one the
+server sent before the transfer broke, so `%{exitcode}` is counted beside it. Latency is
 reported and never asserted on: nothing here is a threshold.
 
 ### Chaos tests (`chaos/`)
