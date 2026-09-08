@@ -2,9 +2,6 @@
 
 #include "cluster.h"
 
-// A cluster that cannot ask several nodes at once asks them one after another, and answers the
-// same as one that asked them at once, down to which refusal it reports: every node is asked
-// whatever the one before it said.
 std::optional<router::response> cluster::cluster::send_all(
 	const std::vector<std::string> &node_list,
 	const router::request &request) const

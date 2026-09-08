@@ -46,6 +46,13 @@ TEST(url_test, decode_a_composite_key_separated_by_a_zero_byte)
 	EXPECT_EQ(path[3], std::string("4821\0" "2019", 9));
 }
 
+TEST(url_test, encode_a_key_whole)
+{
+	EXPECT_EQ(url::encode("user/4821"), "user%2F4821");
+	EXPECT_EQ(url::encode("user?4821"), "user%3F4821");
+	EXPECT_EQ(url::encode(std::string("4821\0" "2019", 9)), "4821%002019");
+}
+
 TEST(url_test, read_a_query_parameter)
 {
 	std::string query = url::query_string("/table/account/key?prefix=user%3A&limit=10");

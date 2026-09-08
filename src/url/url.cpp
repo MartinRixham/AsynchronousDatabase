@@ -4,8 +4,6 @@
 
 #include "url.h"
 
-// A path segment or a query value is escaped whole, so that a slash, a question mark or a zero
-// byte inside a key travels as text rather than as punctuation of the URL.
 std::string url::encode(const std::string &text)
 {
 	char *encoded = curl_easy_escape(NULL, text.c_str(), static_cast<int>(text.size()));
@@ -21,8 +19,6 @@ std::string url::decode(const std::string &encoded)
 	int length = 0;
 	char *decoded = curl_easy_unescape(NULL, encoded.c_str(), static_cast<int>(encoded.size()), &length);
 
-	// A key may contain a zero byte, which is the usual separator inside a composite key, so the
-	// length curl reports is what bounds the string rather than the first zero in it.
 	std::string out(decoded, static_cast<size_t>(length));
 
 	curl_free(decoded);
@@ -30,8 +26,6 @@ std::string url::decode(const std::string &encoded)
 	return out;
 }
 
-// A path segment ends at an unencoded slash, so the target is split before it is decoded. Decoding
-// first would let a key containing "/" or "?" pretend to be a route of its own.
 std::vector<std::string> url::split_path(const std::string &target)
 {
 	std::string path = target.substr(0, target.find('?'));
@@ -42,8 +36,6 @@ std::vector<std::string> url::split_path(const std::string &target)
 
 	for (size_t i = 0; i < parts.size(); i++)
 	{
-		// The empty segment before the leading slash is not a segment, and neither is the one a
-		// trailing slash leaves behind: "/table/account/key/" addresses the range, not a key.
 		if (!parts[i].empty())
 		{
 			segments.push_back(decode(parts[i]));

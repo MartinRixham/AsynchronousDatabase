@@ -25,8 +25,6 @@ router::response router::head_response(
 
 std::string router::response_body(const response &response)
 {
-	// A body another node left out of a HEAD is one there is nothing to write for, whatever its
-	// headers say it would have been.
 	if (response.length > 0)
 	{
 		return "";

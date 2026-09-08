@@ -6,8 +6,8 @@
 
 namespace record
 {
-	// Counted in the bytes of the UTF-8 encoding. Keys live in indexes and bloom filters, which
-	// are held in memory, and a value is read whole into memory to be served.
+	// Keys live in indexes and bloom filters, which are held in memory, and a value is read whole
+	// into memory to be served.
 	constexpr size_t max_key_size = 4 * 1024;
 
 	constexpr size_t max_value_size = 16 * 1024 * 1024;

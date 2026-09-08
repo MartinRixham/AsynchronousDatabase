@@ -23,16 +23,10 @@ namespace cluster
 {
 	struct config
 	{
-		// Where etcd answers, as base URLs — every member of the etcd cluster, because any of them
-		// answers for all of it. Empty is one instance on its own.
 		std::vector<std::string> endpoints;
 
-		// This node as the other nodes reach it, which is what is written into etcd and what the
-		// hash of a key names.
 		std::string node;
 
-		// The availability zone this node stands in. Every zone holds a copy of every record, so
-		// naming a second zone is what turns partitioning into replication.
 		std::string zone;
 
 		// How long the membership of a node outlives the node itself.
@@ -46,9 +40,6 @@ namespace cluster
 
 		std::string leader_prefix = "/asyncdb/leader/";
 
-		// How many partitions a node claims on one pass. A claim costs a round trip and there are
-		// 256 of them, so nodes claiming from their own offsets settle a cold cluster in a pass or
-		// two between them.
 		size_t claims_per_refresh = 64;
 
 		long timeout_seconds = 30;
@@ -61,8 +52,6 @@ namespace cluster
 		bool is_clustered() const;
 	};
 
-	// ASYNCDB_ETCD, which is one address or several separated by commas, and ASYNCDB_NODE.
-	// Nothing configured is nothing clustered.
 	config from_environment();
 
 	class etcd_cluster : public cluster
@@ -93,9 +82,6 @@ namespace cluster
 
 		std::map<size_t, leadership> leader_list;
 
-		// The highest term this node has applied a write of each partition in. A write ordered in
-		// an older term is a leader that has been replaced and does not know it.
-		//
 		// One slot a partition rather than a map behind a lock: the count is fixed, so every write
 		// raises the term of its own partition and no write waits on a write of another.
 		std::array<std::atomic<int64_t>, partition_count> terms = {};
@@ -119,8 +105,6 @@ namespace cluster
 
 		etcd_cluster &operator=(const etcd_cluster &) = delete;
 
-		// Registers this node and keeps its membership alive until stop(). Standing alone, both
-		// are nothing at all.
 		void start();
 
 		// Reads the membership without joining it, so that a node can see what it is about to hold
@@ -163,9 +147,6 @@ namespace cluster
 
 		void read_members();
 
-		// Claims every partition this node holds a copy of and nothing leads yet, and reads back
-		// who leads the rest. A node leads on the same lease its membership is on, so a node that
-		// stops renewing stops leading.
 		void read_leaders();
 
 		// The membership to answer one request from. Every question about where a key lives is
@@ -173,12 +154,10 @@ namespace cluster
 		// cannot see the membership change half way through.
 		membership snapshot() const;
 
-		// Whether this node holds a copy of the partition, which is what it claims leadership of.
 		bool holds(const std::vector<member> &registered, size_t partition) const;
 
-		// Raises the partition's term to this one, and answers whether it is at least the highest
-		// this node has seen. Compare and exchange rather than a store, because two writes of one
-		// partition arriving at once have to leave the higher term behind whichever of them wins.
+		// Compare and exchange rather than a store, because two writes of one partition arriving at
+		// once have to leave the higher term behind whichever of them wins.
 		bool raise_term(size_t partition, int64_t term);
 
 		// The term this node leads a partition in. Only the node that claimed a partition knows

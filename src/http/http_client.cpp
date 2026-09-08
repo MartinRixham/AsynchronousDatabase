@@ -14,9 +14,6 @@ namespace
 		return size * count;
 	}
 
-	// One handle for the life of a thread, because a handle is what holds open connections: a node
-	// talks to the same few neighbours over and over. A handle belongs to one thread at a time,
-	// and this one never leaves the thread it was made on.
 	class handle
 	{
 		CURL *easy;
@@ -45,8 +42,6 @@ namespace
 		}
 	};
 
-	// Resetting forgets the options of the request before — a body, or the "no body" of a HEAD —
-	// and keeps the connections, name lookups and TLS sessions the handle has already made.
 	CURL *thread_handle()
 	{
 		thread_local class handle handle;
@@ -59,9 +54,6 @@ namespace
 		return handle.get();
 	}
 
-	// The handles a fan out runs on, and the multi handle it runs them in. The multi handle holds
-	// the connections of every transfer run in it, so they belong to one thread as the single
-	// handle does.
 	class group
 	{
 		CURLM *multi;
@@ -154,8 +146,6 @@ namespace
 		{
 			curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
 		}
-		// The body is not copied into the handle, so the request has to outlive the transfer —
-		// which it does: a fan out is run before the requests it was given go.
 		else if (!request.body.empty() || request.method == "PUT" || request.method == "POST")
 		{
 			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request.body.c_str());
@@ -181,7 +171,6 @@ namespace
 			// which is a length of none rather than the -1 curl reports it as.
 			curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &content_length);
 
-			// No connection made is a connection that was already there.
 			curl_easy_getinfo(curl, CURLINFO_NUM_CONNECTS, &connects);
 
 			response->content_type = content_type == NULL ? "" : content_type;
@@ -239,8 +228,6 @@ namespace
 				continue;
 			}
 
-			// Each handle carries which answer is its own, so transfers read back in whatever
-			// order they finished in are still answered in the order they were asked.
 			char *carried = NULL;
 			char *url = NULL;
 
@@ -310,8 +297,6 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 {
 	std::vector<response> responses(requests.size());
 
-	// Nothing to overlap. One request goes on the handle that already holds this thread's
-	// connections.
 	if (requests.size() < 2)
 	{
 		if (requests.size() == 1)

@@ -13,9 +13,6 @@
 
 namespace
 {
-	// Everything a cluster sends carries the forwarded header, so a scan asked this way is that
-	// one node's own share rather than its whole zone's merged answer — which lets a rebuild ask
-	// each node of a zone once and add up what they hold.
 	router::request scan_request(const std::string &table, const std::string &from, bool has_from, size_t page)
 	{
 		router::request request;
@@ -32,8 +29,6 @@ namespace
 		return request;
 	}
 
-	// Every round trip inside is bounded by the client that makes it; a rebuild is bounded by the
-	// clock instead, because it is all of them together that holds a node out of the membership.
 	bool out_of_time(const std::chrono::steady_clock::time_point &deadline)
 	{
 		return std::chrono::steady_clock::now() >= deadline;
@@ -59,8 +54,6 @@ namespace
 		return std::string(object.at(name).as_string());
 	}
 
-	// Every node holds every table, so the first node of the zone to answer has answered for all
-	// of them.
 	bool read_tables(
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
@@ -102,8 +95,6 @@ namespace
 		return false;
 	}
 
-	// One node's share of one table, a page at a time. Paging is by bound and not by cursor: a
-	// cursor names the instance that issued it, where a key is a position any node will take.
 	bool copy_table(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
@@ -160,8 +151,6 @@ namespace
 				last = key;
 				has_last = true;
 
-				// A bound is inclusive, so every page after the first begins again with the key it
-				// resumed at.
 				if (has_from && key == from)
 				{
 					continue;
@@ -169,9 +158,6 @@ namespace
 
 				read_any = true;
 
-				// Only what this node will hold. The membership was read before the node
-				// registered, and a node is a member of its own cluster whatever etcd says, so
-				// the copies of a key are already the ones it will have once it joins.
 				if (where.of(key).local)
 				{
 					repository.write_record(name, record::valid_record(key, field(object, "value")));
@@ -180,14 +166,11 @@ namespace
 				}
 			}
 
-			// No cursor is a range that is exhausted.
 			if (!answer.json.contains("next"))
 			{
 				return true;
 			}
 
-			// A page that carried nothing to resume from, or nothing but the key it resumed at,
-			// is a page that asking again would ask for for ever.
 			if (!has_last || !read_any)
 			{
 				DEBUG("A scan of \"" + name + "\" on " + node + " made no progress, so the rebuild stops.");
@@ -200,8 +183,6 @@ namespace
 		}
 	}
 
-	// A zone holds a copy of the whole keyspace between its nodes, so all of them have to answer
-	// for what they hold between them to be the whole of it.
 	bool from_zone(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
@@ -217,8 +198,6 @@ namespace
 			return false;
 		}
 
-		// The schema first, because a record can only be written where its table is. Putting a
-		// table back is not creating one, so nothing here has to name its dependencies in order.
 		for (size_t i = 0; i < tables.size(); i++)
 		{
 			repository.create_table(tables[i]);
@@ -228,8 +207,6 @@ namespace
 		{
 			const std::string &name = tables[i].name;
 
-			// All of them, and it stops at the first that does not answer: what the nodes of a
-			// zone hold is one whole copy only when every one of them has said what it holds.
 			bool whole = std::all_of(
 				zone.begin(),
 				zone.end(),
@@ -254,15 +231,11 @@ size_t rebuild::rebuild(
 	size_t page,
 	long seconds)
 {
-	// A node holding anything at all is a node that kept its store, and reading a whole zone to
-	// learn that would cost the keyspace on every restart.
 	if (!repository.list_tables().empty())
 	{
 		return 0;
 	}
 
-	// The first group is this node's own zone. What this node is missing is missing from that zone
-	// as a whole, so the copy to read is in another one.
 	std::vector<std::vector<std::string>> zones = nodes.zones();
 
 	if (zones.size() < 2)
@@ -296,9 +269,6 @@ size_t rebuild::rebuild(
 			return restored;
 		}
 
-		// A zone with a node that did not answer cannot give the whole of what it holds, so the
-		// whole of it is asked of the next zone. What was written already is written again with
-		// the same value.
 		DEBUG("A node of a zone did not answer, so the rebuild asks the next zone.");
 	}
 

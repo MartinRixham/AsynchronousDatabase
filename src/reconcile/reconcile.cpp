@@ -14,13 +14,6 @@
 
 namespace
 {
-	// Everything the cluster sends carries the forwarded header, so a scan asked this way is that
-	// node's own share rather than its whole zone's merged answer, and a HEAD asked this way is
-	// what that node holds rather than what its zone can find.
-	//
-	// **The keys alone.** A share is every record another node holds and what this pass wants of
-	// it is the fraction whose owner moved, so a page of values is sixteen megabytes a record of
-	// answer to a question about where records belong.
 	router::request share_request(const std::string &table, const std::string &from, bool has_from, size_t page)
 	{
 		router::request request;
@@ -37,8 +30,6 @@ namespace
 		return request;
 	}
 
-	// The one record this node is taking over, from the node that has it. A value crosses the
-	// network once it is known to be wanted and never before.
 	router::request record_request(const std::string &table, const std::string &key)
 	{
 		router::request request;
@@ -49,8 +40,6 @@ namespace
 		return request;
 	}
 
-	// A HEAD rather than a GET: what is being asked is whether the node holds the record, and the
-	// value may be sixteen megabytes of answer to a question about its existence.
 	router::request holds_request(const std::string &table, const std::string &key)
 	{
 		router::request request;
@@ -76,17 +65,8 @@ namespace
 		return std::string(object.at(name).as_string());
 	}
 
-	// One node's share of one table, a page of keys at a time, taking the value of each record this
-	// node owns and holds nothing for. Paging is by bound and not by cursor: a cursor names the
-	// instance that issued it, where a key is a position any node will take.
-	//
-	// False when the clock ended the walk rather than the share did. A node that answered nothing
-	// readable is not that: nothing more can be had from it, and waiting on it is what the next
-	// pass is for.
-	//
-	// **What is already here is never overwritten.** A local record is this node's own copy and as
-	// current as any: a write reaches every copy, so another node's answer is the same value or an
-	// older one, and writing it back would be undoing a write rather than filling in a gap.
+	// Paging is by bound and not by cursor: a cursor names the instance that issued it, where a
+	// key is a position any node will take.
 	bool fetch_from(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
@@ -184,12 +164,6 @@ namespace
 		return false;
 	}
 
-	// Whether the node that owns the key in *this node's own zone* holds it.
-	//
-	// It has to be that node and not any copy. The record here is this zone's copy of it, so
-	// deleting it because another zone still has one is a zone left holding nothing — which is the
-	// copy this cluster keeps in every zone, thrown away. `replicas` puts the copy in this node's
-	// own zone first, and a key this node does not own has exactly one owner in its zone.
 	bool owner_holds(
 		const cluster::cluster &nodes,
 		const std::string &name,
@@ -201,8 +175,6 @@ namespace
 		return answer.status == boost::beast::http::status::ok;
 	}
 
-	// The local store, a page at a time, giving up the records this node no longer owns. False
-	// when the clock ended the walk rather than the store did.
 	bool clear_table(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
@@ -250,8 +222,6 @@ namespace
 					continue;
 				}
 
-				// A key this node holds no copy of and owns no copy of is one nothing can be
-				// asked about, which is an instance standing alone rather than a key to delete.
 				if (where.nodes.empty())
 				{
 					done->deferred++;
@@ -299,8 +269,6 @@ reconcile::outcome reconcile::reconcile(
 {
 	outcome done;
 
-	// The zones without this node, this node's own first. An instance standing alone is named none
-	// of them, owns every key and has nobody to fetch from: both halves are nothing at all.
 	std::vector<std::vector<std::string>> zones = nodes.zones();
 
 	if (zones.empty())
@@ -310,10 +278,6 @@ reconcile::outcome reconcile::reconcile(
 		return done;
 	}
 
-	// **Half the pass each, and the clear down's half is measured from where the fetch left off
-	// rather than from the start of the pass.** The halves are walked in order, so a single
-	// deadline for both is one the fetch spends first: a store of large values is a fetch that
-	// pages through every node of every zone, and the clear down behind it would never run.
 	std::chrono::milliseconds half(seconds * 1000 / 2);
 
 	std::chrono::steady_clock::time_point fetching = std::chrono::steady_clock::now() + half;
@@ -324,15 +288,8 @@ reconcile::outcome reconcile::reconcile(
 	// carry no clock of their own: what is left of them is asked and does nothing.
 	bool finished = true;
 
-	// Fetching first, so that a node which gained a partition holds it before the node that lost
-	// it asks whether it does. Both orders converge — a clear down that is refused is deferred and
-	// asked again on the next pass — but this one converges in a single pass around the cluster.
 	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
 	{
-		// Every node of every zone, and not the first zone that answers whole. What this node is
-		// missing may be on the node in its own zone that used to own it, or in one zone only —
-		// a record written while another zone could not be reached is exactly that — so a pass
-		// that stopped at the first zone would leave a copy short and call it settled.
 		for (size_t zone = 0; zone < zones.size(); zone++)
 		{
 			for (size_t node = 0; node < zones[zone].size(); node++)

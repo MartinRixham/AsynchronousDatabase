@@ -17,8 +17,6 @@
 
 namespace
 {
-	// A thread waiting on a neighbour is doing no work here, so the pool counts requests that can
-	// be in flight rather than cores.
 	constexpr int threads_per_core = 8;
 
 	// hardware_concurrency() is allowed to answer nothing, and a pool of nothing serves nothing.
@@ -60,8 +58,6 @@ std::string server::data_directory()
 {
 	const char *configured = getenv("ASYNCDB_DATA");
 
-	// The image mounts a volume here, so an instance that is started again opens the store the one
-	// before it wrote rather than an empty one.
 	return configured == NULL || *configured == '\0' ? "/var/lib/asyncdb" : configured;
 }
 
@@ -70,7 +66,6 @@ int server::thread_pool_size()
 	const char *configured = getenv("ASYNCDB_THREADS");
 	int threads = 0;
 
-	// Something that is not a number, or is not a count of threads, is nothing configured.
 	if (configured != NULL &&
 		boost::conversion::try_lexical_convert(std::string(configured), threads) &&
 		threads > 0)
@@ -132,10 +127,9 @@ server::server::server(
 		throw std::runtime_error(ERROR("Error binding to socket: " + error.message()));
 	}
 
-	// Binding settles the port, so a server constructed on port 0 can be asked which one it took
-	// before it serves. Listening is held back until serve() has filled the store: a bound socket
-	// that is not listening refuses at once, where a listening one nothing accepts on takes the
-	// connection and answers nothing.
+	// Listening is held back until serve() has filled the store: a bound socket that is not
+	// listening refuses at once, where a listening one nothing accepts on takes the connection
+	// and answers nothing.
 	port_number = acceptor.local_endpoint().port();
 
 	DEBUG("Server bound to port: " + std::to_string(port_number) + ".");
@@ -189,8 +183,6 @@ void server::server::serve()
 		}
 	}
 
-	// Joining is nothing at all when no etcd is configured, which is how a single instance keeps
-	// the whole keyspace to itself.
 	own_nodes.start();
 
 	// Only once this node is a member. A node that has not joined owns every key it is asked
@@ -391,9 +383,6 @@ void server::server::close()
 	// thread asked for it.
 	boost::asio::dispatch(acceptor.get_executor(), [this]() { acceptor.close(); });
 
-	// Closing the acceptor stops connections being made, not connections already made. A neighbour
-	// and the nginx in front of this node both keep theirs open, so a connection waiting for a
-	// request that is not coming would hold serving open until it timed out.
 	for (size_t i = 0; i < live.size(); i++)
 	{
 		std::shared_ptr<session> connection = live[i].lock();

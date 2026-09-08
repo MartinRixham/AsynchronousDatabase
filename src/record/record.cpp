@@ -44,8 +44,6 @@ record::record record::invalid_record(const std::string &code, const std::string
 	return { false, "", "", code, message };
 }
 
-// Decoding is the check: the traits reject a truncated sequence, a code point above the range, a
-// surrogate, and an overlong encoding, which would otherwise be a second spelling of a key.
 bool record::is_valid_utf8(const std::string &text)
 {
 	std::string::const_iterator character = text.begin();

@@ -48,6 +48,20 @@ TEST(record_test, a_key_of_exactly_the_limit_is_a_key)
 	EXPECT_TRUE(record::parse_key(std::string(record::max_key_size, 'k')).is_valid);
 }
 
+TEST(record_test, a_key_is_counted_in_the_bytes_of_its_encoding)
+{
+	// Two bytes each, so half as many characters as the limit is a key and one more is not.
+	std::string key;
+
+	for (size_t i = 0; i < record::max_key_size / 2; i++)
+	{
+		key += "\xc3\xa9";
+	}
+
+	EXPECT_TRUE(record::parse_key(key).is_valid);
+	EXPECT_EQ(record::parse_key(key + "\xc3\xa9").code, "key_too_large");
+}
+
 TEST(record_test, fail_to_read_a_value_that_is_too_large)
 {
 	record::record record = record::parse_record("a key", std::string(record::max_value_size + 1, 'v'));

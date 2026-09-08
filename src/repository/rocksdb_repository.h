@@ -16,8 +16,6 @@ namespace repository
 	{
 		std::unique_ptr<rocksdb::DB> database;
 
-		// A table is a column family: dropping one takes its data with it, its options are its
-		// own, and the boundary between two tables is structural rather than a prefix.
 		std::map<std::string, rocksdb::ColumnFamilyHandle *> handles;
 
 		mutable std::shared_mutex handle_mutex;

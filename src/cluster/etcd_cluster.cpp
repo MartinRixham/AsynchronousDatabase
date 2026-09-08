@@ -25,8 +25,6 @@ namespace
 		return value == NULL ? "" : value;
 	}
 
-	// One address or several separated by commas. An empty one is not an address, so a trailing
-	// comma names nothing rather than naming the empty string.
 	std::vector<std::string> read_endpoints(const std::string &configured)
 	{
 		std::vector<std::string> split;
@@ -45,8 +43,6 @@ namespace
 		return endpoints;
 	}
 
-	// What a node writes about itself: where it answers and which zone it stands in. A value that
-	// is not a document at all is a bare address, and is read as a node in no zone.
 	cluster::member read_member(const std::string &value)
 	{
 		boost::system::error_code error;
@@ -128,8 +124,6 @@ void cluster::etcd_cluster::start()
 		running = true;
 	}
 
-	// Registering before the thread starts means the first request is answered by a node that
-	// already knows who its neighbours are, rather than by one that thinks it is alone.
 	refresh();
 
 	// A signal is delivered to whichever thread is able to take it, and this one holds the lock
@@ -179,9 +173,6 @@ void cluster::etcd_cluster::stop()
 		thread.join();
 	}
 
-	// Revoking takes the node's key with it, so a node that is shut down leaves at once rather
-	// than when its lease runs out. Failing to revoke is not a failure to leave: etcd may already
-	// be gone.
 	if (lease != 0 && !etcd_client.revoke(lease))
 	{
 		DEBUG(
@@ -208,15 +199,11 @@ cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 {
 	membership registered = snapshot();
 
-	// One node, or none that etcd would name, holds everything it is asked for. A cluster that
-	// cannot be read is a cluster of one rather than a cluster that refuses to answer.
 	if (registered->size() < 2)
 	{
 		return placement();
 	}
 
-	// The copies are the copies of the key's *partition*, so that every key in it is held by the
-	// same three nodes — which is what makes a partition a thing that can be led.
 	std::vector<member> owners =
 		::cluster::owners_of(::cluster::partition_name(::cluster::partition_of(key)), *registered);
 	placement where;
@@ -229,8 +216,6 @@ cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 		{
 			where.local = true;
 		}
-		// The copy in this node's own zone goes first, so that a request this node cannot answer
-		// itself crosses a zone only when it has to.
 		else if (owners[i].zone == configuration.zone)
 		{
 			where.nodes.insert(where.nodes.begin(), owners[i].node);
@@ -262,7 +247,6 @@ std::vector<std::string> cluster::etcd_cluster::peers() const
 
 std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::string &key) const
 {
-	// One node, or none that etcd would name, races with nobody, so there is nothing to order.
 	if (snapshot()->size() < 2)
 	{
 		return std::nullopt;
@@ -274,8 +258,6 @@ std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::stri
 
 	std::map<size_t, leadership>::const_iterator found = leader_list.find(partition);
 
-	// A partition nothing is known to lead is a leadership that is not known, and not the absence
-	// of leadership: a write of it waits for an election rather than going around one.
 	return found == leader_list.end() ? leadership() : found->second;
 }
 
@@ -291,8 +273,6 @@ size_t cluster::etcd_cluster::leads() const
 
 bool cluster::etcd_cluster::accept(const std::string &key, int64_t term)
 {
-	// A write no leader ordered is a cluster that has no leadership, and it is applied here. A
-	// cluster that does have one never sends a term of nothing.
 	if (term == 0)
 	{
 		return true;
@@ -365,8 +345,6 @@ void cluster::etcd_cluster::run()
 
 void cluster::etcd_cluster::refresh()
 {
-	// A lease that cannot be renewed is a node that was away long enough to be dropped from the
-	// membership, so it registers again rather than believing it is still a member.
 	if ((lease == 0 || !etcd_client.keep_alive(lease)) && !register_node())
 	{
 		DEBUG("Node " + configuration.node + " could not register with etcd.");
@@ -389,8 +367,6 @@ bool cluster::etcd_cluster::register_node()
 
 	lease = *granted;
 
-	// A node registers its zone with its address, because it is the only one that knows which zone
-	// it is in and every other node has to know to keep a copy out of it.
 	boost::json::object registration {
 		{ "node", configuration.node },
 		{ "zone", configuration.zone }
@@ -400,9 +376,6 @@ bool cluster::etcd_cluster::register_node()
 		configuration.prefix + configuration.node, boost::json::serialize(registration), lease);
 }
 
-// Leadership is claimed rather than agreed: the first node to create the partition's key in etcd
-// leads it, and the transaction that creates it is what makes two claimants one leader. A node
-// claims only the partitions it holds a copy of, because a leader writes to itself first.
 void cluster::etcd_cluster::read_leaders()
 {
 	membership registered = snapshot();
@@ -424,8 +397,6 @@ void cluster::etcd_cluster::read_leaders()
 	std::map<size_t, leadership> known;
 	size_t claims = 0;
 
-	// The partitions are walked from an offset of this node's own, so that nodes claim different
-	// parts of the ring rather than racing for the same partitions on every pass.
 	size_t offset = ::cluster::score(configuration.node, "leader") % partition_count;
 
 	for (size_t i = 0; i < partition_count; i++)
@@ -450,9 +421,6 @@ void cluster::etcd_cluster::read_leaders()
 			continue;
 		}
 
-		// Nothing leads it, so this node claims it if it is one of the copies and has not already
-		// claimed as many as it takes on one pass. What is left over is claimed on the next pass,
-		// and until then a write of it is answered as having no leader.
 		if (claims >= configuration.claims_per_refresh || !holds(*registered, partition))
 		{
 			continue;
@@ -526,8 +494,6 @@ void cluster::etcd_cluster::read_members()
 		names.push_back(read);
 	}
 
-	// This node is a member of its own cluster whatever etcd says, so that a node which cannot
-	// reach etcd still answers for the keys it holds instead of forwarding them to a stranger.
 	if (!found)
 	{
 		names.push_back(member { configuration.node, configuration.zone });

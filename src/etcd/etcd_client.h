@@ -13,8 +13,6 @@
 
 namespace etcd
 {
-	// The answer to a claim on a key: who holds it, and the revision it was created at. The claim
-	// was this caller's when it was the one that created it.
 	struct claim
 	{
 		bool held = false;
@@ -26,16 +24,13 @@ namespace etcd
 
 	// etcd speaks gRPC, but every call it offers is also a POST of a JSON document to its gateway,
 	// where a key and a value travel base64 encoded — which is why there is no gRPC dependency
-	// here. Every member answers for the whole cluster, so the client is given all of them and
-	// asks the next when the one it was using does not answer. One thread drives a client.
+	// here. One thread drives a client.
 	class client
 	{
 		const http::client &http_client;
 
 		std::vector<std::string> endpoints;
 
-		// The member that answered last, so that a client which has already found a live member
-		// does not walk the dead ones again on every call.
 		mutable size_t current = 0;
 
 	public:
@@ -45,24 +40,14 @@ namespace etcd
 		// is gone TTL seconds after the node stops saying it is alive.
 		std::optional<int64_t> grant_lease(int64_t ttl_seconds) const;
 
-		// False when the lease is not there any more, which is a node that was away long enough
-		// to be dropped and has to register again.
 		bool keep_alive(int64_t lease) const;
 
 		bool put(const std::string &key, const std::string &value, int64_t lease) const;
 
-		// Writes the key only if nothing holds it, which is how a node is elected: the one whose
-		// write created the key leads, and the others are told who did. The revision it was
-		// created at is the term, and etcd's revisions only ever rise.
-		//
-		// Nothing at all is a call that failed, which is neither a claim won nor one lost.
 		std::optional<claim> create(const std::string &key, const std::string &value, int64_t lease) const;
 
-		// Every key under the prefix, with its value, in etcd's key order.
 		std::map<std::string, std::string> range(const std::string &prefix) const;
 
-		// Best effort, and asked of one member rather than of every one in turn: a node that is
-		// shutting down has a moment to do it in, and a lease nobody revokes runs out by itself.
 		bool revoke(int64_t lease) const;
 
 		// The member the next call will be made to.

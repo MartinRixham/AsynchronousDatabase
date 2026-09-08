@@ -285,8 +285,16 @@ the real AZ out of IMDS, which is three zones of one node each.
 - **Write about the design as it stands, never about how it got that way.** No changelogs, no "used
   to", no "this replaced X", no account of the bug that prompted the current shape. State the rule
   and the reason it holds now. `git log` is where the past is kept.
-- Both apply everywhere: `CLAUDE.md`, `doc/`, every `README.md`, and comments in C++, JavaScript,
-  shell, YAML and config alike.
+- **A test is where a claim about behaviour belongs, so a comment a test already makes goes.** A
+  named test asserting what the comment says is the comment kept true by the build; the prose beside
+  it is a second copy that nothing checks. Where the claim is testable and nothing tests it yet,
+  write the test and then delete the comment — `test/` mirrors `src/`, and the test's name carries
+  what the comment said. What is left is what no test can reach: why a constant is the size it is,
+  what a lock, an atomic or a destruction order is buying, and a limit or a deployment imposed from
+  outside the file. A comment that says both keeps only the half a test cannot show.
+- **A comment a test contradicts is a finding, not an edit.** Report what the test showed and leave
+  the comment standing: which of the two is wrong is a decision about the design, and the fix may be
+  one that moves every key.
 
 ## Libraries
 

@@ -19,18 +19,12 @@ namespace rebuild
 	// again — an empty store is the only trigger.
 	constexpr long default_seconds = 300;
 
-	// Fills a store that holds nothing from a zone that still holds its records, and answers how
-	// many records were written. A replaced instance is an empty database, and nothing else in the
-	// cluster puts that copy back: there is no read repair, no anti-entropy, no hinted handoff and
-	// no replication log.
+	// Nothing else in the cluster puts a lost copy back: there is no read repair, no anti-entropy,
+	// no hinted handoff and no replication log.
 	//
 	// **It runs before the node registers in etcd**, which is what makes it free to take as long
 	// as it needs: a node that is not in the membership is nobody's copy, so no read is answered
 	// from it and no write waits on it.
-	//
-	// A node that holds anything at all rebuilds nothing. Only a store with no tables in it was
-	// lost rather than kept, and reading a whole zone on every restart would cost the keyspace to
-	// learn that nothing is missing.
 	size_t rebuild(
 		repository::repository &repository,
 		const cluster::cluster &nodes,

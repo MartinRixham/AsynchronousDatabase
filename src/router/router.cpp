@@ -32,8 +32,6 @@ namespace
 			"method_not_allowed", std::string(boost::beast::http::to_string(method)) + " is not allowed here.");
 	}
 
-	// A body that is not a JSON object is the client's mistake and not a failure of this service,
-	// so it is answered rather than left to escape as a 500.
 	std::optional<boost::json::object> parse_body(const std::string &body)
 	{
 		if (body.empty())
@@ -64,8 +62,6 @@ namespace
 		return json;
 	}
 
-	// The range as another node is asked for it: a cursor and a prefix are already resolved into
-	// bounds, because a cursor this node issued is one no other node would take.
 	std::string range_query(const scan::range &range)
 	{
 		std::string query = "limit=" + std::to_string(range.limit);
@@ -91,8 +87,6 @@ namespace
 		return { request.method, request.path, range_query(range), request.body, request.forwarded };
 	}
 
-	// A page as another node answered it. Its own cursor is thrown away: the cursor a client is
-	// given is issued by the node it asked, and names a position in the merged order.
 	bool read_page(const router::response &response, std::vector<record::record> *records)
 	{
 		if (!response.json.contains("records") || !response.json.at("records").is_array())
@@ -128,8 +122,6 @@ namespace
 		return response.json.contains("next");
 	}
 
-	// Every node answered within the byte budget on its own, but a merge is the sum of them, so it
-	// is applied again. The first record is never dropped, for the reason scan::max_page_bytes gives.
 	bool trim_to_budget(std::vector<record::record> *records)
 	{
 		size_t bytes = 0;
@@ -149,8 +141,6 @@ namespace
 		return false;
 	}
 
-	// The pages of every node in one key order. A key two nodes both hold — the copy every zone
-	// keeps, or a key whose owner changed — is returned once.
 	void merge(std::vector<record::record> *records, bool reverse)
 	{
 		std::sort(
@@ -196,8 +186,6 @@ router::response router::router::route(const request &request)
 		boost::json::object health { { "status", "ok" }, { "write_stalled", repository.is_write_stalled() } };
 		std::vector<cluster::member> members = nodes.members();
 
-		// An instance standing alone names no nodes at all, rather than naming itself and looking
-		// like a cluster of one.
 		if (!members.empty())
 		{
 			boost::json::array names;
@@ -215,12 +203,8 @@ router::response router::router::route(const request &request)
 
 			health["nodes"] = names;
 
-			// The partitions this node orders the writes of. A node leading none is an election
-			// that has not settled, and writes to those are refused until it has.
 			health["leads"] = static_cast<int64_t>(nodes.leads());
 
-			// The zones say how many copies of a record there are, so a cluster without them names
-			// none rather than naming a zone of "".
 			if (!zones.empty())
 			{
 				boost::json::object named;
@@ -279,7 +263,6 @@ router::response router::router::route_tables(const request &request)
 		return method_not_allowed(request.method);
 	}
 
-	// Every node holds every table, so the tables are read where they are asked for.
 	const std::set<table::table> tables = repository.list_tables();
 	boost::json::array tables_json;
 
@@ -353,17 +336,10 @@ router::response router::router::route_record(
 		return table_not_found(name);
 	}
 
-	// A record lives on one node in each zone, named by the hash of its partition, and a node
-	// holding no copy answers by asking one that does. The key alone decides those nodes, so the
-	// same key of two tables is one hop. A forwarded request is served here whatever this node
-	// makes of the membership: the node that sent it has already decided who holds the key.
 	cluster::placement where = request.forwarded ? cluster::placement() : nodes.replicas(record.key);
 
 	if (request.method == boost::beast::http::verb::put || request.method == boost::beast::http::verb::delete_)
 	{
-		// The term tells the two write hops apart: a write to the leader carries none, a write
-		// from it carries the term it was ordered in. A later term already applied here is a
-		// leader that has been replaced and does not know it.
 		if (request.term != 0)
 		{
 			if (!nodes.accept(record.key, request.term))
@@ -377,15 +353,11 @@ router::response router::router::route_record(
 
 		std::optional<cluster::leadership> lead = nodes.leader(record.key);
 
-		// No leadership at all — one instance standing alone, or one with no zones — is a cluster
-		// that orders nothing.
 		if (!lead)
 		{
 			return write_record(request, name, record, where);
 		}
 
-		// A partition nothing leads has nowhere to order its writes, and saying so is what makes
-		// the client run the write again once one is elected.
 		if (!lead->known)
 		{
 			return error_response("no_leader", "No node is leading this key's partition yet.");
@@ -393,8 +365,6 @@ router::response router::router::route_record(
 
 		if (!lead->local)
 		{
-			// A write sent here to be ordered, at a node that does not lead it, is two nodes
-			// disagreeing about the leader; refusing it stops the write bouncing between them.
 			if (request.forwarded)
 			{
 				return error_response("no_leader", "This node does not lead this key's partition.");
@@ -403,14 +373,10 @@ router::response router::router::route_record(
 			return nodes.send(lead->node, request);
 		}
 
-		// This node leads it, so the order is decided here and every copy is told the term.
 		::router::request ordered = request;
 
 		ordered.term = lead->term;
 
-		// Holding the key's lock across the write and the fan out is what the order *is*: the
-		// next write of the key does not start until every copy has taken this one, so no copy is
-		// ever applying two writes of one key at a time and they cannot settle in two orders.
 		std::lock_guard<std::mutex> ordering(write_lock(record.key));
 
 		return write_record(ordered, name, record, replicas_of(request, where, record.key));
@@ -433,9 +399,6 @@ router::response router::router::route_record(
 		return text_response(boost::beast::http::status::ok, *value);
 	}
 
-	// A key this node holds nothing for may still be in another zone: a node that was replaced
-	// holds none of what was written while it was away, and owns those keys all the same, so a
-	// miss here is asked of the copies elsewhere.
 	if (!where.nodes.empty())
 	{
 		return read_record(request, where.nodes);
@@ -457,8 +420,6 @@ cluster::placement router::router::replicas_of(
 	return request.forwarded ? nodes.replicas(key) : known;
 }
 
-// Every copy of a record is written before the write is answered, so a record is in every zone by
-// the time the client is told so. Writing is idempotent, so a failure is a request to run again.
 router::response router::router::write_record(
 	const request &request,
 	const std::string &name,
@@ -471,8 +432,6 @@ router::response router::router::write_record(
 		{
 			repository.write_record(name, record);
 		}
-		// Deleting a key that is not there is a no op in RocksDB, and reporting 404 would mean a
-		// read before every delete.
 		else
 		{
 			repository.delete_record(name, record.key);
@@ -486,9 +445,6 @@ router::response router::router::write_record(
 	return refused ? *refused : empty_response(boost::beast::http::status::no_content);
 }
 
-// A node that does not answer is a copy to pass over: any one zone can be gone and the record is
-// still read. What a node that did answer said is the answer, a 404 included, because every zone
-// is written before a write is answered.
 router::response router::router::read_record(const request &request, const std::vector<std::string> &replicas)
 {
 	response answer = error_response("storage_error", "No node holding this key answered.");
@@ -525,8 +481,6 @@ router::response router::router::create_table(const request &request, const std:
 	table::table existing = repository.read_table(name);
 	response created;
 
-	// Creating a table is safe to run at every start up, so the same options again are not a
-	// conflict.
 	if (existing.is_valid)
 	{
 		if (!(existing == table))
@@ -543,8 +497,6 @@ router::response router::router::create_table(const request &request, const std:
 		created = json_response(boost::beast::http::status::created, table.json);
 	}
 
-	// A record is written to the node that owns its key, and that node has to have somewhere to
-	// put it, so a table belongs to every node.
 	std::optional<response> failure = broadcast(request);
 
 	return failure ? *failure : created;
@@ -554,8 +506,6 @@ router::response router::router::delete_table(const request &request, const std:
 {
 	if (!repository.has_table(name))
 	{
-		// A node that never had the table has nothing to say about a deletion the rest of the
-		// cluster is carrying out.
 		if (request.forwarded)
 		{
 			return empty_response(boost::beast::http::status::no_content);
@@ -589,9 +539,6 @@ router::response router::router::scan_records(const request &request, const std:
 	std::vector<record::record> records = page.records;
 	bool has_more = page.has_more;
 
-	// Every zone holds a copy of every key, so a scan is this node's own share and *one* zone's
-	// answer for the rest, put back into key order. This node's own zone is asked first, because
-	// a page from it crosses no zone boundary.
 	std::vector<std::vector<std::string>> zones = request.forwarded
 		? std::vector<std::vector<std::string>>()
 		: nodes.zones();
@@ -604,8 +551,6 @@ router::response router::router::scan_records(const request &request, const std:
 
 		failure = scan_zone(request, range, zones[i], &answered, &more);
 
-		// A zone that answered with something other than a page, and not because a node of it was
-		// unreachable, is every zone's answer: a bad cursor is refused by all of them.
 		if (failure && failure->status < boost::beast::http::status::internal_server_error)
 		{
 			return *failure;
@@ -618,8 +563,6 @@ router::response router::router::scan_records(const request &request, const std:
 
 			merge(&records, range.reverse);
 
-			// What is over the limit is dropped rather than held: the next page starts at the
-			// keys dropped here.
 			if (records.size() > range.limit)
 			{
 				records.resize(range.limit);
@@ -636,7 +579,6 @@ router::response router::router::scan_records(const request &request, const std:
 		}
 	}
 
-	// Every zone had a node that did not answer, so there is no zone left that holds the range.
 	if (failure)
 	{
 		return *failure;
@@ -651,7 +593,6 @@ router::response router::router::scan_records(const request &request, const std:
 
 	boost::json::object body { { "records", records_json } };
 
-	// The absence of a cursor means the range is exhausted.
 	if (has_more && !records.empty())
 	{
 		body["next"] = scan::encode_cursor(records.back().key, repository.instance());
@@ -696,8 +637,6 @@ router::response router::router::delete_records(const request &request, const st
 		return error_response(range.code, range.message);
 	}
 
-	// Deleting every record in a table is deleting the table and creating it again, which drops
-	// the column family instead of leaving a tombstone over everything.
 	if (!range.has_from && !range.has_to)
 	{
 		return error_response("invalid_range", "A range delete has to name a range.");
@@ -705,7 +644,6 @@ router::response router::router::delete_records(const request &request, const st
 
 	repository.delete_records(name, range);
 
-	// The range is deleted on every node, because every node holds a share of the keys in it.
 	std::optional<response> failure = broadcast(forwarded_range(request, range));
 
 	return failure ? *failure : empty_response(boost::beast::http::status::no_content);
@@ -718,9 +656,6 @@ std::optional<router::response> router::router::broadcast(const request &request
 		return std::nullopt;
 	}
 
-	// A node that refused, or did not answer at all, is a node the cluster now disagrees with, and
-	// saying so lets the client run the same request again. They are asked at once, because a
-	// table belongs to every node.
 	return nodes.send_all(nodes.peers(), request);
 }
 

@@ -90,7 +90,6 @@ table::table table::to_table(const std::string &json)
 	return { true, name, table_object, "", "" };
 }
 
-// "default" is the column family RocksDB always has, and is reserved for it.
 bool table::is_valid_name(const std::string &name)
 {
 	if (name.empty() || name.size() > max_name_size || name == "default")

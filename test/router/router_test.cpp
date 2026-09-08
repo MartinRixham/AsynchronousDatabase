@@ -1314,6 +1314,20 @@ TEST(router_cluster_test, create_a_table_on_every_node)
 	EXPECT_EQ(nodes.sent()[0].second.body, "{}");
 }
 
+// Every node holds every table, so the list is answered out of this node's own store.
+TEST(router_cluster_test, list_the_tables_without_asking_another_node)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+
+	EXPECT_EQ(router.route(get("/table")).json.at("tables").as_array().size(), 1u);
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
 TEST(router_cluster_test, fail_to_create_a_table_a_node_refuses)
 {
 	repository::fake_repository repository;

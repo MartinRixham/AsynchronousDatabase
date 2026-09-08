@@ -9,8 +9,6 @@
 
 namespace
 {
-	// The least string that is strictly greater than every key beginning with the prefix. A
-	// prefix of nothing but 0xff bytes has none, and the range it names runs to the end.
 	bool prefix_end(const std::string &prefix, std::string *end)
 	{
 		*end = prefix;
@@ -34,8 +32,6 @@ namespace
 	{
 		size_t limit = 0;
 
-		// A limit that is not a number at all, or is not only a number, is no limit and the default
-		// stands. One that is a number is held between one and the most a single response may hold.
 		if (!boost::conversion::try_lexical_convert(url::read_parameter(query, "limit"), limit))
 		{
 			return scan::default_limit;
@@ -44,8 +40,6 @@ namespace
 		return std::min(std::max(limit, static_cast<size_t>(1)), scan::max_limit);
 	}
 
-	// A cursor is opaque, and the instance that issued it is part of what it says: a cursor from
-	// another instance names a position in an iteration this one never started.
 	bool read_cursor(const std::string &cursor, const std::string &instance, std::string *key)
 	{
 		std::string decoded;
@@ -125,8 +119,6 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 			return invalid_range("invalid_cursor", "Cursor was not issued by this instance.");
 		}
 
-		// Resuming is strictly after the last key returned, and appending a zero byte names the
-		// least key above it. Backwards, the last key returned is the exclusive end.
 		if (range.reverse)
 		{
 			range.to = key;

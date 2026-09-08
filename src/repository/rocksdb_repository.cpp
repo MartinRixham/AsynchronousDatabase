@@ -45,14 +45,9 @@ repository::rocksdb_repository::rocksdb_repository(const std::string &directory)
 	rocksdb::Options options;
 	options.create_if_missing = true;
 
-	// The database *is* the directory it was given rather than something named underneath it, so
-	// an instance that is started again opens what the instance before it wrote. A directory
-	// nothing has written yet is made here; RocksDB fills it.
 	std::filesystem::path database_path = std::filesystem::path(directory);
 	std::filesystem::create_directories(database_path);
 
-	// What a scan cursor names is this repository and not this directory: a cursor is a position
-	// in an iteration, and an iteration belongs to the instance that started it.
 	instance_name = std::to_string(std::rand());
 
 	std::vector<std::string> names;
@@ -162,7 +157,6 @@ void repository::rocksdb_repository::delete_table(const std::string &table_name)
 		return;
 	}
 
-	// Dropping the column family takes the data with it: no tombstones and no wait for compaction.
 	written(database->DropColumnFamily(handle->second), "Dropping table \"" + table_name + "\"");
 
 	database->DestroyColumnFamilyHandle(handle->second);
@@ -190,8 +184,6 @@ std::optional<std::string> repository::rocksdb_repository::read_record(
 	std::string value;
 	rocksdb::Status status = database->Get(rocksdb::ReadOptions(), table_handle(table_name), key, &value);
 
-	// The empty string is a value like any other, so a missing key is told apart by the status
-	// and not by the value that comes back with it.
 	if (status.IsNotFound())
 	{
 		return std::nullopt;
@@ -232,8 +224,6 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 	scan::page page;
 	size_t bytes = 0;
 
-	// One more than the page is read, because whether there is a next page is the difference
-	// between a cursor and no cursor, and the API promises that no cursor means exhausted.
 	for (range.reverse ? it->SeekToLast() : it->SeekToFirst(); it->Valid(); range.reverse ? it->Prev() : it->Next())
 	{
 		if (page.records.size() == range.limit)
@@ -243,8 +233,7 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 		}
 
 		// The size is asked of the slices rather than of strings copied out of them, so a record
-		// the budget refuses is one this never allocated. It is never weighed against an empty
-		// page: a record larger than the whole budget is a page of its own.
+		// the budget refuses is one this never allocated.
 		size_t size = it->key().size() + (range.values ? it->value().size() : 0);
 
 		if (!page.records.empty() && bytes + size > scan::max_page_bytes)
@@ -279,8 +268,6 @@ void repository::rocksdb_repository::delete_records(const std::string &table_nam
 		return;
 	}
 
-	// A range with no upper bound ends at the last key there is, and a range tombstone is half
-	// open, so the last key is deleted on its own.
 	rocksdb::ReadOptions options;
 	rocksdb::Slice lower(range.from);
 

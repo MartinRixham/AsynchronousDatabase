@@ -6,7 +6,6 @@ std::vector<cluster::member> cluster::standalone::members() const
 	return std::vector<member>();
 }
 
-// One instance holds the only copy of every key, and holds it here.
 cluster::placement cluster::standalone::replicas(const std::string &) const
 {
 	return placement();
@@ -17,13 +16,11 @@ std::vector<std::string> cluster::standalone::peers() const
 	return std::vector<std::string>();
 }
 
-// One instance is every zone there is, and it scans its own store.
 std::vector<std::vector<std::string>> cluster::standalone::zones() const
 {
 	return std::vector<std::vector<std::string>>();
 }
 
-// One instance is the only writer there is, so there is nothing for a leader to order.
 std::optional<cluster::leadership> cluster::standalone::leader(const std::string &) const
 {
 	return std::nullopt;

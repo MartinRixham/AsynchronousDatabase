@@ -13,18 +13,9 @@ namespace scan
 
 	constexpr size_t max_limit = 1000;
 
-	// A page is bounded in bytes as well as in records, because a limit of a thousand says nothing
-	// about their size: a value may be 16 MiB, so a thousand of the largest legal records is a
-	// sixteen gigabyte response built in memory on the node answering. The budget ends the page
-	// instead, and its cursor is how the client asks for the rest.
-	//
-	// It is half the largest value, so a page is either several small records or a single large
-	// one. A record bigger than the whole budget is still returned, alone, or a scan could never
-	// get past it.
+	// Half the largest value, so a page is either several small records or a single large one.
 	constexpr size_t max_page_bytes = 8 * 1024 * 1024;
 
-	// "from" is inclusive and "to" exclusive, which is RocksDB's own convention and the one that
-	// makes ranges compose: the "to" of one page is the "from" of the next.
 	struct range
 	{
 		bool is_valid = false;

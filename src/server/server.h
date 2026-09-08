@@ -20,20 +20,11 @@
 
 namespace server
 {
-	// Where the store is kept, from ASYNCDB_DATA: one directory, which an instance opens and
-	// opens again when it is started again, so a node that comes back holds what it wrote. Set
-	// nothing and it is the directory the image mounts a volume over.
-	//
-	// It is a directory of its own for each instance, because RocksDB locks the one it opens: two
-	// instances in one process — which is two servers in one test — are two directories.
+	// Where the store is kept, from ASYNCDB_DATA. It is a directory of its own for each instance,
+	// because RocksDB locks the one it opens: two instances in one process — which is two servers
+	// in one test — are two directories.
 	std::string data_directory();
 
-	// How many threads serve requests, from ASYNCDB_THREADS. **These threads are not sized by
-	// cores**: a request forwarded to the node that owns its key, or a write ordered by the leader
-	// of its partition, holds the thread it arrived on until the answer comes back, so the pool
-	// counts requests in flight. The default is eight threads a core, between sixteen and a
-	// hundred and twenty-eight — the floor for a machine that reports no cores, and the ceiling
-	// because each thread keeps its own curl handles and so its own connections to each neighbour.
 	int thread_pool_size();
 
 	// How often the membership is read to see whether it moved, which is how soon a node starts
@@ -70,9 +61,6 @@ namespace server
 
 		router::router router;
 
-		// Serving ends when the acceptor is closed and every connection has gone, and a connection
-		// that is kept alive between requests goes when it is told to. The sessions are held
-		// weakly: a connection that ends first is gone from here by having ended.
 		std::mutex session_mutex;
 
 		std::vector<std::weak_ptr<session>> sessions;

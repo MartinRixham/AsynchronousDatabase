@@ -22,24 +22,12 @@ namespace cluster
 	// The name a partition is hashed and registered under.
 	std::string partition_name(size_t partition);
 
-	// Rendezvous hashing: every node scores the key and the highest score owns it. It needs no
-	// ring to agree on, and adding or removing a node moves only the keys that node wins or loses.
 	uint64_t score(const std::string &node, const std::string &key);
 
-	// The empty string when there are no nodes at all, which is an instance standing alone.
 	std::string owner_of(const std::string &key, const std::vector<std::string> &nodes);
 
-	// Where the copies of a key live: the owner of the key in each zone, one copy per zone and no
-	// zone holding two. The zones are decided one at a time, so a zone that loses or gains a node
-	// moves only its own copies.
-	//
-	// Members that name no zone are one zone between them, and so one owner.
 	std::vector<member> owners_of(const std::string &key, const std::vector<member> &members);
 
-	// The zones a scan can be asked of, as the nodes of each and without the node doing the
-	// asking, which scans its own store. A zone holds a copy of the whole keyspace, so the first
-	// of these answers a scan whole and the rest are the fall back when a node of it does not
-	// answer. This node's own zone comes first, and is a group even when it is empty.
 	std::vector<std::vector<std::string>> zones_of(
 		const std::vector<member> &members,
 		const std::string &node,

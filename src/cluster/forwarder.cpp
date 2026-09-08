@@ -12,8 +12,6 @@ namespace
 	{
 		std::string url = node;
 
-		// The path travels encoded segment by segment, which is how it arrived: a key holding a
-		// slash is one segment there and one segment here.
 		for (size_t i = 0; i < request.path.size(); i++)
 		{
 			url += "/" + url::encode(request.path[i]);
@@ -42,14 +40,10 @@ namespace
 		return request.method == boost::beast::http::verb::head;
 	}
 
-	// What a forwarded request carries apart from itself: that it has been forwarded, so the node
-	// it reaches serves it rather than passing it on, and the term when a leader ordered it.
 	std::vector<std::string> headers_of(const router::request &request)
 	{
 		std::vector<std::string> headers { std::string(cluster::forwarded_header) + ": true" };
 
-		// A write the leader ordered carries the term it ordered it in, and a request no leader
-		// ordered carries none at all.
 		if (request.term != 0)
 		{
 			headers.push_back(std::string(cluster::term_header) + ": " + std::to_string(request.term));
@@ -68,9 +62,6 @@ namespace
 
 		boost::beast::http::status status = static_cast<boost::beast::http::status>(answer.status);
 
-		// A HEAD travels as a HEAD: what is wanted of the node holding the key is how large the
-		// value is and whether it is there at all, and a value is sixteen megabytes of answer to
-		// that. What comes back is the headers of the GET, which is what a HEAD is answered with.
 		if (head)
 		{
 			return router::head_response(status, answer.content_type, static_cast<size_t>(answer.content_length));

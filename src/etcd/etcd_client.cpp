@@ -9,9 +9,8 @@
 
 namespace
 {
-	// etcd names a range by its end, and the end of a prefix is the prefix with its last byte
-	// raised. A prefix of nothing but 0xff bytes has no end, and "\0" is how etcd spells "to the
-	// end of the keyspace".
+	// A prefix of nothing but 0xff bytes has no end, and "\0" is how etcd spells "to the end of
+	// the keyspace".
 	std::string range_end(const std::string &prefix)
 	{
 		std::string end = prefix;
@@ -50,8 +49,6 @@ namespace
 		return number;
 	}
 
-	// Every answer from the gateway carries the revision the cluster was at when it answered, and
-	// for a write that is the revision the write happened at.
 	std::optional<int64_t> header_revision(const boost::json::object &response)
 	{
 		if (!response.contains("header") || !response.at("header").is_object())
@@ -62,8 +59,6 @@ namespace
 		return read_number(response.at("header").as_object(), "revision");
 	}
 
-	// What a lost claim answers with: the key as it already stood, which names the node holding it
-	// and the revision it took it at.
 	std::optional<etcd::claim> read_claim(const boost::json::object &response)
 	{
 		if (!response.contains("responses") || !response.at("responses").is_array() ||
@@ -136,8 +131,6 @@ bool etcd::client::keep_alive(int64_t lease) const
 		return false;
 	}
 
-	// A lease that has already expired is renewed to a time to live of nothing, rather than
-	// refused, so the answer has to be read rather than counted.
 	std::optional<int64_t> ttl = read_number(response->at("result").as_object(), "TTL");
 
 	return ttl && *ttl > 0;
@@ -154,9 +147,6 @@ bool etcd::client::put(const std::string &key, const std::string &value, int64_t
 	return call("kv/put", request, true).has_value();
 }
 
-// One transaction rather than a read and then a write: "if nothing created this key, put it, and
-// otherwise tell me what is there". Two nodes claiming the same partition at the same moment is
-// therefore one winner and one that is told the winner's name, and never two leaders.
 std::optional<etcd::claim> etcd::client::create(
 	const std::string &key,
 	const std::string &value,
@@ -190,8 +180,6 @@ std::optional<etcd::claim> etcd::client::create(
 
 	claim claimed;
 
-	// The transaction succeeded, so this caller created the key. The revision it was created at is
-	// the revision of the write itself, which the header carries.
 	if (response->contains("succeeded") && response->at("succeeded").is_bool() &&
 		response->at("succeeded").as_bool())
 	{
@@ -209,7 +197,6 @@ std::optional<etcd::claim> etcd::client::create(
 		return claimed;
 	}
 
-	// It was lost, and what came back instead is the key as it stands.
 	return read_claim(*response);
 }
 
@@ -278,10 +265,8 @@ std::optional<boost::json::object> etcd::client::call(
 	// on its way out does not have: it is stopped for good after ten seconds.
 	size_t attempts = every_member ? endpoints.size() : std::min<size_t>(endpoints.size(), 1);
 
-	// Asking the members in turn, beginning with the one that answered last. A member that cannot
-	// be reached, or is up but not serving, is a reason to ask the next; anything it answers is
-	// the answer the whole cluster would give. The calls repeated this way are safe to repeat:
-	// writing the same key is idempotent, and a lease granted twice expires on its own.
+	// The calls repeated this way are safe to repeat: writing the same key is idempotent, and a
+	// lease granted twice expires on its own.
 	for (size_t i = 0; i < attempts; i++)
 	{
 		size_t member = (current + i) % endpoints.size();

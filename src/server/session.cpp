@@ -12,9 +12,6 @@
 
 namespace
 {
-	// A key is 4 KiB of UTF-8 and travels percent encoded, so three characters to the byte at
-	// worst. The rest is the header around it: the route, a table name, the host, the content
-	// type, and the two headers a forwarded write carries.
 	constexpr size_t max_header_size = 3 * record::max_key_size + 8 * 1024;
 
 	boost::beast::http::response<boost::beast::http::string_body> make_response(
@@ -42,12 +39,8 @@ namespace
 		response.keep_alive(keep_alive);
 		response.prepare_payload();
 
-		// HEAD answers the same headers with no body, and the length is the cheap way to ask how
-		// large a value is.
 		if (head)
 		{
-			// A value another node holds is one this node never read, so the length is the one
-			// that node gave rather than the size of a body there is not.
 			size_t answered = body.empty() ? length : body.size();
 
 			if (answered > 0)
@@ -172,11 +165,6 @@ void server::session::on_write(bool keep_alive, boost::beast::error_code error, 
 
 void server::session::read()
 {
-	// Beast's defaults are both below what this API documents: a megabyte of body where a value
-	// is sixteen, and 8 KiB of header where a percent encoded key is twelve. Neither is an error
-	// the server answers — the read ends in one and the connection closes with nothing written on
-	// it — so the limits are raised here instead. The body limit is one byte above the value
-	// limit, which leaves the router to refuse an oversized value with value_too_large.
 	parser.emplace();
 	parser->body_limit(record::max_value_size + 1);
 	parser->header_limit(max_header_size);

@@ -19,8 +19,6 @@ namespace http
 
 	struct response
 	{
-		// False when the request never got an answer at all: a node that is gone is told from a
-		// node that answered with an error.
 		bool is_valid = false;
 
 		long status = 0;
@@ -29,14 +27,10 @@ namespace http
 
 		std::string body;
 
-		// The length the body was said to have, which is the length of the body there is — except
-		// for a HEAD, where it is the length of the body the answer left out.
 		long content_length = 0;
 
 		std::string message;
 
-		// True when the request went over a connection that was already open. Nothing branches on
-		// it — it is how a test tells that connections are being kept rather than remade.
 		bool reused = false;
 	};
 
@@ -46,9 +40,8 @@ namespace http
 	public:
 		virtual response send(const request &request) const = 0;
 
-		// Every request at once, answered in the order they were given rather than the order they
-		// finished in. A client with no way of running several at once runs them one after
-		// another, which is what this does unless something overrides it.
+		// A client with no way of running several at once runs them one after another, which is
+		// what this does unless something overrides it.
 		virtual std::vector<response> send_all(const std::vector<request> &requests) const;
 	};
 

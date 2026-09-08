@@ -17,7 +17,6 @@ namespace table
 
 		std::string name;
 
-		// The table document, or the error object of an invalid one.
 		boost::json::object json;
 
 		std::string code;

@@ -21,9 +21,6 @@ namespace
 		return hashed;
 	}
 
-	// FNV carries most of what it knows in the bottom bits, and the highest score is what wins a
-	// key here, so the hash is stirred before it is compared. Without this, keys named in a
-	// series land on two of three nodes rather than on all of them.
 	uint64_t mix(uint64_t hashed)
 	{
 		hashed ^= hashed >> 33;
@@ -76,8 +73,6 @@ std::string cluster::owner_of(const std::string &key, const std::vector<std::str
 
 std::vector<cluster::member> cluster::owners_of(const std::string &key, const std::vector<member> &members)
 {
-	// A map rather than a hash of them, because the zones come out in one order whatever order the
-	// membership arrived in, and every node has to name the copies of a key alike.
 	std::map<std::string, std::vector<std::string>> zones;
 
 	for (size_t i = 0; i < members.size(); i++)
@@ -102,7 +97,6 @@ std::vector<std::vector<std::string>> cluster::zones_of(
 {
 	std::map<std::string, std::vector<std::string>> grouped;
 
-	// This node's own zone is a group whether or not another node shares it.
 	grouped[zone];
 
 	for (size_t i = 0; i < members.size(); i++)

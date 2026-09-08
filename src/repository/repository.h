@@ -49,8 +49,6 @@ namespace repository
 
 		virtual bool is_write_stalled() const = 0;
 
-		// Names the iteration a cursor belongs to, so that a cursor this instance did not issue
-		// is refused rather than resumed against a different set of keys.
 		virtual std::string instance() const = 0;
 	};
 }
