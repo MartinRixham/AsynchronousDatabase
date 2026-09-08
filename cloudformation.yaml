@@ -397,9 +397,6 @@ Resources:
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      # Named after the stack rather than fixed, which is what lets a second one stand beside the
-      # first: the pipeline runs the chaos suite as several stacks at once, and a load balancer name
-      # is unique to a region. Every other named thing here is named by CloudFormation.
       Name: !Sub "${AWS::StackName}-alb"
       Scheme: internet-facing
       Subnets:
@@ -418,10 +415,6 @@ Resources:
       TargetType: instance
       HealthCheckPath: /asyncdb/health
       TargetGroupAttributes:
-        # A draining target is a running instance: it goes on renewing its lease, so it is still
-        # in the membership and still a copy every write waits for, for the whole of this. The
-        # default is five minutes of a node the cluster counts and the load balancer no longer
-        # sends to. Thirty seconds is longer than any request this API answers.
         - Key: deregistration_delay.timeout_seconds
           Value: "30"
 

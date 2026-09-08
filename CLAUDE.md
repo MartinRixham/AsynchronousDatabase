@@ -9,6 +9,15 @@ vanilla-JS single-page UI that draws the tables and their dependencies as a DAG.
 partition a keyspace between them and keep one copy of it in each availability zone, finding each
 other through etcd — see [Clustering](#clustering).
 
+## Working here
+
+**A change already in the working tree is deliberate.** Take an edit, a deletion or a revert as
+intended and build on it: do not flag it, restore it, or ask whether it was meant. A comment or a
+block that is gone was removed on purpose, and a change sitting beside the one that was asked for
+is still a change that was chosen. Raise one only where it breaks what you were asked to check —
+a failing build, a red test, an invariant that no longer holds — and then report what broke rather
+than what to put back.
+
 ## Build and test
 
 The C++ side is built with [Cheesemake](https://github.com/martinrixham/cheesemake), driven by

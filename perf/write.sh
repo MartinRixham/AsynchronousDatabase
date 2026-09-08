@@ -1,28 +1,12 @@
 #! /usr/bin/env bash
 
-# Writes, over persistent connections, reported as latency percentiles.
-#
-#   THREADS=6 REQUESTS=5000 VALUE_BYTES=1024 perf/write.sh
-
 source "$(dirname "$0")/harness.sh"
 
-# A table of its own, dropped and recreated so that a run always starts on an empty one and two
-# runs are comparable. Nothing else should be using this name.
-#
-# **It is left standing when the run ends**, because a read run is pointed at a key a write run
-# wrote, so whatever runs both is what drops it. Half a gigabyte of two megabyte values left on a
-# cluster is every pass of every node reading it back afterwards.
 table=${TABLE:-perf_load}
 
-# A value may be 16 MiB, and this is a kilobyte, because the request count it pairs with is
-# REQUESTS=5000 on sixteen threads — eighty thousand of anything larger is a run measured in
-# gigabytes. Size and count trade against each other: raise this and lower those together, which
-# is what build.yaml does to load the deployed stack.
 value_bytes=${VALUE_BYTES:-1024}
 content_type=application/octet-stream
 
-# The status code alone, and the 000 curl writes for a transfer that never answered, so that a
-# request that failed is told by the code the caller checks rather than by aborting the run here.
 status()
 {
 	curl --silent --output /dev/null --write-out '%{http_code}' "$@" || true
@@ -30,14 +14,6 @@ status()
 
 setup()
 {
-	# Incompressible, because the table compresses with lz4 and a run of one byte would not
-	# measure the compression a real value pays for.
-	#
-	# base64 is four characters to every three bytes, so the encoding is always longer than the
-	# value asked for and the file is cut back to it once it is written. Cutting it with a head
-	# on the end of the pipeline instead closes the pipe under base64 and tr while they are
-	# still writing, and a runner that ignores SIGPIPE hands them the error rather than the
-	# signal: three lines of "write error: Broken pipe" from a value that was built correctly.
 	head -c "$value_bytes" /dev/urandom | base64 | tr -d '\n' > "$work/value"
 	truncate --size "$value_bytes" "$work/value"
 
@@ -69,8 +45,6 @@ write_requests()
 	# clears the header for the same reason.
 	printf 'header = "Expect:"\n'
 
-	# A key range of its own per worker, so that workers never write the same key at the same
-	# time, and so that every write of a first run is an insert rather than an overwrite.
 	for (( i = 0; i < requests; i++ )); do
 		request "$base/table/$table/key/$((worker * requests + i))"
 	done
@@ -90,5 +64,4 @@ echo "Table"
 curl --silent "$base/table/$table" | sed 's/^/ /'
 echo
 
-# The table is reported whether the run passed or failed, so the verdict is carried past it.
 exit $verdict

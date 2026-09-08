@@ -1,9 +1,5 @@
 #! /usr/bin/env bash
 
-# Reads, over persistent connections, reported as latency percentiles.
-#
-#   THREADS=6 REQUESTS=5000 URL=http://localhost:8080/asyncdb/table perf/load.sh
-
 source "$(dirname "$0")/harness.sh"
 
 url=${URL:-$base/table}
