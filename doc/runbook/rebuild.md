@@ -240,6 +240,13 @@ run again. A count that stays above zero for longer than a minute or two is a
 node whose peer is not running its own pass — check that peer's membership before
 anything else.
 
+**A pass is bounded by its own clock, and each half has half of it.** The fetch
+walks every node of every zone, so a store of large values is one it does not
+reach the end of — and the clear down behind it runs on a budget the fetch cannot
+spend. A pass its clock ended is never settled, however little it found to do, so
+it runs again: a line reporting nothing cleared is not a pass that had nothing to
+clear.
+
 `chaos/nodes-added`, `chaos/nodes-removed` and `chaos/zone-retired` are the test
 of all of this: each moves the tier's shape by a stack update and then asks every
 node what is in its store, asserting that every zone holds the same keys and that

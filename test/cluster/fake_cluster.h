@@ -1,6 +1,7 @@
 #ifndef CLUSTER_FAKE_CLUSTER_H
 #define CLUSTER_FAKE_CLUSTER_H
 
+#include <chrono>
 #include <map>
 #include <string>
 #include <utility>
@@ -27,6 +28,9 @@ namespace cluster
 
 		mutable std::map<std::string, size_t> answered;
 
+		// How long a node takes to answer, which is what a pass runs out of time inside.
+		std::map<std::string, std::chrono::milliseconds> delays;
+
 		std::map<std::string, leadership> leaders;
 
 		std::map<std::string, int64_t> refused;
@@ -50,6 +54,9 @@ namespace cluster
 		// paging through a scan is answered a page at a time. The last of them answers everything
 		// after it, which is a range that stays exhausted.
 		void answer_in_turn(const std::string &node, const std::vector<router::response> &responses);
+
+		// A node that takes a while to answer whatever it answers.
+		void slow(const std::string &node, std::chrono::milliseconds delay);
 
 		// The node ordering writes to this key, and the term it orders them in.
 		void led_by(const std::string &key, const std::string &node, int64_t term);

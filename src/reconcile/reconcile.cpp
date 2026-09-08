@@ -64,10 +64,14 @@ namespace
 	// nothing for. Paging is by bound and not by cursor: a cursor names the instance that issued
 	// it, where a key is a position any node will take.
 	//
+	// False when the clock ended the walk rather than the share did. A node that answered nothing
+	// readable is not that: nothing more can be had from it, and waiting on it is what the next
+	// pass is for.
+	//
 	// **What is already here is never overwritten.** A local record is this node's own copy and as
 	// current as any: a write reaches every copy, so another node's answer is the same value or an
 	// older one, and writing it back would be undoing a write rather than filling in a gap.
-	void fetch_from(
+	bool fetch_from(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::string &node,
@@ -92,7 +96,7 @@ namespace
 			{
 				DEBUG("Node " + node + " did not answer a scan of \"" + name + "\" for a reconcile.");
 
-				return;
+				return true;
 			}
 
 			const boost::json::array &records = answer.json.at("records").as_array();
@@ -138,7 +142,7 @@ namespace
 			// No cursor is a range that is exhausted.
 			if (!answer.json.contains("next"))
 			{
-				return;
+				return true;
 			}
 
 			// A page that carried nothing to resume from, or nothing but the key it resumed at, is
@@ -147,12 +151,14 @@ namespace
 			{
 				DEBUG("A scan of \"" + name + "\" on " + node + " made no progress, so the fetch stops.");
 
-				return;
+				return true;
 			}
 
 			from = last;
 			has_from = true;
 		}
+
+		return false;
 	}
 
 	// Whether the node that owns the key in *this node's own zone* holds it.
@@ -172,8 +178,9 @@ namespace
 		return answer.status == boost::beast::http::status::ok;
 	}
 
-	// The local store, a page at a time, giving up the records this node no longer owns.
-	void clear_table(
+	// The local store, a page at a time, giving up the records this node no longer owns. False
+	// when the clock ended the walk rather than the store did.
+	bool clear_table(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::string &name,
@@ -245,18 +252,20 @@ namespace
 
 			if (!walked.has_more || !has_last || !read_any)
 			{
-				return;
+				return true;
 			}
 
 			range.from = last;
 			range.has_from = true;
 		}
+
+		return false;
 	}
 }
 
 bool reconcile::outcome::settled() const
 {
-	return deferred == 0;
+	return finished && deferred == 0;
 }
 
 reconcile::outcome reconcile::reconcile(
@@ -273,13 +282,24 @@ reconcile::outcome reconcile::reconcile(
 
 	if (zones.empty())
 	{
+		done.finished = true;
+
 		return done;
 	}
 
-	std::chrono::steady_clock::time_point deadline =
-		std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+	// **Half the pass each, and the clear down's half is measured from where the fetch left off
+	// rather than from the start of the pass.** The halves are walked in order, so a single
+	// deadline for both is one the fetch spends first: a store of large values is a fetch that
+	// pages through every node of every zone, and the clear down behind it would never run.
+	std::chrono::milliseconds half(seconds * 1000 / 2);
+
+	std::chrono::steady_clock::time_point fetching = std::chrono::steady_clock::now() + half;
 
 	std::set<table::table> tables = repository.list_tables();
+
+	// A half that has run out of its own time is what a walk it is given answers, so the loops
+	// carry no clock of their own: what is left of them is asked and does nothing.
+	bool finished = true;
 
 	// Fetching first, so that a node which gained a partition holds it before the node that lost
 	// it asks whether it does. Both orders converge — a clear down that is refused is deferred and
@@ -290,19 +310,29 @@ reconcile::outcome reconcile::reconcile(
 		// missing may be on the node in its own zone that used to own it, or in one zone only —
 		// a record written while another zone could not be reached is exactly that — so a pass
 		// that stopped at the first zone would leave a copy short and call it settled.
-		for (size_t zone = 0; zone < zones.size() && !out_of_time(deadline); zone++)
+		for (size_t zone = 0; zone < zones.size(); zone++)
 		{
-			for (size_t node = 0; node < zones[zone].size() && !out_of_time(deadline); node++)
+			for (size_t node = 0; node < zones[zone].size(); node++)
 			{
-				fetch_from(repository, nodes, zones[zone][node], it->name, page, deadline, &done.fetched);
+				if (!fetch_from(repository, nodes, zones[zone][node], it->name, page, fetching, &done.fetched))
+				{
+					finished = false;
+				}
 			}
 		}
 	}
 
+	std::chrono::steady_clock::time_point clearing = std::chrono::steady_clock::now() + half;
+
 	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
 	{
-		clear_table(repository, nodes, it->name, page, deadline, &done);
+		if (!clear_table(repository, nodes, it->name, page, clearing, &done))
+		{
+			finished = false;
+		}
 	}
+
+	done.finished = finished;
 
 	if (done.fetched > 0 || done.cleared > 0 || done.deferred > 0)
 	{

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -264,6 +265,46 @@ TEST(reconcile_test, fetches_what_it_gained_and_clears_down_what_it_lost)
 	EXPECT_TRUE(done.settled());
 
 	EXPECT_EQ("value of gained", repository.read_record("account", "gained").value_or(""));
+	EXPECT_FALSE(repository.read_record("account", "gone").has_value());
+}
+
+// A pass its own clock ended has done none of what it did not reach, and a half it never walked
+// defers nothing to say so — so the counts of a truncated pass are the counts of a settled one,
+// and the difference between them is the only thing that makes the pass after it run.
+TEST(reconcile_test, a_pass_its_own_clock_ended_is_not_settled)
+{
+	repository::fake_repository repository = store({ "gone" });
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("gone", { mate, peer, other });
+	nodes.answer(mate, holds());
+
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, reconcile::default_page, 0);
+
+	EXPECT_EQ(0u, done.cleared);
+	EXPECT_EQ(0u, done.deferred);
+	EXPECT_FALSE(done.settled());
+	EXPECT_TRUE(repository.read_record("account", "gone").has_value());
+}
+
+// The clear down has a budget of its own, and it is what a tier that has just grown needs: the
+// fetch walks every node of every zone, and a store of large values is one it never gets to the
+// end of. A pass that spent longer than the whole of itself fetching still clears down.
+TEST(reconcile_test, clears_down_what_it_lost_when_the_fetch_ran_out_of_time)
+{
+	repository::fake_repository repository = store({ "gone" });
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("gone", { mate, peer, other });
+	nodes.answer(mate, holds());
+
+	// Longer than the whole pass, so a deadline the two halves shared would be spent before the
+	// clear down began.
+	nodes.slow(peer, std::chrono::milliseconds(1100));
+
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, reconcile::default_page, 1);
+
+	EXPECT_EQ(1u, done.cleared);
 	EXPECT_FALSE(repository.read_record("account", "gone").has_value());
 }
 

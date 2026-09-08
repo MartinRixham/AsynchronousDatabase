@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <thread>
 
 #include "cluster/partition.h"
 #include "fake_cluster.h"
@@ -38,6 +39,11 @@ void cluster::fake_cluster::answer_in_turn(
 	const std::vector<router::response> &responses)
 {
 	answer_list[node] = responses;
+}
+
+void cluster::fake_cluster::slow(const std::string &node, std::chrono::milliseconds delay)
+{
+	delays[node] = delay;
 }
 
 std::vector<cluster::member> cluster::fake_cluster::members() const
@@ -154,6 +160,13 @@ std::vector<std::vector<std::string>> cluster::fake_cluster::zones() const
 router::response cluster::fake_cluster::send(const std::string &node, const router::request &request) const
 {
 	requests.push_back(std::pair<std::string, router::request>(node, request));
+
+	std::map<std::string, std::chrono::milliseconds>::const_iterator waits = delays.find(node);
+
+	if (waits != delays.end())
+	{
+		std::this_thread::sleep_for(waits->second);
+	}
 
 	std::map<std::string, std::vector<router::response>>::const_iterator in_turn = answer_list.find(node);
 

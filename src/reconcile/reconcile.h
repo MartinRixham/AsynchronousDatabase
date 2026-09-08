@@ -12,9 +12,10 @@ namespace reconcile
 	// would give, because a fetched page carries values and a value may be sixteen megabytes.
 	constexpr size_t default_page = 100;
 
-	// How long one pass is given. It is short because a node being shut down waits for the pass in
-	// flight before it goes, and because what a pass does not finish the pass after it starts again
-	// on: there is nothing a long pass does that two short ones do not.
+	// How long one pass is given, half of it to each half of the pass. It is short because a node
+	// being shut down waits for the pass in flight before it goes, and because what a pass does not
+	// finish the pass after it starts again on: there is nothing a long pass does that two short
+	// ones do not.
 	constexpr long default_seconds = 20;
 
 	// What a pass did, and whether anything is waiting on another node.
@@ -32,7 +33,14 @@ namespace reconcile
 		// this node had wrong for a moment deletes nothing at all.
 		size_t deferred = 0;
 
-		// Nothing is waiting on another node, so a pass now would do the same nothing again.
+		// Whether the pass reached the end of what this membership asks of it, rather than its own
+		// clock ending it first. **A truncated pass is never settled, however little it found to
+		// do**: what it did not reach it also found nothing in, so a pass cut short in the fetch
+		// half is a clear down that never ran and deferred nothing to say so.
+		bool finished = false;
+
+		// Nothing is waiting on another node and the pass got to the end of it, so a pass now
+		// would do the same nothing again.
 		bool settled() const;
 	};
 

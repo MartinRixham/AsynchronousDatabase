@@ -83,7 +83,7 @@ jobs:
       uses: aws-actions/amazon-ecr-login@v2
 
     - name: Download the image
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: asyncdb-image
 
