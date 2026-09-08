@@ -479,20 +479,41 @@ TEST(etcd_cluster_test, send_a_body)
 	EXPECT_EQ(http.sent()[0].body, "a value");
 }
 
-// The node that owns the key is the only one that can say how large the value is, and the session
-// this answer belongs to is what leaves the body out again.
-TEST(etcd_cluster_test, send_a_head_request_as_a_get)
+// The node that owns the key is the only one that can say how large the value is, and it says so
+// without sending it: what asking costs is the headers of the value and not the value.
+TEST(etcd_cluster_test, send_a_head_request_as_a_head)
 {
 	http::fake_client http;
 
-	http.answer(two, http::answer(200, "text/plain; charset=utf-8", "a value"));
+	http.answer(two, http::head_answer(200, "text/plain; charset=utf-8", 7));
 
 	cluster::etcd_cluster cluster(configuration(one), http);
 	router::response response =
 		cluster.send(two, request(boost::beast::http::verb::head, { "table", "account", "key", "4821" }));
 
-	EXPECT_EQ(http.sent()[0].method, "GET");
-	EXPECT_EQ(response.text, "a value");
+	EXPECT_EQ(http.sent()[0].method, "HEAD");
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.content_type, "text/plain; charset=utf-8");
+	EXPECT_EQ(response.length, 7u);
+
+	// The length of a body that is not there is not a body to answer with.
+	EXPECT_TRUE(router::response_body(response).empty());
+}
+
+// A key nothing holds is answered the same way a local miss is, so a HEAD of one is a 404 with
+// nothing to say about a length.
+TEST(etcd_cluster_test, answer_a_head_of_a_key_that_is_not_there)
+{
+	http::fake_client http;
+
+	http.answer(two, http::head_answer(404, "", 0));
+
+	cluster::etcd_cluster cluster(configuration(one), http);
+	router::response response =
+		cluster.send(two, request(boost::beast::http::verb::head, { "table", "account", "key", "4821" }));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
+	EXPECT_EQ(response.length, 0u);
 }
 
 TEST(etcd_cluster_test, answer_a_document_as_a_document)

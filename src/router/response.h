@@ -24,6 +24,10 @@ namespace router
 		boost::json::object json;
 
 		std::string text;
+
+		// The length of a body that is not here: what another node said about the value it left
+		// out of a HEAD. Nothing else answers the size of a body it does not carry.
+		size_t length = 0;
 	};
 
 	response json_response(boost::beast::http::status status, const boost::json::object &json);
@@ -31,6 +35,10 @@ namespace router
 	response text_response(boost::beast::http::status status, const std::string &text);
 
 	response empty_response(boost::beast::http::status status);
+
+	// The headers of a body and none of the body, which is what a HEAD another node answered
+	// carries back.
+	response head_response(boost::beast::http::status status, const std::string &content_type, size_t length);
 
 	std::string response_body(const response &response);
 }

@@ -32,16 +32,14 @@ namespace
 		return url;
 	}
 
-	// A HEAD travels as a GET, because the node that owns the key is the only one that can say
-	// how large the value is, and the session this answer belongs to strips the body itself.
 	std::string method_of(const router::request &request)
 	{
-		if (request.method == boost::beast::http::verb::head)
-		{
-			return "GET";
-		}
-
 		return std::string(boost::beast::http::to_string(request.method));
+	}
+
+	bool is_head(const router::request &request)
+	{
+		return request.method == boost::beast::http::verb::head;
 	}
 
 	// What a forwarded request carries apart from itself: that it has been forwarded, so the node
@@ -60,7 +58,7 @@ namespace
 		return headers;
 	}
 
-	router::response to_response(const std::string &node, const http::response &answer)
+	router::response to_response(const std::string &node, const http::response &answer, bool head)
 	{
 		if (!answer.is_valid)
 		{
@@ -69,6 +67,14 @@ namespace
 		}
 
 		boost::beast::http::status status = static_cast<boost::beast::http::status>(answer.status);
+
+		// A HEAD travels as a HEAD: what is wanted of the node holding the key is how large the
+		// value is and whether it is there at all, and a value is sixteen megabytes of answer to
+		// that. What comes back is the headers of the GET, which is what a HEAD is answered with.
+		if (head)
+		{
+			return router::head_response(status, answer.content_type, static_cast<size_t>(answer.content_length));
+		}
 
 		if (answer.body.empty())
 		{
@@ -102,7 +108,7 @@ router::response cluster::forward(
 
 	DEBUG("Forwarding " + forwarded.method + " " + forwarded.url + ".");
 
-	return to_response(node, http.send(forwarded));
+	return to_response(node, http.send(forwarded), is_head(request));
 }
 
 std::vector<router::response> cluster::forward_all(
@@ -128,7 +134,7 @@ std::vector<router::response> cluster::forward_all(
 	// refusal belongs to is the node it is reported against.
 	for (size_t i = 0; i < nodes.size() && i < answers.size(); i++)
 	{
-		responses.push_back(to_response(nodes[i], answers[i]));
+		responses.push_back(to_response(nodes[i], answers[i], is_head(request)));
 	}
 
 	return responses;

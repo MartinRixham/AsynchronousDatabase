@@ -23,6 +23,7 @@ namespace
 		const boost::beast::http::status &status,
 		const std::string &content_type,
 		const std::string &body,
+		size_t length,
 		bool head)
 	{
 		boost::beast::http::response<boost::beast::http::string_body> response {
@@ -43,9 +44,16 @@ namespace
 
 		// HEAD answers the same headers with no body, and the length is the cheap way to ask how
 		// large a value is.
-		if (head && !body.empty())
+		if (head)
 		{
-			response.set(boost::beast::http::field::content_length, std::to_string(body.size()));
+			// A value another node holds is one this node never read, so the length is the one
+			// that node gave rather than the size of a body there is not.
+			size_t answered = body.empty() ? length : body.size();
+
+			if (answered > 0)
+			{
+				response.set(boost::beast::http::field::content_length, std::to_string(answered));
+			}
 		}
 
 		return response;
@@ -233,6 +241,7 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 		response.status,
 		response.content_type,
 		router::response_body(response),
+		response.length,
 		head);
 }
 

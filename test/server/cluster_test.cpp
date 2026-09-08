@@ -439,6 +439,26 @@ TEST_F(cluster_test, the_size_of_a_record_is_answered_by_the_node_that_owns_it)
 	EXPECT_EQ(head.body, "");
 }
 
+// The value never crosses the hop: the node that owns the key answers the HEAD with a HEAD, and
+// the node that was asked passes the length on without ever having read the value.
+TEST_F(cluster_test, the_size_of_an_empty_record_is_answered_as_nothing)
+{
+	request(first, "PUT", "/table/account", "{}");
+	request(first, "PUT", "/table/account/key/4821", "");
+
+	answer head = request(stranger("4821"), "HEAD", "/table/account/key/4821", "");
+
+	EXPECT_EQ(head.code, 200);
+	EXPECT_EQ(head.content_length, 0);
+}
+
+TEST_F(cluster_test, a_head_of_a_record_that_is_not_there_is_not_found)
+{
+	request(first, "PUT", "/table/account", "{}");
+
+	EXPECT_EQ(request(stranger("4821"), "HEAD", "/table/account/key/4821", "").code, 404);
+}
+
 TEST_F(cluster_test, a_key_that_holds_punctuation_of_a_url_is_one_key)
 {
 	request(first, "PUT", "/table/account", "{}");

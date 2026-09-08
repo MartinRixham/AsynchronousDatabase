@@ -96,6 +96,21 @@ TEST_F(curl_client_test, forget_the_request_before)
 	EXPECT_FALSE(response.body.empty());
 }
 
+// What makes a HEAD worth sending as a HEAD: the node answers how large the value is and sends
+// none of it, so asking whether a record exists costs its headers rather than its megabytes.
+TEST_F(curl_client_test, answer_the_length_of_a_body_a_head_left_out)
+{
+	http::request head = get("/health");
+
+	head.method = "HEAD";
+
+	http::response response = client.send(head);
+
+	EXPECT_EQ(response.status, 200);
+	EXPECT_TRUE(response.body.empty());
+	EXPECT_GT(response.content_length, 0);
+}
+
 TEST_F(curl_client_test, answer_that_there_was_no_answer)
 {
 	http::request request = get("/health");

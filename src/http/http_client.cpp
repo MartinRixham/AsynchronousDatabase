@@ -171,15 +171,21 @@ namespace
 		if (code == CURLE_OK)
 		{
 			char *content_type = NULL;
+			curl_off_t content_length = 0;
 			long connects = 0;
 
 			curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response->status);
 			curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &content_type);
 
+			// An answer that carried no length at all says nothing about how large the body is,
+			// which is a length of none rather than the -1 curl reports it as.
+			curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &content_length);
+
 			// No connection made is a connection that was already there.
 			curl_easy_getinfo(curl, CURLINFO_NUM_CONNECTS, &connects);
 
 			response->content_type = content_type == NULL ? "" : content_type;
+			response->content_length = content_length > 0 ? static_cast<long>(content_length) : 0;
 			response->reused = connects == 0;
 			response->is_valid = true;
 

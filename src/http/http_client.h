@@ -29,6 +29,10 @@ namespace http
 
 		std::string body;
 
+		// The length the body was said to have, which is the length of the body there is — except
+		// for a HEAD, where it is the length of the body the answer left out.
+		long content_length = 0;
+
 		std::string message;
 
 		// True when the request went over a connection that was already open. Nothing branches on

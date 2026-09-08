@@ -58,6 +58,19 @@ http::response http::answer(long status, const std::string &content_type, const 
 	response.status = status;
 	response.content_type = content_type;
 	response.body = body;
+	response.content_length = static_cast<long>(body.size());
+
+	return response;
+}
+
+http::response http::head_answer(long status, const std::string &content_type, long content_length)
+{
+	response response;
+
+	response.is_valid = true;
+	response.status = status;
+	response.content_type = content_type;
+	response.content_length = content_length;
 
 	return response;
 }
