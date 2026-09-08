@@ -2,6 +2,12 @@
 
 set -u
 
+# The run is a test, so a harness that fails has to fail it: a value only half written, or a table
+# the setup could not create, measures nothing. pipefail is half of that — the status of a pipeline
+# is otherwise its last command's alone, and the stage that fails is rarely the last one.
+set -e
+set -o pipefail
+
 # Job control, so that each worker becomes its own process group and stop() can signal the
 # curl inside it. Without it a stopped run leaves its workers orphaned and still loading.
 set -m
@@ -23,7 +29,8 @@ stop()
 	local worker
 
 	for worker in ${workers[@]+"${workers[@]}"}; do
-		kill -- "-$worker" 2> /dev/null
+		# A worker that has already finished is not an error, and the run is over either way.
+		kill -- "-$worker" 2> /dev/null || true
 	done
 
 	rm -rf "$work"
@@ -82,7 +89,9 @@ milliseconds()
 	local seconds=${1%%.*}
 	local fraction=0
 
-	[[ $1 == *.* ]] && fraction=${1#*.}00000
+	if [[ $1 == *.* ]]; then
+		fraction=${1#*.}00000
+	fi
 
 	fraction=$(((10#${fraction:0:6} + 5) / 10))
 
@@ -94,7 +103,9 @@ latency()
 {
 	local index=$(((count * $2 + 50) / 100))
 
-	[ "$index" -lt 1 ] && index=1
+	if [ "$index" -lt 1 ]; then
+		index=1
+	fi
 
 	printf ' %-4s %9s ms\n' "$1" "$(milliseconds "$(sed -n "${index}p;${index}q" "$work/times")")"
 }
@@ -131,7 +142,7 @@ report()
 		sort "$work/errors" | uniq -c | sort -rn | sed 's/^/ /'
 	fi
 
-	[ "$count" -gt 0 ] || return
+	[ "$count" -gt 0 ] || return 0
 
 	echo
 	echo "Latency"

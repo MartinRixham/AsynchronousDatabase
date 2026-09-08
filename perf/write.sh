@@ -21,16 +21,25 @@ table=${TABLE:-perf_load}
 value_bytes=${VALUE_BYTES:-1024}
 content_type=application/octet-stream
 
+# The status code alone, and the 000 curl writes for a transfer that never answered, so that a
+# request that failed is told by the code the caller checks rather than by aborting the run here.
 status()
 {
-	curl --silent --output /dev/null --write-out '%{http_code}' "$@"
+	curl --silent --output /dev/null --write-out '%{http_code}' "$@" || true
 }
 
 setup()
 {
 	# Incompressible, because the table compresses with lz4 and a run of one byte would not
 	# measure the compression a real value pays for.
-	head -c "$value_bytes" /dev/urandom | base64 | tr -d '\n' | head -c "$value_bytes" > "$work/value"
+	#
+	# base64 is four characters to every three bytes, so the encoding is always longer than the
+	# value asked for and the file is cut back to it once it is written. Cutting it with a head
+	# on the end of the pipeline instead closes the pipe under base64 and tr while they are
+	# still writing, and a runner that ignores SIGPIPE hands them the error rather than the
+	# signal: three lines of "write error: Broken pipe" from a value that was built correctly.
+	head -c "$value_bytes" /dev/urandom | base64 | tr -d '\n' > "$work/value"
+	truncate --size "$value_bytes" "$work/value"
 
 	echo "Dropped $table ($(status --request DELETE "$base/table/$table"))." >&2
 
@@ -72,8 +81,9 @@ setup
 echo "PUT $base/table/$table/key, $value_bytes byte values, $threads threads," \
 	"$requests requests each." >&2
 
-measure
-verdict=$?
+verdict=0
+
+measure || verdict=$?
 
 echo
 echo "Table"

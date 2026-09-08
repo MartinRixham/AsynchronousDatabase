@@ -494,7 +494,12 @@ Everything else in the repository is a thing a person runs:
   [nothing is deployed](#the-pull-request-build).
 - `perf/` — the load harness likewise: `perf/write.sh` and then `perf/read.sh`
   over the load balancer, failing the build if the cluster answers any of that
-  load with anything but a 2xx curl also carried to the end of its body. A write run leaves its table standing for the
+  load with anything but a 2xx curl also carried to the end of its body. It fails
+  the build on its own errors as well, and not only on the cluster's: the harness
+  runs under `errexit` and `pipefail`, so a setup that could not create the table,
+  or a value only half written because one stage of a pipeline failed, stops the
+  run rather than measuring something that was never built.
+  A write run leaves its table standing for the
   read run that follows it, so **the step drops `perf_load` itself** once all
   four have run: the last of them writes two megabyte values, and a table of those
   left on the cluster is what every `reconcile` pass of the chaos suite then
