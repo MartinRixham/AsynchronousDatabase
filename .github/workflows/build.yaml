@@ -250,6 +250,8 @@ jobs:
         REQUESTS=32 VALUE_BYTES=2097152 perf/write.sh
         REQUESTS=32 URL=$BASE/table/perf_load/key/0 perf/read.sh
 
+        curl --silent --show-error --fail --request DELETE "$BASE/table/perf_load"
+
     - name: Validate the experiments
       run: chaos/validate.sh
 

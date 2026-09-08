@@ -17,18 +17,34 @@ namespace
 	// Everything the cluster sends carries the forwarded header, so a scan asked this way is that
 	// node's own share rather than its whole zone's merged answer, and a HEAD asked this way is
 	// what that node holds rather than what its zone can find.
+	//
+	// **The keys alone.** A share is every record another node holds and what this pass wants of
+	// it is the fraction whose owner moved, so a page of values is sixteen megabytes a record of
+	// answer to a question about where records belong.
 	router::request share_request(const std::string &table, const std::string &from, bool has_from, size_t page)
 	{
 		router::request request;
 
 		request.method = boost::beast::http::verb::get;
 		request.path = std::vector<std::string> { "table", table, "key" };
-		request.query = "limit=" + std::to_string(page) + "&values=true";
+		request.query = "limit=" + std::to_string(page) + "&values=false";
 
 		if (has_from)
 		{
 			request.query += "&from=" + url::encode(from);
 		}
+
+		return request;
+	}
+
+	// The one record this node is taking over, from the node that has it. A value crosses the
+	// network once it is known to be wanted and never before.
+	router::request record_request(const std::string &table, const std::string &key)
+	{
+		router::request request;
+
+		request.method = boost::beast::http::verb::get;
+		request.path = std::vector<std::string> { "table", table, "key", key };
 
 		return request;
 	}
@@ -60,9 +76,9 @@ namespace
 		return std::string(object.at(name).as_string());
 	}
 
-	// One node's share of one table, a page at a time, keeping what this node owns and holds
-	// nothing for. Paging is by bound and not by cursor: a cursor names the instance that issued
-	// it, where a key is a position any node will take.
+	// One node's share of one table, a page of keys at a time, taking the value of each record this
+	// node owns and holds nothing for. Paging is by bound and not by cursor: a cursor names the
+	// instance that issued it, where a key is a position any node will take.
 	//
 	// False when the clock ended the walk rather than the share did. A node that answered nothing
 	// readable is not that: nothing more can be had from it, and waiting on it is what the next
@@ -133,9 +149,16 @@ namespace
 
 				if (where.of(key).local && !repository.read_record(name, key))
 				{
-					repository.write_record(name, record::valid_record(key, field(object, "value")));
+					// A record that went between the page and this is one there is nothing to
+					// take: the node that had it is not the node that owns it.
+					router::response value = nodes.send(node, record_request(name, key));
 
-					(*fetched)++;
+					if (value.status == boost::beast::http::status::ok)
+					{
+						repository.write_record(name, record::valid_record(key, value.text));
+
+						(*fetched)++;
+					}
 				}
 			}
 

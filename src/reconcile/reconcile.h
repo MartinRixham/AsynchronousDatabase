@@ -8,8 +8,9 @@
 
 namespace reconcile
 {
-	// How many records a page of a reconcile asks for, as in a rebuild: well under what a scan
-	// would give, because a fetched page carries values and a value may be sixteen megabytes.
+	// How many keys a page of a reconcile asks for, of another node's share or of this node's own
+	// store. Neither walk carries a value: what both are deciding is where records belong, and the
+	// values that move are asked for one at a time once it is known which they are.
 	constexpr size_t default_page = 100;
 
 	// How long one pass is given, half of it to each half of the pass. It is short because a node

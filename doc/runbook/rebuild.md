@@ -198,6 +198,11 @@ Clearing down alone is a shrink that loses records rather than staling them.
 Fetching alone is a store that only grows and a stale value waiting for the next
 membership change.
 
+**Both walks carry keys and no values.** Another node's share is every record it
+holds, and what a pass wants of it is the fraction whose owner moved, so the
+values that cross the network are asked for one record at a time once it is known
+which those are.
+
 ### What makes deleting safe
 
 A copy is given up only when **the node that owns the key in this node's own zone

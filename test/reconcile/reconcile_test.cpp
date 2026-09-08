@@ -42,14 +42,17 @@ namespace
 
 		for (size_t i = 0; i < keys.size(); i++)
 		{
-			records.push_back(boost::json::object {
-				{ "key", boost::json::string(keys[i]) },
-				{ "value", boost::json::string("value of " + keys[i]) }
-			});
+			records.push_back(boost::json::object { { "key", boost::json::string(keys[i]) } });
 		}
 
 		return router::json_response(
 			boost::beast::http::status::ok, boost::json::object { { "records", records } });
+	}
+
+	// The value of one record, which is what a node answers a fetch of a key its share named.
+	router::response value_of(const std::string &key)
+	{
+		return router::text_response(boost::beast::http::status::ok, "value of " + key);
 	}
 
 	// A node that holds the key it is asked for, and an answer a scan of it reads nothing out of:
@@ -76,6 +79,23 @@ namespace
 		}
 
 		return repository;
+	}
+
+	// The keys whose values crossed the network, which is what a share walked as keys is for.
+	std::vector<std::string> values_taken(const cluster::fake_cluster &nodes)
+	{
+		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+		std::vector<std::string> keys;
+
+		for (size_t i = 0; i < sent.size(); i++)
+		{
+			if (sent[i].second.method == boost::beast::http::verb::get && sent[i].second.path.size() == 4)
+			{
+				keys.push_back(sent[i].second.path[3]);
+			}
+		}
+
+		return keys;
 	}
 
 	// Where a HEAD of this key went, which is the whole of what makes clearing down safe.
@@ -119,7 +139,7 @@ TEST(reconcile_test, fetches_a_record_this_node_owns_and_holds_nothing_for)
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(mate, page({ "a" }));
+	nodes.answer_in_turn(mate, { page({ "a" }), value_of("a") });
 
 	reconcile::outcome done = reconcile::reconcile(repository, nodes);
 
@@ -168,7 +188,7 @@ TEST(reconcile_test, fetches_from_a_further_zone_when_the_nearer_ones_hold_nothi
 	nodes.copies("a", { self, peer, other });
 	nodes.answer(mate, page({}));
 	nodes.answer(peer, page({}));
-	nodes.answer(other, page({ "a" }));
+	nodes.answer_in_turn(other, { page({ "a" }), value_of("a") });
 
 	reconcile::outcome done = reconcile::reconcile(repository, nodes);
 
@@ -256,7 +276,7 @@ TEST(reconcile_test, fetches_what_it_gained_and_clears_down_what_it_lost)
 	nodes.copies("gained", { self, peer, other });
 	nodes.copies("gone", { mate, peer, other });
 
-	nodes.answer_in_turn(mate, { page({ "gained" }), holds() });
+	nodes.answer_in_turn(mate, { page({ "gained" }), value_of("gained"), holds() });
 
 	reconcile::outcome done = reconcile::reconcile(repository, nodes);
 
@@ -306,6 +326,27 @@ TEST(reconcile_test, clears_down_what_it_lost_when_the_fetch_ran_out_of_time)
 
 	EXPECT_EQ(1u, done.cleared);
 	EXPECT_FALSE(repository.read_record("account", "gone").has_value());
+}
+
+// A share is every record another node holds, and what a pass wants of it is the fraction whose
+// owner moved: the walk carries keys, and a value crosses for the record being taken over alone.
+TEST(reconcile_test, takes_the_value_of_a_record_it_gained_and_of_no_other)
+{
+	repository::fake_repository repository = store({});
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("gained", { self, peer, other });
+	nodes.copies("theirs", { mate, peer, other });
+
+	nodes.answer_in_turn(mate, { page({ "gained", "theirs" }), value_of("gained") });
+
+	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+
+	EXPECT_EQ(1u, done.fetched);
+	EXPECT_EQ(std::vector<std::string> { "gained" }, values_taken(nodes));
+
+	EXPECT_EQ("value of gained", repository.read_record("account", "gained").value_or(""));
+	EXPECT_FALSE(repository.read_record("account", "theirs").has_value());
 }
 
 TEST(reconcile_test, walks_a_store_larger_than_one_page)

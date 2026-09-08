@@ -8,6 +8,10 @@ source "$(dirname "$0")/harness.sh"
 
 # A table of its own, dropped and recreated so that a run always starts on an empty one and two
 # runs are comparable. Nothing else should be using this name.
+#
+# **It is left standing when the run ends**, because a read run is pointed at a key a write run
+# wrote, so whatever runs both is what drops it. Half a gigabyte of two megabyte values left on a
+# cluster is every pass of every node reading it back afterwards.
 table=${TABLE:-perf_load}
 
 # A value may be 16 MiB, and this is a kilobyte, because the request count it pairs with is
