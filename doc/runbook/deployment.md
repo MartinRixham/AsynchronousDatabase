@@ -154,7 +154,7 @@ resume. The usual causes are the pull and the grace period.
 | Message | Is |
 | --- | --- |
 | `{stack}-alb` already exists | A stack of that name is already standing. Load balancer names are unique to a region and this one is the stack's, so **a stack cannot be created over itself** — a second stack under another name is fine |
-| `The maximum number of VPCs has been reached` | The region is full. Each stack is a VPC and the default quota is five; [the pipeline](/pipeline/#the-shares) uses three of them for the length of a run |
+| `The maximum number of VPCs has been reached` | The region is full. Each stack is a VPC and the default quota is five; [the pipeline](/pipeline/#the-shares) uses four of them for the length of a run, which leaves room for the default VPC and nothing else |
 | Parameter `/asyncdb/version` not found | The SSM parameter does not exist. CloudFormation cannot resolve it, so the operation fails outright |
 | The group reports a failed activity, not a template error | Something the launch template names is missing — the AMI, the instance profile or the image |
 | An etcd instance has no container | The tag `/asyncdb/etcd` names is not in this account's ECR. The boot script pulls [what the build mirrored](/pipeline/#mirroring-etcd) and never quay.io — or the node found a cluster it could not join, which is [a quorum failure](/runbook/membership#etcd-has-lost-quorum) and deliberate |

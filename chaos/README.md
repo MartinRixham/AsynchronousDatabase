@@ -88,9 +88,11 @@ a launch, a pull and a rebuild before the membership says anything has happened.
 the slowest, because rebalancing out of a zone is one instance at a time — the group launches the
 replacement before terminating what it replaces, and `MaxSize` allows one spare.
 
-That arithmetic is why [the pipeline runs three stacks at once](../doc/pipeline/index.md#the-shares)
-rather than one, with a resize in each share: nothing here is parallel on a single stack, because an
-experiment has the cluster to itself by design.
+That arithmetic is why [the pipeline runs four stacks at once](../doc/pipeline/index.md#the-shares)
+rather than one, with `zone-retired` alone in a share: nothing here is parallel on a single stack,
+because an experiment has the cluster to itself by design. Four is also where sharding stops paying
+— a share spends about six minutes standing its cluster up, and no arrangement can finish before
+`zone-retired` does.
 
 They also cost money for as long as they run: `nodes-added` is nine database instances rather than
 six for the length of it. Nothing is left behind — every one of them puts the shape back, and the

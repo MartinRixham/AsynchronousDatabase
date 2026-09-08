@@ -117,6 +117,9 @@ void repository::rocksdb_repository::create_table(const table::table &table)
 		"Writing table \"" + table.name + "\"");
 }
 
+// The table documents are in the default column family, which is open for the life of the store
+// and named by no handle, so reading one takes no lock. Guarding it would put every table read
+// behind the exclusive lock a table create holds.
 std::set<table::table> repository::rocksdb_repository::list_tables() const
 {
 	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(rocksdb::ReadOptions()));

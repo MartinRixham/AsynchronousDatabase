@@ -413,7 +413,7 @@ router::response router::router::route_record(
 		// ever applying two writes of one key at a time and they cannot settle in two orders.
 		std::lock_guard<std::mutex> ordering(write_lock(record.key));
 
-		return write_record(ordered, name, record, nodes.replicas(record.key));
+		return write_record(ordered, name, record, replicas_of(request, where, record.key));
 	}
 
 	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
@@ -446,7 +446,15 @@ router::response router::router::route_record(
 
 std::mutex &router::router::write_lock(const std::string &key)
 {
-	return write_locks[std::hash<std::string>()(key) % write_stripes];
+	return write_locks[std::hash<std::string>()(key) % write_stripes].lock;
+}
+
+cluster::placement router::router::replicas_of(
+	const request &request,
+	const cluster::placement &known,
+	const std::string &key)
+{
+	return request.forwarded ? nodes.replicas(key) : known;
 }
 
 // Every copy of a record is written before the write is answered, so a record is in every zone by

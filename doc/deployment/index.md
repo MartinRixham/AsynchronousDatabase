@@ -232,7 +232,7 @@ It is a small template, and it is worth being plain about where it stops.
   pull from and the two SSM parameters that name the tags — so two stacks run the
   same version, and there is no way to stand up two versions at once. **Each one
   is a VPC, a load balancer and nine `t3.micro`**, against a default quota of five
-  VPCs to a region; [the pipeline](/pipeline/#the-shares) runs three at a time and
+  VPCs to a region; [the pipeline](/pipeline/#the-shares) runs four at a time and
   that is what sizes the account. The [`Url` output](#the-address) is how to tell
   them apart.
 - **There is no HTTPS.** The listener is HTTP on port 80, in and out. There is

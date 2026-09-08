@@ -517,8 +517,8 @@ repository `asyncdb` if the account has none, writes that tag to the SSM paramet
 and writes `/asyncdb/etcd`, and `make create-chaos-stack`s the permission to inject a fault, once
 for every share below it.
 
-**`verify` is then a matrix of three, one stack each, `fail-fast: false`.** Each share
-`make create-stack`s `asyncdb-{one,two,three}` — `STACK` and `CHAOS_STACK` come from the matrix —
+**`verify` is then a matrix of four, one stack each, `fail-fast: false`.** Each share
+`make create-stack`s `asyncdb-{one,two,three,four}` — `STACK` and `CHAOS_STACK` come from the matrix —
 waits for `/health` to name six nodes, runs `chaos/validate.sh` and `chaos/run.sh` over the
 experiments the matrix names it in `CHAOS_EXPERIMENTS`, and `make delete-stack`s it again whether
 they passed or not. **The share carrying `matrix.suites` also runs the Postman collection, the
@@ -531,9 +531,12 @@ nobody runs**: there is no default list in the workflow.
 `release` then pushes the git tag and `cleanup` deletes the chaos permissions. A share's teardown
 deletes only a stack that share created, so a stack standing under one of those three names makes
 `create-stack` fail and is then left alone — while a stack standing by hand as `asyncdb` collides
-with nothing and only costs quota. **Three stacks at once is three VPCs, three load balancers and
-twenty-seven `t3.micro`**, against a default of five VPCs to a region, which is what sizes the
-account.
+with nothing and only costs quota. **Four stacks at once is four VPCs, four load balancers and
+thirty-six `t3.micro`**, against a default of five VPCs to a region — so the account has room for
+the run and a default VPC and nothing else, which is what sizes it. **Four is where more stacks
+stop helping**: a share pays about six minutes to stand its cluster up and `zone-retired` is
+twenty-four minutes on its own, so no arrangement finishes sooner than about thirty and four shares
+already reach it.
 
 **There is one gate, and it is the `{version}` git tag.** It is the `if:` on `publish` and
 **nowhere else in the workflow** — no step repeats it, and every job that costs anything is
@@ -545,8 +548,8 @@ when every job it needs succeeded, as a step with no condition runs only when ev
 did. The `if:`s that do appear on steps are about something else — `matrix.suites` picks the share
 that runs the API, browser and load suites, and `always()` marks the teardowns — and none of them
 So a version that fails is published and retried on every push until it passes, and a version that
-has passed is neither republished nor stood up again — which is what keeps twenty-seven instances
-and three load balancers off a push that only touched a comment. **A version tag means
+has passed is neither republished nor stood up again — which is what keeps thirty-six instances
+and four load balancers off a push that only touched a comment. **A version tag means
 passed, and never merely published**; the workflow asks git alone, and neither ECR nor
 `/asyncdb/version` is a question it puts.
 

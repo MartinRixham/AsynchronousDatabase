@@ -79,6 +79,10 @@ namespace
 		std::string from;
 		bool has_from = false;
 
+		// Where a key belongs is decided by its partition, so one walk asks that 256 times rather
+		// than once for every key of another node's share.
+		cluster::placements where(nodes);
+
 		while (!out_of_time(deadline))
 		{
 			router::response answer = nodes.send(node, share_request(name, from, has_from, page));
@@ -123,7 +127,7 @@ namespace
 
 				read_any = true;
 
-				if (nodes.replicas(key).local && !repository.read_record(name, key))
+				if (where.of(key).local && !repository.read_record(name, key))
 				{
 					repository.write_record(name, record::valid_record(key, field(object, "value")));
 
@@ -186,6 +190,8 @@ namespace
 		// and a page of values is sixteen megabytes a record of answer to that.
 		range.values = false;
 
+		cluster::placements placed(nodes);
+
 		while (!out_of_time(deadline))
 		{
 			scan::page walked = repository.scan_records(name, range);
@@ -207,7 +213,7 @@ namespace
 
 				read_any = true;
 
-				cluster::placement where = nodes.replicas(key);
+				const cluster::placement &where = placed.of(key);
 
 				if (where.local)
 				{
@@ -223,6 +229,8 @@ namespace
 					continue;
 				}
 
+				// Whether the record may go is asked of the owner every time, and never cached:
+				// what is remembered here is where the key belongs, not who holds it now.
 				if (owner_holds(nodes, name, key, where.nodes))
 				{
 					repository.delete_record(name, key);

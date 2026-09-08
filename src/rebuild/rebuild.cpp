@@ -116,6 +116,10 @@ namespace
 		std::string from;
 		bool has_from = false;
 
+		// Where a key belongs is decided by its partition, so one walk asks that 256 times rather
+		// than once for every key of the zone being read.
+		cluster::placements where(nodes);
+
 		while (true)
 		{
 	// The page boundary is the only place a rebuild can be given up: what is written already
@@ -168,7 +172,7 @@ namespace
 				// Only what this node will hold. The membership was read before the node
 				// registered, and a node is a member of its own cluster whatever etcd says, so
 				// the copies of a key are already the ones it will have once it joins.
-				if (nodes.replicas(key).local)
+				if (where.of(key).local)
 				{
 					repository.write_record(name, record::valid_record(key, field(object, "value")));
 

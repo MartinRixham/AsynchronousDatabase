@@ -1,10 +1,13 @@
 #ifndef CLUSTER_ETCD_CLUSTER_H
 #define CLUSTER_ETCD_CLUSTER_H
 
+#include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <thread>
@@ -14,6 +17,7 @@
 #include "http/http_client.h"
 #include "cluster.h"
 #include "member.h"
+#include "partition.h"
 
 namespace cluster
 {
@@ -75,10 +79,11 @@ namespace cluster
 
 		etcd::client etcd_client;
 
-		// Read by every request and written only by the membership thread.
-		mutable std::shared_mutex member_mutex;
-
-		std::vector<member> member_list;
+		// The membership as it was last read, held whole and swapped rather than edited: the
+		// vector a reader is given never changes, so reading it is an atomic load and a reference
+		// count rather than a lock and a copy of every name. Written only by the membership
+		// thread. Never null once the constructor has run.
+		std::atomic<membership> member_list;
 
 		int64_t lease = 0;
 
@@ -90,9 +95,10 @@ namespace cluster
 
 		// The highest term this node has applied a write of each partition in. A write ordered in
 		// an older term is a leader that has been replaced and does not know it.
-		mutable std::mutex term_mutex;
-
-		std::map<size_t, int64_t> terms;
+		//
+		// One slot a partition rather than a map behind a lock: the count is fixed, so every write
+		// raises the term of its own partition and no write waits on a write of another.
+		std::array<std::atomic<int64_t>, partition_count> terms = {};
 
 		std::thread thread;
 
@@ -162,14 +168,22 @@ namespace cluster
 		// stops renewing stops leading.
 		void read_leaders();
 
+		// The membership to answer one request from. Every question about where a key lives is
+		// asked of one of these rather than of the field, so a request that asks several of them
+		// cannot see the membership change half way through.
+		membership snapshot() const;
+
 		// Whether this node holds a copy of the partition, which is what it claims leadership of.
 		bool holds(const std::vector<member> &registered, size_t partition) const;
+
+		// Raises the partition's term to this one, and answers whether it is at least the highest
+		// this node has seen. Compare and exchange rather than a store, because two writes of one
+		// partition arriving at once have to leave the higher term behind whichever of them wins.
+		bool raise_term(size_t partition, int64_t term);
 
 		// The term this node leads a partition in. Only the node that claimed a partition knows
 		// it — the term is the revision of that claim — so another node's is nothing here.
 		int64_t term_of(const std::string &holder, size_t partition) const;
-
-		void remember_term(size_t partition, int64_t term);
 	};
 }
 

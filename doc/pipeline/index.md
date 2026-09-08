@@ -3,7 +3,7 @@
 `.github/workflows/build.yaml` is the push side of CI: one workflow, five jobs
 and no reusable workflow. `build` builds the Docker image and hands it on as an
 artifact. `publish` pushes it to ECR and writes down what was published.
-`verify` is **a matrix of three, each standing up a stack of its own, running its
+`verify` is **a matrix of four, each standing up a stack of its own, running its
 share of the tests against it and deleting it again**. `release` tags the version
 once every share has passed, and `cleanup` takes the chaos permissions away.
 Everything from `publish` down happens only for a version that has not passed the
@@ -12,12 +12,13 @@ rewrites the version's image in ECR. The other half of CI is
 `.github/workflows/pull-request.yaml`, which is
 [two jobs and no AWS at all](#the-pull-request-build).
 
-**Three stacks, because the chaos suite is the pipeline.** Eighty of the hundred
+**Four stacks, because the chaos suite is the pipeline.** Eighty of the hundred
 and ten minutes a run used to take were `chaos/run.sh`, and sixty of those were
 the three experiments that resize the tier and then wait for an auto scaling group
 to do it. Nothing about them is parallel on one stack — an experiment has the
-cluster to itself by design — so the way to run them at once is to have three
-clusters. [The shares](#the-shares) are balanced by measured time.
+cluster to itself by design — so the way to run them at once is to have several
+clusters. [The shares](#the-shares) are balanced by measured time, and four is
+where adding stacks stops helping.
 
 ```
               push to main or master                     concurrency: build-and-push
@@ -63,23 +64,24 @@ clusters. [The shares](#the-shares) are balanced by measured time.
                  │
       ═══════════╪═══════════  job boundary: verify, three at once, fail-fast: false
                  │
-     ┌───────────┼───────────┐
-     │           │           │
-┌────┴────┐ ┌────┴────┐ ┌────┴────┐
-│asyncdb- │ │asyncdb- │ │asyncdb- │  create-stack, and wait for /health
-│  one    │ │  two    │ │ three   │  to name six nodes
-├─────────┤ ├─────────┤ ├─────────┤
-│         │ │ newman  │ │         │  the API, browser and load suites run
-│         │ │playwrgt │ │         │  on one share only — they need a stack
-│         │ │  perf   │ │         │  nothing has broken yet
-├─────────┤ ├─────────┤ ├─────────┤
-│  its    │ │  its    │ │  its    │  CHAOS_EXPERIMENTS, in the order given
-│ share   │ │ share   │ │ share   │
-├─────────┤ ├─────────┤ ├─────────┤
-│ delete  │ │ delete  │ │ delete  │  if: always() — a red share leaves
-└────┬────┘ └────┬────┘ └────┬────┘  nothing standing
-     │           │           │
-     └───────────┼───────────┘
+     ┌───────────┼───────────┬───────────┐
+     │           │           │           │
+┌────┴────┐ ┌────┴────┐ ┌────┴────┐ ┌────┴────┐
+│asyncdb- │ │asyncdb- │ │asyncdb- │ │asyncdb- │  create-stack, and wait for
+│  one    │ │  two    │ │ three   │ │  four   │  /health to name six nodes
+├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤
+│         │ │ newman  │ │         │ │         │  the API, browser and load
+│         │ │playwrgt │ │         │ │         │  suites run on one share only —
+│         │ │  perf   │ │         │ │         │  they need a stack nothing has
+│         │ │         │ │         │ │         │  broken yet
+├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤
+│  its    │ │  its    │ │  its    │ │  its    │  CHAOS_EXPERIMENTS, in the
+│ share   │ │ share   │ │ share   │ │ share   │  order given
+├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤
+│ delete  │ │ delete  │ │ delete  │ │ delete  │  if: always() — a red share
+└────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘  leaves nothing standing
+     │           │           │           │
+     └───────────┼───────────┴───────────┘
                  │
       ═══════════╪═══════════  job boundary: release, needs every share
                  │
@@ -222,7 +224,7 @@ concurrency:
 That is the only trigger of this workflow: no `workflow_dispatch`, so a run
 cannot be started by hand from the Actions tab, and no schedule. The
 `concurrency` group is what stops two pushes in quick succession racing for the
-same tag and, worse, for the same three CloudFormation stacks: the share names
+same tag and, worse, for the same four CloudFormation stacks: the share names
 are fixed, so a second run would find `asyncdb-one` standing and fail to create
 it. `cancel-in-progress` is **false** deliberately: a cancelled run is one whose
 `delete-stack` never runs, and now there are three of those.
@@ -271,7 +273,7 @@ workspace and a `$GITHUB_ENV` do not — and takes `$VERSION` from
 | Mirror etcd into ECR | [below](#mirroring-etcd) |
 | The chaos permissions | `make create-chaos-stack` — the policy every share injects with, one stack for all of them, with a `created` output `cleanup` keys off |
 
-Then `verify`, three times over, `fail-fast: false` so that one share failing
+Then `verify`, four times over, `fail-fast: false` so that one share failing
 never cancels another's teardown. Each share is the same steps against a stack of
 its own, named by the matrix and passed to both the Makefile and the chaos
 harness as `STACK` and `CHAOS_STACK`:
@@ -307,15 +309,39 @@ rather than a category:
 
 | Share | Runs | About |
 | --- | --- | --- |
-| `asyncdb-one` | `scan-loses-a-node`, `etcd-unreachable`, `disk-fills`, `zone-retired` | 30 min |
+| `asyncdb-one` | `zone-retired` | 31 min |
 | `asyncdb-two` | the API, browser and load suites, then `nodes-added` | 30 min |
-| `asyncdb-three` | `node-stops`, `zone-lost`, `node-latency`, `nodes-removed`, `etcd-quorum-lost` | 30 min |
+| `asyncdb-three` | `node-stops`, `nodes-removed` | 28 min |
+| `asyncdb-four` | `zone-lost`, `scan-loses-a-node`, `etcd-unreachable`, `node-latency`, `disk-fills`, `etcd-quorum-lost` | 25 min |
 
-The three resizes are twenty minutes each and everything else in the suite is
-about seventeen between them, so one resize a share is what balances. Ordering
-still matters *inside* a share — `etcd-quorum-lost` last, because it is the only
-one that leaves a cluster wrong about itself — but not across them: a share has a
-cluster of its own and deletes it afterwards.
+Ordering still matters *inside* a share — `etcd-quorum-lost` last, because it is
+the only one that leaves a cluster wrong about itself — but not across them: a
+share has a cluster of its own and deletes it afterwards.
+
+### Why four
+
+Because the fourth stack is the last one that buys anything. Two numbers set the
+floor, and both are measured:
+
+| | |
+| --- | --- |
+| `create-stack` and waiting for six nodes | **5m40** — fixed, per stack, whatever it then runs |
+| `zone-retired`, the longest experiment | **24m20** — one experiment, one cluster, not divisible |
+
+So no arrangement of stacks finishes sooner than about **thirty-one minutes**,
+and four shares already reach it: `zone-retired` is alone in one, and the eighty
+minutes of everything else split three ways is under twenty-four each. A fifth
+stack shortens nothing, and thirteen — one an experiment — shortens nothing
+either, while asking the region for thirteen VPCs against a default of five.
+
+What more stacks would buy is **isolation**: inside a share, an experiment runs
+on a cluster the one before it broke and healed. `chaos/run.sh` refuses to start
+one against a cluster that is not whole and every experiment reseeds, so what
+survives that is small — a key written while a node had
+[a membership of one](/runbook/membership#etcd-cannot-be-reached) lands in one
+zone rather than three, and the reconcile pass moves it back. Running an
+experiment against a cluster something has already happened to is arguably the
+better test anyway.
 
 The suites run on one share only, and on that share they run **before** its
 experiments: they need a stack nothing has broken yet, and both the browser tests
@@ -477,14 +503,14 @@ long-lived IAM user keys rather than an OIDC role the job assumes. **`build` and
 `release` configure no credentials at all**, so a push on a version that has
 passed reaches AWS not at all, and the job that writes the git tag cannot touch
 the account. **What the other three need is close to everything**, because they
-do not only publish an image — they create and delete three stacks:
+do not only publish an image — they create and delete four stacks:
 
 | For | Needs |
 | --- | --- |
 | The release | `ecr:GetAuthorizationToken`, `ecr:DescribeImages`, and the layer-upload actions behind `docker push` |
 | [The repositories](#making-the-repositories) | `ecr:DescribeRepositories` and `ecr:CreateRepository`, for `asyncdb` and for [the mirror](#mirroring-etcd) alike |
 | Both parameters | `ssm:PutParameter` on `/asyncdb/*` |
-| The deploy | `cloudformation:*` on the stacks, plus **every action the template's own resources need** — VPC, subnets, endpoints, security groups, load balancer, auto scaling, and `iam:CreateRole` / `PassRole` for the two instance roles — three times over, at once |
+| The deploy | `cloudformation:*` on the stacks, plus **every action the template's own resources need** — VPC, subnets, endpoints, security groups, load balancer, auto scaling, and `iam:CreateRole` / `PassRole` for the two instance roles — four times over, at once |
 | The diagnosis | `ec2:DescribeInstances`, `ec2:GetConsoleOutput`, `ssm:SendCommand` and `ssm:GetCommandInvocation` |
 
 That is a wide key to hold statically in repository secrets, and moving it to an
@@ -533,9 +559,9 @@ next push runs it all again.
 - **A stack left standing by hand no longer fails the run, and costs quota
   instead.** The pipeline's stacks are `asyncdb-one`, `-two` and `-three`, so a
   stack somebody stood up by hand as `asyncdb` does not collide with any of them.
-  It does count against the same limits: **three stacks at once is three VPCs,
-  three load balancers and twenty-seven `t3.micro`**, and the default quota is
-  five VPCs to a region. A run that cannot create its VPC fails at `create-stack`
+  It does count against the same limits: **four stacks at once is four VPCs,
+  four load balancers and thirty-six `t3.micro`**, and the default quota is
+  five VPCs to a region, which leaves room for the default VPC and nothing else. A run that cannot create its VPC fails at `create-stack`
   and tears nothing down, because it created nothing.
 - **A share left standing fails the next run's share.** The teardown only deletes
   a stack that share created, and the stack names are fixed per share, so a

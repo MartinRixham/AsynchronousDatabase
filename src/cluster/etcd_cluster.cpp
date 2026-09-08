@@ -2,6 +2,8 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <memory>
+#include <utility>
 
 #include <pthread.h>
 
@@ -88,7 +90,8 @@ cluster::etcd_cluster::etcd_cluster(const config &cluster_config):
 	node_curl(http::curl_client(cluster_config.timeout_seconds, cluster_config.connect_timeout_seconds)),
 	etcd_curl(http::curl_client(cluster_config.etcd_timeout_seconds, cluster_config.connect_timeout_seconds)),
 	http_client(node_curl),
-	etcd_client(etcd::client(etcd_curl, cluster_config.endpoints))
+	etcd_client(etcd::client(etcd_curl, cluster_config.endpoints)),
+	member_list(std::make_shared<const std::vector<member>>())
 {
 }
 
@@ -97,7 +100,8 @@ cluster::etcd_cluster::etcd_cluster(const config &cluster_config, const http::cl
 	node_curl(http::curl_client(cluster_config.timeout_seconds, cluster_config.connect_timeout_seconds)),
 	etcd_curl(http::curl_client(cluster_config.etcd_timeout_seconds, cluster_config.connect_timeout_seconds)),
 	http_client(http),
-	etcd_client(etcd::client(http, cluster_config.endpoints))
+	etcd_client(etcd::client(http, cluster_config.endpoints)),
+	member_list(std::make_shared<const std::vector<member>>())
 {
 }
 
@@ -190,20 +194,23 @@ void cluster::etcd_cluster::stop()
 	DEBUG("Node " + configuration.node + " left the cluster.");
 }
 
+cluster::membership cluster::etcd_cluster::snapshot() const
+{
+	return member_list.load();
+}
+
 std::vector<cluster::member> cluster::etcd_cluster::members() const
 {
-	std::shared_lock<std::shared_mutex> lock(member_mutex);
-
-	return member_list;
+	return *snapshot();
 }
 
 cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 {
-	std::vector<member> registered = members();
+	membership registered = snapshot();
 
 	// One node, or none that etcd would name, holds everything it is asked for. A cluster that
 	// cannot be read is a cluster of one rather than a cluster that refuses to answer.
-	if (registered.size() < 2)
+	if (registered->size() < 2)
 	{
 		return placement();
 	}
@@ -211,7 +218,7 @@ cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 	// The copies are the copies of the key's *partition*, so that every key in it is held by the
 	// same three nodes — which is what makes a partition a thing that can be led.
 	std::vector<member> owners =
-		::cluster::owners_of(::cluster::partition_name(::cluster::partition_of(key)), registered);
+		::cluster::owners_of(::cluster::partition_name(::cluster::partition_of(key)), *registered);
 	placement where;
 
 	where.local = false;
@@ -239,14 +246,14 @@ cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 
 std::vector<std::string> cluster::etcd_cluster::peers() const
 {
-	std::vector<member> registered = members();
+	membership registered = snapshot();
 	std::vector<std::string> peers;
 
-	for (size_t i = 0; i < registered.size(); i++)
+	for (size_t i = 0; i < registered->size(); i++)
 	{
-		if (registered[i].node != configuration.node)
+		if ((*registered)[i].node != configuration.node)
 		{
-			peers.push_back(registered[i].node);
+			peers.push_back((*registered)[i].node);
 		}
 	}
 
@@ -256,7 +263,7 @@ std::vector<std::string> cluster::etcd_cluster::peers() const
 std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::string &key) const
 {
 	// One node, or none that etcd would name, races with nobody, so there is nothing to order.
-	if (members().size() < 2)
+	if (snapshot()->size() < 2)
 	{
 		return std::nullopt;
 	}
@@ -284,12 +291,6 @@ size_t cluster::etcd_cluster::leads() const
 
 bool cluster::etcd_cluster::accept(const std::string &key, int64_t term)
 {
-	size_t partition = ::cluster::partition_of(key);
-
-	std::lock_guard<std::mutex> lock(term_mutex);
-
-	std::map<size_t, int64_t>::const_iterator seen = terms.find(partition);
-
 	// A write no leader ordered is a cluster that has no leadership, and it is applied here. A
 	// cluster that does have one never sends a term of nothing.
 	if (term == 0)
@@ -297,28 +298,39 @@ bool cluster::etcd_cluster::accept(const std::string &key, int64_t term)
 		return true;
 	}
 
-	if (seen != terms.end() && term < seen->second)
+	return raise_term(::cluster::partition_of(key), term);
+}
+
+bool cluster::etcd_cluster::raise_term(size_t partition, int64_t term)
+{
+	std::atomic<int64_t> &seen = terms[partition];
+	int64_t highest = seen.load();
+
+	// A failed exchange leaves the term another thread got in first with, which is compared again:
+	// the loop ends either having raised the term or having found one no older than it.
+	while (term > highest)
 	{
-		return false;
+		if (seen.compare_exchange_weak(highest, term))
+		{
+			return true;
+		}
 	}
 
-	terms[partition] = term;
-
-	return true;
+	return term == highest;
 }
 
 std::vector<std::vector<std::string>> cluster::etcd_cluster::zones() const
 {
-	std::vector<member> registered = members();
+	membership registered = snapshot();
 
 	// One node, or none that etcd would name, answers a scan out of its own store, the same way it
 	// answers for every key.
-	if (registered.size() < 2)
+	if (registered->size() < 2)
 	{
 		return std::vector<std::vector<std::string>>();
 	}
 
-	return ::cluster::zones_of(registered, configuration.node, configuration.zone);
+	return ::cluster::zones_of(*registered, configuration.node, configuration.zone);
 }
 
 router::response cluster::etcd_cluster::send(const std::string &node, const router::request &request) const
@@ -393,9 +405,9 @@ bool cluster::etcd_cluster::register_node()
 // claims only the partitions it holds a copy of, because a leader writes to itself first.
 void cluster::etcd_cluster::read_leaders()
 {
-	std::vector<member> registered = members();
+	membership registered = snapshot();
 
-	if (registered.size() < 2)
+	if (registered->size() < 2)
 	{
 		return;
 	}
@@ -441,7 +453,7 @@ void cluster::etcd_cluster::read_leaders()
 		// Nothing leads it, so this node claims it if it is one of the copies and has not already
 		// claimed as many as it takes on one pass. What is left over is claimed on the next pass,
 		// and until then a write of it is answered as having no leader.
-		if (claims >= configuration.claims_per_refresh || !holds(registered, partition))
+		if (claims >= configuration.claims_per_refresh || !holds(*registered, partition))
 		{
 			continue;
 		}
@@ -466,7 +478,7 @@ void cluster::etcd_cluster::read_leaders()
 
 		if (claimed->held)
 		{
-			remember_term(partition, claimed->revision);
+			raise_term(partition, claimed->revision);
 
 			DEBUG(
 				"Node " + configuration.node + " leads partition " + std::to_string(partition) +
@@ -496,21 +508,7 @@ int64_t cluster::etcd_cluster::term_of(const std::string &holder, size_t partiti
 		return 0;
 	}
 
-	std::lock_guard<std::mutex> lock(term_mutex);
-
-	std::map<size_t, int64_t>::const_iterator remembered = terms.find(partition);
-
-	return remembered == terms.end() ? 0 : remembered->second;
-}
-
-void cluster::etcd_cluster::remember_term(size_t partition, int64_t term)
-{
-	std::lock_guard<std::mutex> lock(term_mutex);
-
-	if (term > terms[partition])
-	{
-		terms[partition] = term;
-	}
+	return terms[partition].load();
 }
 
 void cluster::etcd_cluster::read_members()
@@ -540,7 +538,5 @@ void cluster::etcd_cluster::read_members()
 		names.end(),
 		[](const member &left, const member &right) { return left.node < right.node; });
 
-	std::unique_lock<std::shared_mutex> lock(member_mutex);
-
-	member_list = names;
+	member_list.store(std::make_shared<const std::vector<member>>(std::move(names)));
 }
