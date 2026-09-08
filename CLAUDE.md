@@ -39,9 +39,6 @@ build/test/test_main --gtest_filter='table_test.fail_to_deserialise_table_with_n
 
 Notes:
 - `-Wall -Werror` — any warning fails the build. `cppcheck --enable=style` runs in the `validate` phase.
-- **Incremental builds hash sources, not headers.** Changing a header does not rebuild the objects
-  that include it, so a change to a struct or a class layout leaves stale objects that link and then
-  corrupt memory at run time. `cmk clean test` after touching anything under `src/**/*.h`.
 - The `verify` phase memchecks under valgrind, which is why `cmk verify` takes minutes rather than seconds.
   Cheesemake's own `valgrind.chevre` runs `build/bin/asyncdb`, and that serves until it is signalled, so the
   root `valgrind.chevre` overrides it and runs `build/test/test_main` instead, keeping the report in
@@ -400,11 +397,12 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   nodes hold this key" and "ask that node". `cluster::replicas` answers a `cluster::placement` —
   whether this node holds a copy, and the other nodes that do, this node's own zone first.
   `cluster::zones` groups the membership for a scan: the nodes of each zone, this node's own first,
-  which is why a scan asks one zone rather than every node. `cluster::standalone` holds everything
-  and is what a router built without a cluster gets;
-  `cluster::etcd_cluster` registers `/asyncdb/node/{address}` in etcd on a lease with
-  `{"node":...,"zone":...}` as its value (a bare address is still read, as a node in no zone),
-  renews it on a thread of its own, and reads the membership back. `cluster::owner_of` is rendezvous
+  which is why a scan asks one zone rather than every node. `cluster::etcd_cluster` registers
+  `/asyncdb/node/{address}` in etcd on a lease with `{"node":...,"zone":...}` as its value (a bare
+  address is still read, as a node in no zone), renews it on a thread of its own, and reads the
+  membership back — and **a membership of fewer than two nodes is this node holding every key**,
+  which is the cluster an instance told nothing runs as, so there is no second implementation of
+  the seam for standing alone. `cluster::owner_of` is rendezvous
   hashing over a set of nodes, `cluster::owners_of` runs it once per zone, `cluster::zones_of` is the
   grouping behind `zones()`, and `cluster::forward` is how a request travels.
 - **`repository::repository`** is the pure-virtual seam, over tables, records, scans and range deletes.
@@ -492,6 +490,16 @@ network. `server_test` is an integration test: it starts a real server on port 0
 drives it with libcurl. `test/server/cluster_test.cpp` is the same thing twice over: two real servers
 on two ports, each given a `cluster::cluster` naming the other, so forwarding, table fan-out and
 merged scans are exercised over real sockets. Both have to stop the servers they start.
+
+**Behaviour the server never runs belongs in `test/`, not in `src/`.** A base class body every
+implementation in `src/` overrides is production code the suite proves and the binary never
+executes: the fan out `cluster::fake_cluster` and `http::fake_client` run one request at a time is
+written in each of them and not as a default on the seam, which is why `send_all` is pure virtual
+in both `cluster::cluster` and `http::client`. What stays in `src/` is the **seam itself** — the
+constructors that take a `cluster::cluster` or an `http::client`, and `server::port()` for the
+ephemeral port a test binds — because production reaches those through the other implementation,
+and a test that cannot substitute anything is a test against etcd and a fixed port. The line is
+whether the code is a way *in* or a second copy of what production already does.
 
 **The store is one directory, named by `ASYNCDB_DATA`.** `server::data_directory()` reads it and
 defaults to `/var/lib/asyncdb`, which the image mounts a volume over — a named one per node in

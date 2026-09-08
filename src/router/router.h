@@ -14,7 +14,6 @@
 #include "request.h"
 #include "response.h"
 #include "cluster/cluster.h"
-#include "cluster/standalone.h"
 #include "repository/repository.h"
 
 namespace router
@@ -22,8 +21,6 @@ namespace router
 	class router
 	{
 		repository::repository &repository;
-
-		cluster::standalone alone;
 
 		cluster::cluster &nodes;
 
@@ -45,8 +42,6 @@ namespace router
 		std::array<write_stripe, write_stripes> write_locks;
 
 	public:
-		explicit router(repository::repository &repo);
-
 		router(repository::repository &repo, cluster::cluster &nodes);
 
 		response route(const request &request);

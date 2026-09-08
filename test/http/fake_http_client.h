@@ -25,6 +25,8 @@ namespace http
 
 		response send(const request &request) const override;
 
+		std::vector<response> send_all(const std::vector<request> &request_list) const override;
+
 		std::vector<request> sent() const;
 
 		std::vector<request> sent_to(const std::string &url) const;

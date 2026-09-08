@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -82,6 +83,10 @@ namespace cluster
 		bool accept(const std::string &key, int64_t term) override;
 
 		router::response send(const std::string &node, const router::request &request) const override;
+
+		std::optional<router::response> send_all(
+			const std::vector<std::string> &node_list,
+			const router::request &request) const override;
 
 		const std::vector<std::pair<std::string, router::request>> &sent() const;
 

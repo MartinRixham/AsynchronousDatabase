@@ -53,6 +53,15 @@ namespace
 		router.route(put("/table/" + name + "/key/" + key, value));
 	}
 
+	const std::string here = "http://asyncdb-1:8080";
+
+	// One node in no cluster: it holds every key and there is nobody to forward to, which is what
+	// an instance nothing was told about runs as.
+	cluster::fake_cluster lone_node()
+	{
+		return cluster::fake_cluster(here, std::vector<std::string>());
+	}
+
 	std::vector<std::string> keys(const router::response &response)
 	{
 		boost::json::array records = response.json.at("records").as_array();
@@ -70,7 +79,8 @@ namespace
 TEST(router_test, nonsense)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(get("/wibble"));
 
@@ -81,7 +91,8 @@ TEST(router_test, nonsense)
 TEST(router_test, health_says_whether_writes_are_stalled)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(get("/health"));
 
@@ -97,7 +108,8 @@ TEST(router_test, health_says_whether_writes_are_stalled)
 TEST(router_test, list_no_tables)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(get("/table"));
 
@@ -108,7 +120,8 @@ TEST(router_test, list_no_tables)
 TEST(router_test, create_a_table)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(put("/table/account", "{}"));
 
@@ -120,7 +133,8 @@ TEST(router_test, create_a_table)
 TEST(router_test, create_a_table_with_no_body_at_all)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(put("/table/account", ""));
 
@@ -131,7 +145,8 @@ TEST(router_test, create_a_table_with_no_body_at_all)
 TEST(router_test, creating_the_same_table_again_changes_nothing)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router.route(put("/table/account", "{}"));
 
@@ -144,7 +159,8 @@ TEST(router_test, creating_the_same_table_again_changes_nothing)
 TEST(router_test, fail_to_create_a_table_that_exists_with_different_options)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -157,7 +173,8 @@ TEST(router_test, fail_to_create_a_table_that_exists_with_different_options)
 TEST(router_test, fail_to_create_a_table_with_an_invalid_name)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(put("/table/An%2FAccount", "{}"));
 
@@ -169,7 +186,8 @@ TEST(router_test, fail_to_create_a_table_with_an_invalid_name)
 TEST(router_test, fail_to_create_a_table_from_a_body_that_is_not_json)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(put("/table/account", "not json"));
 
@@ -181,7 +199,8 @@ TEST(router_test, fail_to_create_a_table_from_a_body_that_is_not_json)
 TEST(router_test, fail_to_create_a_table_from_a_body_that_is_not_an_object)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(put("/table/account", "[]"));
 
@@ -193,7 +212,8 @@ TEST(router_test, fail_to_create_a_table_from_a_body_that_is_not_an_object)
 TEST(router_test, fail_to_create_a_table_that_depends_on_one_that_is_not_there)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(put("/table/transaction", "{\"dependencies\":[\"account\"]}"));
 
@@ -205,7 +225,8 @@ TEST(router_test, fail_to_create_a_table_that_depends_on_one_that_is_not_there)
 TEST(router_test, list_the_tables_and_their_dependencies)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	router.route(put("/table/transaction", "{\"dependencies\":[\"account\"]}"));
@@ -223,7 +244,8 @@ TEST(router_test, list_the_tables_and_their_dependencies)
 TEST(router_test, inspect_a_table)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -237,7 +259,8 @@ TEST(router_test, inspect_a_table)
 TEST(router_test, fail_to_inspect_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(get("/table/account"));
 
@@ -248,7 +271,8 @@ TEST(router_test, fail_to_inspect_a_table_that_is_not_there)
 TEST(router_test, delete_a_table_and_its_data)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
@@ -267,7 +291,8 @@ TEST(router_test, delete_a_table_and_its_data)
 TEST(router_test, fail_to_delete_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(del("/table/account"));
 
@@ -278,7 +303,8 @@ TEST(router_test, fail_to_delete_a_table_that_is_not_there)
 TEST(router_test, write_then_read_a_record)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -296,7 +322,8 @@ TEST(router_test, write_then_read_a_record)
 TEST(router_test, a_missing_key_and_an_empty_value_are_told_apart_by_the_status)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "");
@@ -315,7 +342,8 @@ TEST(router_test, a_missing_key_and_an_empty_value_are_told_apart_by_the_status)
 TEST(router_test, a_value_is_kept_as_the_bytes_it_was_given)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "{\"firstName\":\"Eleanor\"");
@@ -326,7 +354,8 @@ TEST(router_test, a_value_is_kept_as_the_bytes_it_was_given)
 TEST(router_test, delete_a_record)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
@@ -340,7 +369,8 @@ TEST(router_test, delete_a_record)
 TEST(router_test, deleting_a_record_that_is_not_there_is_a_no_op)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -350,7 +380,8 @@ TEST(router_test, deleting_a_record_that_is_not_there_is_a_no_op)
 TEST(router_test, fail_to_read_a_record_of_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	router::response response = router.route(get("/table/account/key/4821"));
 
@@ -361,7 +392,8 @@ TEST(router_test, fail_to_read_a_record_of_a_table_that_is_not_there)
 TEST(router_test, fail_to_read_a_key_that_is_not_valid_utf8)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -374,7 +406,8 @@ TEST(router_test, fail_to_read_a_key_that_is_not_valid_utf8)
 TEST(router_test, fail_to_write_a_key_that_is_too_large)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -388,7 +421,8 @@ TEST(router_test, fail_to_write_a_key_that_is_too_large)
 TEST(router_test, fail_to_write_a_value_that_is_too_large)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -402,7 +436,8 @@ TEST(router_test, fail_to_write_a_value_that_is_too_large)
 TEST(router_test, scan_a_table_in_key_order)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "user%3A7203", "Marcus Hale");
@@ -420,7 +455,8 @@ TEST(router_test, scan_a_table_in_key_order)
 TEST(router_test, scan_a_prefix)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "user%3A7203", "Marcus Hale");
@@ -435,7 +471,8 @@ TEST(router_test, scan_a_prefix)
 TEST(router_test, scan_backwards)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
@@ -450,7 +487,8 @@ TEST(router_test, scan_backwards)
 TEST(router_test, scan_keys_only)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
@@ -466,7 +504,8 @@ TEST(router_test, scan_keys_only)
 TEST(router_test, page_through_a_scan_with_a_cursor)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
@@ -490,7 +529,8 @@ TEST(router_test, page_through_a_scan_with_a_cursor)
 TEST(router_test, page_backwards_through_a_scan)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
@@ -512,7 +552,8 @@ TEST(router_test, page_backwards_through_a_scan)
 TEST(router_test, page_through_a_scan_of_values_too_large_to_send_at_once)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -538,7 +579,8 @@ TEST(router_test, page_through_a_scan_of_values_too_large_to_send_at_once)
 TEST(router_test, fail_to_scan_with_a_cursor_this_instance_did_not_issue)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -552,7 +594,8 @@ TEST(router_test, fail_to_scan_with_a_cursor_this_instance_did_not_issue)
 TEST(router_test, fail_to_scan_a_range_that_is_not_below_its_end)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -565,7 +608,8 @@ TEST(router_test, fail_to_scan_a_range_that_is_not_below_its_end)
 TEST(router_test, fail_to_scan_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/key"))), "table_not_found");
 }
@@ -573,7 +617,8 @@ TEST(router_test, fail_to_scan_a_table_that_is_not_there)
 TEST(router_test, delete_a_range)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "user%3A2019", "a user");
@@ -589,7 +634,8 @@ TEST(router_test, delete_a_range)
 TEST(router_test, refuse_to_delete_a_range_that_names_no_range)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
@@ -604,7 +650,8 @@ TEST(router_test, refuse_to_delete_a_range_that_names_no_range)
 TEST(router_test, a_method_that_is_not_a_method_of_the_route)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -617,7 +664,8 @@ TEST(router_test, a_method_that_is_not_a_method_of_the_route)
 TEST(router_test, a_path_below_a_key_is_not_a_route)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	create_table(router, "account");
 
@@ -627,8 +675,6 @@ TEST(router_test, a_path_below_a_key_is_not_a_route)
 
 namespace
 {
-	const std::string here = "http://asyncdb-1:8080";
-
 	const std::string there = "http://asyncdb-2:8080";
 
 	const std::string elsewhere = "http://asyncdb-3:8080";
@@ -1768,7 +1814,8 @@ TEST(router_cluster_test, name_no_zones_when_the_cluster_has_none)
 TEST(router_cluster_test, name_no_nodes_when_the_instance_stands_alone)
 {
 	repository::fake_repository repository;
-	router::router router(repository);
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
 
 	EXPECT_FALSE(router.route(get("/health")).json.contains("nodes"));
 }

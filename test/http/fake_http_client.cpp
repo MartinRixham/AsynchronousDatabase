@@ -27,6 +27,19 @@ http::response http::fake_client::send(const request &request) const
 	return response;
 }
 
+// A fake with nothing to run at once runs them one after another.
+std::vector<http::response> http::fake_client::send_all(const std::vector<request> &request_list) const
+{
+	std::vector<response> responses;
+
+	for (size_t i = 0; i < request_list.size(); i++)
+	{
+		responses.push_back(send(request_list[i]));
+	}
+
+	return responses;
+}
+
 std::vector<http::request> http::fake_client::sent() const
 {
 	std::lock_guard<std::mutex> lock(mutex);

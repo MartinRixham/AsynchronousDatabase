@@ -64,7 +64,7 @@ namespace cluster
 		// health check included.
 		virtual std::optional<router::response> send_all(
 			const std::vector<std::string> &node_list,
-			const router::request &request) const;
+			const router::request &request) const = 0;
 	};
 
 	// Where the keys of each partition live, worked out once a partition instead of once a key.

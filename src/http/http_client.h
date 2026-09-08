@@ -40,9 +40,9 @@ namespace http
 	public:
 		virtual response send(const request &request) const = 0;
 
-		// A client with no way of running several at once runs them one after another, which is
-		// what this does unless something overrides it.
-		virtual std::vector<response> send_all(const std::vector<request> &requests) const;
+		// The fan out: the caller waits for the slowest of the requests rather than for the sum
+		// of them, so a client that can run them at once runs them at once.
+		virtual std::vector<response> send_all(const std::vector<request> &requests) const = 0;
 	};
 
 	class curl_client : public client

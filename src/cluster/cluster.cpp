@@ -2,20 +2,6 @@
 
 #include "cluster.h"
 
-std::optional<router::response> cluster::cluster::send_all(
-	const std::vector<std::string> &node_list,
-	const router::request &request) const
-{
-	std::vector<router::response> answers;
-
-	for (size_t i = 0; i < node_list.size(); i++)
-	{
-		answers.push_back(send(node_list[i], request));
-	}
-
-	return refusal(answers);
-}
-
 cluster::placements::placements(const cluster &nodes):
 	nodes(nodes)
 {

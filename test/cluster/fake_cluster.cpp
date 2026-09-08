@@ -189,6 +189,21 @@ router::response cluster::fake_cluster::send(const std::string &node, const rout
 	return answered_once->second;
 }
 
+// A fake with nothing to ask at once asks them one after another.
+std::optional<router::response> cluster::fake_cluster::send_all(
+	const std::vector<std::string> &node_list,
+	const router::request &request) const
+{
+	std::vector<router::response> responses;
+
+	for (size_t i = 0; i < node_list.size(); i++)
+	{
+		responses.push_back(send(node_list[i], request));
+	}
+
+	return refusal(responses);
+}
+
 const std::vector<std::pair<std::string, router::request>> &cluster::fake_cluster::sent() const
 {
 	return requests;

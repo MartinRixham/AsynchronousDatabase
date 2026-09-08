@@ -252,19 +252,6 @@ http::curl_client::curl_client(long timeout, long connect_timeout):
 {
 }
 
-// A client with no way of running several requests at once runs them one after another.
-std::vector<http::response> http::client::send_all(const std::vector<request> &requests) const
-{
-	std::vector<response> responses;
-
-	for (size_t i = 0; i < requests.size(); i++)
-	{
-		responses.push_back(send(requests[i]));
-	}
-
-	return responses;
-}
-
 // libcurl is initialised once by the process — main() and the test binary both do it — because
 // curl_global_init is not itself safe to race.
 http::response http::curl_client::send(const request &request) const

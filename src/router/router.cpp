@@ -160,12 +160,6 @@ namespace
 	}
 }
 
-router::router::router(repository::repository &repo):
-	repository(repo),
-	nodes(alone)
-{
-}
-
 router::router::router(repository::repository &repo, cluster::cluster &cluster_nodes):
 	repository(repo),
 	nodes(cluster_nodes)
