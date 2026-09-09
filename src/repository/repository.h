@@ -5,6 +5,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "cluster/partition.h"
 #include "record/record.h"
@@ -31,9 +32,16 @@ namespace repository
 	{
 		cluster::partition_set partitions;
 
+		// **`from` is exclusive and `to` is inclusive**, which is not the way a scan's range reads
+		// and is what makes the two chain: `from` is where the last file of this walk got to, and
+		// a share cut into pieces is (nothing, first], (first, second], (second, nothing].
 		std::string from;
 
 		bool has_from = false;
+
+		std::string to;
+
+		bool has_to = false;
 
 		// The keys alone, for a caller deciding where records belong rather than moving them. A
 		// walk that is not carrying values covers far more of a table for the same budget, which
@@ -85,6 +93,14 @@ namespace repository
 		// store's records reach another node: a walk that pages a hundred records at a time over
 		// HTTP is a round trip for every hundred, which no node holding a real share can finish.
 		virtual extract export_records(const std::string &table_name, const share &wanted) const = 0;
+
+		// Keys that cut a table into roughly equal pieces by size, for a walk that several workers
+		// share: one fewer than the number of ways asked for, in order. Fewer than that is a table
+		// there is not enough of to cut up, and none at all is one worker's work.
+		//
+		// It is approximate on purpose. What it is for is keeping workers busy, and a piece that is
+		// half again the size of another costs a little of that and nothing else.
+		virtual std::vector<std::string> split_points(const std::string &table_name, size_t ways) const = 0;
 
 		// Takes a file into a table and answers how many records it took. **A key this store
 		// already holds is kept**: the file was written by a node that used to own the key, and

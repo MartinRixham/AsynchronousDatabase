@@ -1,5 +1,8 @@
+#include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <memory>
+#include <thread>
 #include <set>
 #include <vector>
 #include <filesystem>
@@ -651,4 +654,104 @@ TEST_F(repository_test, a_walk_of_keys_alone_covers_more_of_a_table_than_a_walk_
 
 	EXPECT_EQ(3u, just_keys.records);
 	EXPECT_FALSE(just_keys.has_more);
+}
+
+// Where a walk of this table would be cut up, so that several workers can read it at once. It is
+// weighed by what is in the files a key starts, so it is approximate — which is all it has to be.
+TEST_F(repository_test, says_where_a_table_would_be_cut_up)
+{
+	std::filesystem::remove_all("/tmp/asyncdb_split/");
+
+	// The smallest budget there is, so that what is written spills out of the memtable and into the
+	// files a split is read off rather than sitting in memory where it cannot be seen.
+	repository::rocksdb_repository splitting("/tmp/asyncdb_split", 16 * 1024 * 1024);
+
+	splitting.create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	for (size_t i = 0; i < 320; i++)
+	{
+		splitting.write_record(
+			"a_table", record::valid_record(std::to_string(10000 + i), std::string(32 * 1024, 'x')));
+	}
+
+	// A memtable full is a flush scheduled and not a flush done, so the answer is waited for rather
+	// than read once.
+	std::vector<std::string> points = splitting.split_points("a_table", 4);
+
+	for (size_t i = 0; i < 100 && points.empty(); i++)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+		points = splitting.split_points("a_table", 4);
+	}
+
+	ASSERT_FALSE(points.empty());
+	EXPECT_GE(3u, points.size());
+	EXPECT_TRUE(std::is_sorted(points.begin(), points.end()));
+
+	// Every one of them is a key of the table, which is what makes it a bound records fall either
+	// side of.
+	for (size_t i = 0; i < points.size(); i++)
+	{
+		EXPECT_TRUE(splitting.read_record("a_table", points[i]).has_value()) << points[i];
+	}
+}
+
+TEST_F(repository_test, a_table_that_is_not_worth_cutting_up_is_cut_up_no_ways)
+{
+	create_table("a_table");
+
+	repository->write_record("a_table", record::valid_record("1", "one"));
+
+	EXPECT_TRUE(repository->split_points("a_table", 1).empty());
+	EXPECT_TRUE(repository->split_points("a_table", 0).empty());
+}
+
+// The pieces of a split walk have to be a cover, and that is what the ends of a share mean: `from`
+// is the key the piece starts after and `to` is the last key in it, so the key one piece stops at
+// is the key the next one starts after.
+TEST_F(repository_test, the_pieces_of_a_share_are_every_record_and_no_record_twice)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	repository->write_record("a_table", record::valid_record("1", "one"));
+	repository->write_record("a_table", record::valid_record("2", "two"));
+	repository->write_record("a_table", record::valid_record("3", "three"));
+	repository->write_record("a_table", record::valid_record("4", "four"));
+
+	repository::share first = every_partition();
+	repository::share second = every_partition();
+
+	first.to = "2";
+	first.has_to = true;
+
+	second.from = "2";
+	second.has_from = true;
+
+	EXPECT_EQ(2u, other_repository->import_records("a_table", repository->export_records("a_table", first).file));
+	EXPECT_EQ(2u, other_repository->import_records("a_table", repository->export_records("a_table", second).file));
+
+	EXPECT_EQ(
+		keys(other_repository->scan_records("a_table", whole_table())),
+		(std::vector<std::string> { "1", "2", "3", "4" }));
+}
+
+TEST_F(repository_test, a_piece_of_a_share_ends_where_it_was_told_to)
+{
+	create_table("a_table");
+
+	repository->write_record("a_table", record::valid_record("1", "one"));
+	repository->write_record("a_table", record::valid_record("2", "two"));
+	repository->write_record("a_table", record::valid_record("3", "three"));
+
+	repository::share wanted = every_partition();
+
+	wanted.to = "2";
+	wanted.has_to = true;
+
+	repository::extract taken = repository->export_records("a_table", wanted);
+
+	EXPECT_EQ(2u, taken.records);
+	EXPECT_FALSE(taken.has_more);
 }

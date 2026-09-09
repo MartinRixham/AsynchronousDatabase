@@ -3,6 +3,8 @@
 
 #include <chrono>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -37,6 +39,11 @@ namespace cluster
 		std::map<std::string, int64_t> refused;
 
 		mutable std::vector<std::pair<std::string, router::request>> requests;
+
+		// A walk asks several nodes at once, so what it was asked and what it has answered are
+		// written from several threads. Held by pointer because a fixture hands one of these back
+		// by value.
+		std::shared_ptr<std::mutex> mutex;
 
 	public:
 		fake_cluster(const std::string &node, const std::vector<std::string> &members);
@@ -97,6 +104,8 @@ namespace cluster
 		std::optional<router::response> send_all(
 			const std::vector<std::string> &node_list,
 			const router::request &request) const override;
+
+		std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const override;
 
 		const std::vector<std::pair<std::string, router::request>> &sent() const;
 

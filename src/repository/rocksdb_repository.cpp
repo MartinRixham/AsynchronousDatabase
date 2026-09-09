@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <filesystem>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -379,6 +380,75 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 	return page;
 }
 
+// The keys the store's own files start at, weighted by how much is in each. A level compaction
+// leaves the levels overlapping, so this is a sample of the key space and not a partition of it —
+// which is all a split has to be.
+std::vector<std::string> repository::rocksdb_repository::split_points(
+	const std::string &table_name,
+	size_t ways) const
+{
+	std::vector<std::string> points;
+
+	if (ways < 2)
+	{
+		return points;
+	}
+
+	std::shared_lock<std::shared_mutex> lock(handle_mutex);
+	rocksdb::ColumnFamilyMetaData metadata;
+
+	database->GetColumnFamilyMetaData(table_handle(table_name), &metadata);
+
+	std::vector<std::pair<std::string, uint64_t>> files;
+	uint64_t held = 0;
+
+	for (size_t level = 0; level < metadata.levels.size(); level++)
+	{
+		const std::vector<rocksdb::SstFileMetaData> &at = metadata.levels[level].files;
+
+		for (size_t i = 0; i < at.size(); i++)
+		{
+			// The first key of a file is a key some record is at or after, which is what a bound
+			// has to be. Its size is what says how much of the table is behind it.
+			files.push_back(std::pair<std::string, uint64_t>(at[i].smallestkey, at[i].size));
+
+			held += at[i].size;
+		}
+	}
+
+	std::sort(files.begin(), files.end());
+
+	uint64_t taken = 0;
+	size_t next = 1;
+
+	for (size_t i = 0; i < files.size() && next < ways; i++)
+	{
+		taken += files[i].second;
+
+		// The share of the table this key is past, against the share the next split point wants.
+		if (taken * ways >= held * next && !files[i].first.empty())
+		{
+			// A key that is already a split point is a piece with nothing in it, which is a worker
+			// with nothing to do rather than a piece somebody else loses.
+			if (points.empty() || points.back() != files[i].first)
+			{
+				points.push_back(files[i].first);
+			}
+
+			next++;
+		}
+	}
+
+	// The last piece runs to the end of the table, so the key that would have started it is not a
+	// bound anybody needs.
+	if (!points.empty() && points.size() == ways)
+	{
+		points.pop_back();
+	}
+
+	return points;
+}
+
 repository::extract repository::rocksdb_repository::export_records(
 	const std::string &table_name,
 	const share &wanted) const
@@ -387,6 +457,7 @@ repository::extract repository::rocksdb_repository::export_records(
 	std::string what = "Exporting a file of \"" + table_name + "\"";
 	rocksdb::ReadOptions options;
 	rocksdb::Slice lower(wanted.from);
+	rocksdb::Slice upper(wanted.to);
 
 	if (wanted.has_from)
 	{
@@ -408,6 +479,13 @@ repository::extract repository::rocksdb_repository::export_records(
 		if (wanted.has_from && it->key().compare(lower) == 0)
 		{
 			continue;
+		}
+
+		// And the end of the piece is inclusive, so that the key one worker stops at is the key
+		// the next one starts after.
+		if (wanted.has_to && it->key().compare(upper) > 0)
+		{
+			break;
 		}
 
 		std::string key = it->key().ToString();

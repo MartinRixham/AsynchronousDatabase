@@ -1,3 +1,4 @@
+#include <atomic>
 #include <map>
 #include <set>
 #include <string>
@@ -9,113 +10,61 @@
 #include "progress/patience.h"
 #include "scan/scan.h"
 #include "table/table.h"
-#include "url/url.h"
+#include "transfer/transfer.h"
 #include "reconcile.h"
 
 namespace
 {
-	// One file of the records another node holds that belong to this one, which is how a partition
-	// whose owner moved travels: a key at a time is a round trip for every record of a share.
-	router::request file_request(
-		const std::string &table,
-		const cluster::partition_set &partitions,
-		const std::string &from,
-		bool has_from,
-		bool values)
-	{
-		router::request request;
-
-		request.method = boost::beast::http::verb::get;
-		request.path = std::vector<std::string> { "table", table, "file" };
-		request.query = "partitions=" + cluster::encode_partitions(partitions);
-		request.query += std::string("&values=") + (values ? "true" : "false");
-
-		if (has_from)
-		{
-			request.query += "&from=" + url::encode(from);
-		}
-
-		return request;
-	}
-
-	// Walks one node's file of a table, handing each file to whatever the caller does with it, and
-	// answers whether it reached the end. Both halves of a pass move a share this way: the fetch
-	// takes records out of the files it is sent, and the clear down deletes the records they name.
-	template <typename taking>
-	bool walk_files(
-		const cluster::cluster &nodes,
-		const std::string &node,
-		const std::string &name,
-		const cluster::partition_set &partitions,
-		bool values,
-		const std::atomic<bool> &running,
-		progress::patience &waiting,
-		taking take)
-	{
-		std::string from;
-		bool has_from = false;
-
-		while (running && !waiting.spent())
-		{
-			router::response answer = nodes.send(node, file_request(name, partitions, from, has_from, values));
-
-			if (answer.status != boost::beast::http::status::ok)
-			{
-				DEBUG("Node " + node + " did not answer for a file of \"" + name + "\" for a reconcile.");
-
-				return true;
-			}
-
-			take(answer.text);
-
-			// A file that arrived is a pass getting somewhere, whatever was in it.
-			waiting.renew();
-
-			// Nowhere to resume is a walk that reached the end of the table.
-			if (answer.file.next.empty())
-			{
-				return true;
-			}
-
-			// A file that ends where the one before it did is a walk that would ask for ever.
-			if (has_from && answer.file.next == from)
-			{
-				DEBUG("A file of \"" + name + "\" on " + node + " made no progress, so the walk stops.");
-
-				return true;
-			}
-
-			from = answer.file.next;
-			has_from = true;
-		}
-
-		return false;
-	}
-
 	// What this node now owns and holds nothing for, taken from the node that held it. A key this
 	// store already has is a key the file is not applied for, which is decided by the store and not
 	// here: what is here was written after the ownership moved, and what is there was written
 	// before it.
+	transfer::share share_of(
+		const std::string &node,
+		const std::string &name,
+		const cluster::partition_set &partitions,
+		bool values,
+		size_t workers)
+	{
+		transfer::share wanted;
+
+		wanted.node = node;
+		wanted.table = name;
+		wanted.partitions = partitions;
+		wanted.values = values;
+		wanted.workers = workers;
+
+		return wanted;
+	}
+
 	reconcile::outcome fetch_from(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::string &node,
 		const std::string &name,
 		const cluster::partition_set &partitions,
+		size_t workers,
 		const std::atomic<bool> &running,
 		progress::patience &waiting)
 	{
 		reconcile::outcome taken;
 
-		taken.finished = walk_files(
+		// Added to from every worker at once, so it is an atomic rather than a field the last of
+		// them happens to have written.
+		std::atomic<size_t> fetched = 0;
+
+		// A node that stopped answering is nothing more this pass can do about that node — it is
+		// asked again on the next one — where a walk its own patience ended is a pass with more of
+		// this share still to read.
+		transfer::outcome done = transfer::walk(
 			nodes,
-			node,
-			name,
-			partitions,
-			true,
+			share_of(node, name, partitions, true, workers),
 			running,
 			waiting,
-			[&](const std::string &file) { taken.fetched += repository.import_records(name, file); });
+			[&](const std::string &file) { fetched += repository.import_records(name, file); });
+
+		taken.finished = done.whole || done.refused;
+		taken.fetched = fetched;
 
 		return taken;
 	}
@@ -219,11 +168,13 @@ namespace
 		const cluster::cluster &nodes,
 		const std::string &name,
 		size_t page,
+		size_t workers,
 		const std::atomic<bool> &running,
 		progress::patience &waiting)
 	{
 		misplaced found = walk_table(repository, nodes, name, page, running, waiting);
 		reconcile::outcome given;
+		std::atomic<size_t> cleared = 0;
 
 		given.finished = found.finished;
 
@@ -232,20 +183,21 @@ namespace
 			++it)
 		{
 			// The keys alone: what is being asked is which of them the owner has, and the values
-			// are already there.
-			if (!walk_files(
+			// are already here.
+			transfer::outcome walked = transfer::walk(
 				nodes,
-				it->first,
-				name,
-				it->second,
-				false,
+				share_of(it->first, name, it->second, false, workers),
 				running,
 				waiting,
-				[&](const std::string &file) { given.cleared += repository.clear_records(name, file); }))
+				[&](const std::string &file) { cleared += repository.clear_records(name, file); });
+
+			if (!walked.whole && !walked.refused)
 			{
 				given.finished = false;
 			}
 		}
+
+		given.cleared = cleared;
 
 		// What is left is what the owner has not taken over yet, which is a copy this node keeps
 		// and asks about again. A write that landed here between the walk and the file is why this
@@ -271,7 +223,8 @@ reconcile::outcome reconcile::reconcile(
 	const cluster::cluster &nodes,
 	const std::atomic<bool> &running,
 	size_t page,
-	long seconds)
+	long seconds,
+	size_t workers)
 {
 	outcome done;
 
@@ -305,8 +258,8 @@ reconcile::outcome reconcile::reconcile(
 		{
 			for (size_t node = 0; node < zones[zone].size(); node++)
 			{
-				outcome taken =
-					fetch_from(repository, nodes, zones[zone][node], it->name, partitions, running, fetching);
+				outcome taken = fetch_from(
+					repository, nodes, zones[zone][node], it->name, partitions, workers, running, fetching);
 
 				done.fetched += taken.fetched;
 
@@ -322,7 +275,7 @@ reconcile::outcome reconcile::reconcile(
 
 	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
 	{
-		outcome given = clear_table(repository, nodes, it->name, page, running, clearing);
+		outcome given = clear_table(repository, nodes, it->name, page, workers, running, clearing);
 
 		done.cleared += given.cleared;
 		done.deferred += given.deferred;

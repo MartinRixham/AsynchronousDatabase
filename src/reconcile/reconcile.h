@@ -6,6 +6,7 @@
 
 #include "cluster/cluster.h"
 #include "repository/repository.h"
+#include "transfer/transfer.h"
 
 namespace reconcile
 {
@@ -57,7 +58,8 @@ namespace reconcile
 		const cluster::cluster &nodes,
 		const std::atomic<bool> &running,
 		size_t page = default_page,
-		long seconds = default_seconds);
+		long seconds = default_seconds,
+		size_t workers = transfer::default_workers);
 }
 
 #endif

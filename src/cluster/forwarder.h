@@ -7,6 +7,7 @@
 #include "http/http_client.h"
 #include "router/request.h"
 #include "router/response.h"
+#include "cluster.h"
 
 namespace cluster
 {
@@ -28,6 +29,10 @@ namespace cluster
 		// answer is an answer of its own, the way it is when it is asked on its own.
 		std::vector<router::response> forward_all(const std::vector<std::string> &nodes, const router::request &request)
 			const;
+
+		// The same fan out for a caller asking each node something different, which is what a walk
+		// of a share in several pieces at once is.
+		std::vector<router::response> forward_each(const std::vector<enquiry> &enquiries) const;
 	};
 }
 

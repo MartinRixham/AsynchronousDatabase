@@ -80,6 +80,8 @@ namespace cluster
 		std::optional<router::response> send_all(
 			const std::vector<std::string> &node_list,
 			const router::request &request) const override;
+
+		std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const override;
 	};
 }
 

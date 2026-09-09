@@ -8,6 +8,7 @@
 
 #include <boost/json.hpp>
 #include <boost/beast.hpp>
+#include <boost/lexical_cast/try_lexical_convert.hpp>
 
 #include "base64/base64.h"
 #include "cluster/partition.h"
@@ -239,11 +240,17 @@ router::response router::router::route(const request &request)
 		return route_table(request, path[1]);
 	}
 
-	// A node asking this one for its share of a table. It is answered from this store alone and is
-	// never forwarded: what is being asked for is what this node holds, and no other node has it.
+	// A node asking this one for its share of a table, and where to cut a walk of it up. Both are
+	// answered from this store alone and are never forwarded: what is being asked for is what this
+	// node holds, and no other node has it.
 	if (path.size() == 3 && path[2] == "file")
 	{
 		return route_file(request, path[1]);
+	}
+
+	if (path.size() == 3 && path[2] == "split")
+	{
+		return route_split(request, path[1]);
 	}
 
 	if (path[2] != "key")
@@ -369,9 +376,67 @@ router::response router::router::route_file(const request &request, const std::s
 		wanted.has_from = true;
 	}
 
+	std::string end = url::read_parameter(request.query, "to");
+
+	if (!end.empty())
+	{
+		std::optional<std::string> last = base64::decode(end);
+
+		if (!last)
+		{
+			return error_response("invalid_cursor", "The key to end the file at is not base64.");
+		}
+
+		wanted.to = *last;
+		wanted.has_to = true;
+	}
+
+	size_t bytes = 0;
+
+	// How much of the table to walk is the asking node's to say, because it is the asking node
+	// that holds the file: a walk that runs in several pieces at once shares the budget out
+	// between them. What it may not do is ask for more than this node will build.
+	if (boost::conversion::try_lexical_convert(url::read_parameter(request.query, "bytes"), bytes) && bytes > 0)
+	{
+		wanted.bytes = std::min(bytes, repository::max_file_bytes);
+	}
+
 	repository::extract taken = repository.export_records(name, wanted);
 
 	return file_response(taken.file, taken.records, taken.has_more ? base64::encode(taken.last) : "");
+}
+
+// Where this node would cut a walk of its own table up, so that a node reading it can ask for
+// several pieces of it at once. It is this store's answer and nobody else's: the pieces are only
+// as even as what this node holds, which is what a walk of this node is bounded by.
+router::response router::router::route_split(const request &request, const std::string &name)
+{
+	if (request.method != boost::beast::http::verb::get)
+	{
+		return method_not_allowed(request.method);
+	}
+
+	if (!repository.has_table(name))
+	{
+		return table_not_found(name);
+	}
+
+	size_t ways = 0;
+
+	if (!boost::conversion::try_lexical_convert(url::read_parameter(request.query, "ways"), ways) || ways < 1)
+	{
+		return error_response("invalid_range", "The number of ways to cut a table up is not a number.");
+	}
+
+	boost::json::array keys;
+	std::vector<std::string> points = repository.split_points(name, std::min(ways, scan::max_limit));
+
+	for (size_t i = 0; i < points.size(); i++)
+	{
+		keys.push_back(boost::json::string(base64::encode(points[i])));
+	}
+
+	return json_response(boost::beast::http::status::ok, boost::json::object { { "keys", keys } });
 }
 
 router::response router::router::route_record(

@@ -131,6 +131,33 @@ router::response cluster::forwarder::forward(const std::string &node, const rout
 	return to_response(node, http_client.send(forwarded, timout_seconds), is_head(request));
 }
 
+std::vector<router::response> cluster::forwarder::forward_each(const std::vector<enquiry> &enquiries) const
+{
+	std::vector<http::request> forwarded;
+
+	for (size_t i = 0; i < enquiries.size(); i++)
+	{
+		forwarded.push_back(http::request {
+			method_of(enquiries[i].request),
+			target(enquiries[i].node, enquiries[i].request),
+			enquiries[i].request.body,
+			headers_of(enquiries[i].request)
+		});
+
+		DEBUG("Forwarding " + forwarded.back().method + " " + forwarded.back().url + ".");
+	}
+
+	std::vector<http::response> answers = http_client.send_all(forwarded, timout_seconds);
+	std::vector<router::response> responses;
+
+	for (size_t i = 0; i < enquiries.size() && i < answers.size(); i++)
+	{
+		responses.push_back(to_response(enquiries[i].node, answers[i], is_head(enquiries[i].request)));
+	}
+
+	return responses;
+}
+
 std::vector<router::response> cluster::forwarder::forward_all(
 	const std::vector<std::string> &nodes,
 	const router::request &request) const

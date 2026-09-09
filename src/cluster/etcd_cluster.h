@@ -126,6 +126,8 @@ namespace cluster
 			const std::vector<std::string> &node_list,
 			const router::request &request) const override;
 
+		std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const override;
+
 	private:
 		// What stop() does, and what the destructor calls: a destructor cannot reach an override.
 		void leave();

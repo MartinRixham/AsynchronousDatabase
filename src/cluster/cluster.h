@@ -17,6 +17,14 @@ namespace cluster
 
 	constexpr char term_header[] = "X-Asyncdb-Term";
 
+	// A request and the node it is for, so that several different ones can be asked at once.
+	struct enquiry
+	{
+		std::string node;
+
+		router::request request;
+	};
+
 	struct placement
 	{
 		bool local = true;
@@ -84,6 +92,12 @@ namespace cluster
 		virtual std::optional<router::response> send_all(
 			const std::vector<std::string> &node_list,
 			const router::request &request) const = 0;
+
+		// A different request to each node named, all of them at once, answered one for one and in
+		// the order they were given. send_all() is this with everything but a refusal thrown away,
+		// which is what a write to the copies of a record wants; a walk reading a share in several
+		// pieces wants what each answer carried, and asks for a different piece in each.
+		virtual std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const = 0;
 	};
 
 	std::optional<router::response> refusal(const std::vector<router::response> &answers);

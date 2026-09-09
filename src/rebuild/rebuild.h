@@ -5,6 +5,7 @@
 
 #include "cluster/cluster.h"
 #include "repository/repository.h"
+#include "transfer/transfer.h"
 
 namespace rebuild
 {
@@ -25,7 +26,11 @@ namespace rebuild
 	// **It runs before the node registers in etcd**, which is what makes it free to take as long
 	// as it needs: a node that is not in the membership is nobody's copy, so no read is answered
 	// from it and no write waits on it.
-	size_t rebuild(repository::repository &repository, const cluster::cluster &nodes, long seconds = default_seconds);
+	size_t rebuild(
+		repository::repository &repository,
+		const cluster::cluster &nodes,
+		long seconds = default_seconds,
+		size_t workers = transfer::default_workers);
 }
 
 #endif

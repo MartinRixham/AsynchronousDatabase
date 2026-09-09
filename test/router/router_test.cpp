@@ -1943,3 +1943,110 @@ TEST(router_test, answers_a_file_of_keys_alone_when_the_values_are_not_wanted)
 	EXPECT_FALSE(giving.read_record("account", "1").has_value());
 	EXPECT_TRUE(giving.read_record("account", "2").has_value());
 }
+
+// Where this node would cut a walk of its own table up, so that a node reading it can ask for
+// several pieces of it at once.
+TEST(router_test, says_where_a_table_would_be_cut_up)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+
+	for (size_t i = 0; i < 8; i++)
+	{
+		write_record(router, "account", std::to_string(10 + i), "a value");
+	}
+
+	router::response response = router.route(get("/table/account/split?ways=4"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+
+	const boost::json::array &keys = response.json.at("keys").as_array();
+
+	// One fewer key than the ways asked for, because the last piece runs to the end of the table.
+	ASSERT_EQ(3u, keys.size());
+
+	for (size_t i = 0; i < keys.size(); i++)
+	{
+		EXPECT_TRUE(base64::decode(std::string(keys[i].as_string())).has_value());
+	}
+}
+
+TEST(router_test, cuts_a_table_up_no_ways_when_it_is_asked_for_one_piece)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	write_record(router, "account", "1", "one");
+
+	EXPECT_TRUE(router.route(get("/table/account/split?ways=1")).json.at("keys").as_array().empty());
+}
+
+TEST(router_test, refuses_a_split_of_a_table_that_is_not_there)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	EXPECT_EQ(error_code(router.route(get("/table/account/split?ways=4"))), "table_not_found");
+}
+
+TEST(router_test, refuses_a_split_into_something_that_is_not_a_number_of_ways)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+
+	EXPECT_EQ(error_code(router.route(get("/table/account/split"))), "invalid_range");
+	EXPECT_EQ(error_code(router.route(get("/table/account/split?ways=lots"))), "invalid_range");
+	EXPECT_EQ(error_code(router.route(get("/table/account/split?ways=0"))), "invalid_range");
+}
+
+// The ends of a piece, which are what make the pieces of a split walk a cover: `to` is the last key
+// in the piece and `from` is the key the next one starts after.
+TEST(router_test, answers_a_file_that_ends_where_it_was_told_to)
+{
+	repository::fake_repository repository;
+	repository::fake_repository taking;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	write_record(router, "account", "1", "one");
+	write_record(router, "account", "2", "two");
+	write_record(router, "account", "3", "three");
+
+	taking.create_table(table::valid_table("account", std::vector<std::string>()));
+
+	router::response response = router.route(
+		get("/table/account/file?partitions=" + every_partition() + "&to=" + url::encode(base64::encode("2"))));
+
+	EXPECT_EQ(2u, response.file.records);
+	EXPECT_EQ(2u, taking.import_records("account", response.text));
+	EXPECT_FALSE(taking.read_record("account", "3").has_value());
+}
+
+// How much of the table one file walks is the asking node's to say, because it is the asking node
+// that holds the file.
+TEST(router_test, answers_a_file_of_no_more_of_the_table_than_it_was_asked_for)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	write_record(router, "account", "1", "one");
+	write_record(router, "account", "2", "two");
+
+	router::response response =
+		router.route(get("/table/account/file?bytes=1&partitions=" + every_partition()));
+
+	EXPECT_EQ(1u, response.file.records);
+	EXPECT_FALSE(response.file.next.empty());
+}

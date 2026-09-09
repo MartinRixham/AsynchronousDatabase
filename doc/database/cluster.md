@@ -268,6 +268,7 @@ stays missing until the record is written again.
 | `GET` `/table/{table}/key` | Asked of **one zone** — this node's own — and the pages merged back into key order |
 | `DELETE` `/table/{table}/key` | Carried out on every node, because every node holds a share of the range |
 | `GET /table/{table}/file` | Answered out of **this node's own store**, and never forwarded: what is being asked for is what this node holds |
+| `GET /table/{table}/split` | The same: where this node would cut a walk of its own table up |
 | `GET /health` | Answered where it is asked, and names the nodes and zones it can see |
 
 Nodes keep their connections to each other open between requests, so a forwarded
@@ -316,7 +317,8 @@ moved. Both want the same thing of another node — *the part of a table that
 belongs to me* — and both ask for it the same way.
 
 ```
-GET /table/{table}/file?partitions={set}[&from={cursor}][&values=false]
+GET /table/{table}/split?ways={n}
+GET /table/{table}/file?partitions={set}[&from={cursor}][&to={cursor}][&values=false][&bytes={n}]
 ```
 
 `partitions` is the set of the 256 partitions the node asking for the file holds,
@@ -340,6 +342,33 @@ a node clearing down asks for: it is deciding where records belong, not moving
 them. The budget below counts what the walk *read*, so a walk that is not reading
 values covers far more of a table for the same one — which is what turns giving up
 a share into one question rather than one for every key in it.
+
+### Several pieces at once
+
+One walk, one file at a time, is a share moving at the speed of *ask, wait, take
+it in, ask again* — with the node being read, the network and the store each idle
+for most of it. So a walk is cut up.
+
+`split` is the node being read saying where: `ways=4` answers three keys, taken
+from the sizes of the files its own table is in, so the four pieces between them
+are roughly equal. It is approximate on purpose — what it is for is keeping
+workers busy, and a piece half again the size of another costs a little of that
+and nothing else. A node that will not say is a table walked in one piece, which
+is slower and not wrong.
+
+The pieces are then read **at the same time**, in one fan out, and each piece is
+resumed by its own cursor. `from` is the key a piece starts *after* and `to` is
+the last key in it, so the key one piece stops at is the key the next one starts
+after and the pieces are a cover: every record crosses, and no record twice.
+
+And while the files of one round are being taken into the store, the files of the
+next are already being asked for. So the network and the store are busy at the
+same time rather than each waiting for the other.
+
+`bytes` is how much of the table one file walks, which is the **asking** node's to
+say because it is the asking node that holds the file. The whole budget is shared
+out between the pieces, so a share read in eight pieces holds no more of itself in
+memory than one read in one.
 
 **One file is a walk of 64 MiB of the table, not 64 MiB of records.** The budget
 is what the walk *read*, so a node that holds a sixth of a zone reads its way

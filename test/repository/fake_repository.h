@@ -2,6 +2,8 @@
 #define REPOSITORY_FAKE_REPOSITORY_H
 
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 
 #include "repository/repository.h"
@@ -17,6 +19,11 @@ namespace repository
 		std::map<std::string, std::map<std::string, std::string>> records;
 
 		bool stalled = false;
+
+		// A walk hands the files of a share to several threads at once, so a store this stands in
+		// for is one that is written from several at once. Held by pointer because the fixtures
+		// that build one of these hand it back by value.
+		std::shared_ptr<std::mutex> mutex;
 
 	public:
 		fake_repository();
@@ -39,6 +46,8 @@ namespace repository
 
 		scan::page scan_records(const std::string &table_name, const scan::range &range) const override;
 
+		std::vector<std::string> split_points(const std::string &table_name, size_t ways) const override;
+
 		extract export_records(const std::string &table_name, const share &wanted) const override;
 
 		size_t import_records(const std::string &table_name, const std::string &file) override;
@@ -52,6 +61,10 @@ namespace repository
 		std::string instance() const override;
 
 		void stall();
+
+	private:
+		// Whether the table is there, for a caller that is holding the lock already.
+		bool holds(const std::string &table_name) const;
 	};
 }
 

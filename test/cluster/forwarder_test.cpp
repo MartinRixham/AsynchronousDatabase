@@ -344,3 +344,41 @@ TEST(forwarder_test, an_answer_that_is_not_a_file_carries_no_transfer)
 	EXPECT_EQ(0u, response.file.records);
 	EXPECT_TRUE(response.file.next.empty());
 }
+
+// The fan out for a caller asking each node something different, which is what reading a share in
+// several pieces at once is. Every node gets its own request, and the answers come back in the
+// order the enquiries were given rather than the order the nodes answered in.
+TEST(forwarder_test, forward_a_different_request_to_each_node)
+{
+	http::fake_client http;
+
+	http.answer(one, http::answer(200, "text/plain; charset=utf-8", "from one"));
+	http.answer(two, http::answer(200, "text/plain; charset=utf-8", "from two"));
+
+	cluster::forwarder forwarder(http);
+
+	std::vector<cluster::enquiry> enquiries {
+		cluster::enquiry { one, request(boost::beast::http::verb::get, { "table", "account", "file" }) },
+		cluster::enquiry { two, request(boost::beast::http::verb::get, { "table", "summary", "file" }) }
+	};
+
+	std::vector<router::response> responses = forwarder.forward_each(enquiries);
+
+	ASSERT_EQ(2u, responses.size());
+	EXPECT_EQ("from one", responses[0].text);
+	EXPECT_EQ("from two", responses[1].text);
+
+	ASSERT_EQ(1u, http.sent_to(one).size());
+	ASSERT_EQ(1u, http.sent_to(two).size());
+	EXPECT_NE(std::string::npos, http.sent_to(one)[0].url.find("/table/account/file"));
+	EXPECT_NE(std::string::npos, http.sent_to(two)[0].url.find("/table/summary/file"));
+}
+
+TEST(forwarder_test, forward_nothing_to_nobody)
+{
+	http::fake_client http;
+	cluster::forwarder forwarder(http);
+
+	EXPECT_TRUE(forwarder.forward_each(std::vector<cluster::enquiry>()).empty());
+	EXPECT_TRUE(http.sent().empty());
+}

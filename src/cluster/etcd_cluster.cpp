@@ -353,6 +353,11 @@ std::optional<router::response> cluster::etcd_cluster::send_all(
 	return refusal(request_forwarder.forward_all(node_list, request));
 }
 
+std::vector<router::response> cluster::etcd_cluster::send_each(const std::vector<enquiry> &enquiries) const
+{
+	return request_forwarder.forward_each(enquiries);
+}
+
 void cluster::etcd_cluster::run()
 {
 	std::unique_lock<std::mutex> lock(wait_mutex);

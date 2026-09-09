@@ -416,7 +416,8 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 - **`url`** splits the target at its unencoded slashes *before* percent-decoding each segment, so a key
   containing `/`, `?` or a zero byte stays one segment. Query values are decoded the same way.
 - **`router::router`** matches routes by hand — `/health`, `/table`, `/table/{table}`,
-  `/table/{table}/key`, `/table/{table}/key/{key}` and `/table/{table}/file` — and returns a
+  `/table/{table}/key`, `/table/{table}/key/{key}`, `/table/{table}/file` and
+  `/table/{table}/split` — and returns a
   `router::response` (status, content type, and either a `boost::json::object` or the raw text of a
   value). `router/api_error.cpp`
   is the one place a documented error code is mapped to a status.
@@ -435,7 +436,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   the slowest of them rather than for the sum of them, and the multi handle holds that fan out's
   connections the way the single handle holds its own. **A fan out does not copy the bodies it is
   given**, so the requests have to outlive the call, and a fan out of one runs on the single handle
-  instead.
+  instead. `send_all` on the cluster seam throws every answer away but a refusal, which is what a
+  write to the copies of a record wants; `send_each` is the same fan out for a caller asking each
+  node something *different* and reading what each of them said, which is what a walk reading a
+  share in several pieces at once is.
 - **`cluster::cluster`** is the second pure-virtual seam the router routes against, over "which
   nodes hold this key" and "ask that node". `cluster::replicas` answers a `cluster::placement` —
   whether this node holds a copy, and the other nodes that do, this node's own zone first.
@@ -463,7 +467,9 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   the **files a node's share of a table travels in** — `export_records` writes one and `import_records`
   takes one. It is `cluster::partition_set` that says which records a file carries, so the seam includes
   `cluster/partition.h`: what a store is asked to walk for is a set of partitions, and the hashing that
-  answers "which partition is this key in" is a pure function of the key.
+  answers "which partition is this key in" is a pure function of the key. `split_points` is the
+  other half of a walk: where a table would be cut up so that several workers can read it at once,
+  weighed by the sizes of the files each key starts.
   `rocksdb_repository` makes each table a **column family** and keeps its document in the default one
   under `"TABLE_<name>"`; dropping a table drops the column family, so the data goes with it. The
   handle map is guarded by a `shared_mutex`. Every write goes through `written` rather than `check`,
@@ -513,6 +519,18 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   landed on and asks the membership nothing.
   `doc/database/cluster.md` is the spec, including what this deliberately does not do (no read
   repair, no replication log, and a write that needs both a leader and every copy).
+- **A share is read in several pieces at once, on one thread.** `GET /table/{table}/split?ways=`
+  is the node being read saying where to cut its own table up — keys taken from the sizes of the
+  files it holds, so the pieces are roughly equal and deliberately approximate. `transfer::walk`
+  then asks for every piece in one `send_each`, and hands each answer to a thread of its own that
+  takes it into the store while the next round is already being asked for. **Every request a walk
+  makes is made on the calling thread**, because a curl handle is `thread_local`: threads made for
+  a walk and dropped after it would be a handshake to that node for every walk of every table.
+  `from` is the key a piece starts after and `to` is the last key in it, which is what makes the
+  pieces a cover — the key one piece stops at is the key the next starts after. `bytes` is the
+  whole walk's budget shared out between the pieces, so a share read in eight pieces holds no more
+  of itself in memory than one read in one. `transfer::relay` is the one slot between a piece and
+  the thread taking its files in, and one slot is what bounds that.
 - **A share of a table moves as a file, never a record at a time.** `GET /table/{table}/file?partitions=`
   is what a rebuild and both halves of a reconcile ask for: the partitions are the *asking* node's,
   so the node answering filters by `partition_of` and asks its own membership nothing, and two nodes a

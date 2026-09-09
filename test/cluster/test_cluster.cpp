@@ -148,3 +148,8 @@ std::optional<router::response> cluster::test_cluster::send_all(
 {
 	return refusal(request_forwarder.forward_all(node_list, request));
 }
+
+std::vector<router::response> cluster::test_cluster::send_each(const std::vector<enquiry> &enquiries) const
+{
+	return request_forwarder.forward_each(enquiries);
+}

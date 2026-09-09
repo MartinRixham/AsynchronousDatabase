@@ -45,12 +45,15 @@ namespace
 	}
 }
 
-repository::fake_repository::fake_repository()
+repository::fake_repository::fake_repository():
+	mutex(std::make_shared<std::mutex>())
 {
 }
 
 void repository::fake_repository::create_table(const table::table &table)
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	if (table.is_valid)
 	{
 		tables[table.name] = boost::json::serialize(table.json);
@@ -60,6 +63,8 @@ void repository::fake_repository::create_table(const table::table &table)
 
 std::set<table::table> repository::fake_repository::list_tables() const
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	std::set<table::table> table_list;
 
 	for (std::map<std::string, std::string>::const_iterator it = tables.begin(); it != tables.end(); ++it)
@@ -72,11 +77,20 @@ std::set<table::table> repository::fake_repository::list_tables() const
 
 bool repository::fake_repository::has_table(const std::string &table_name) const
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	return holds(table_name);
+}
+
+bool repository::fake_repository::holds(const std::string &table_name) const
+{
 	return tables.count(table_name) > 0;
 }
 
 table::table repository::fake_repository::read_table(const std::string &table_name) const
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	if (tables.count(table_name))
 	{
 		return table::to_table(tables.at(table_name));
@@ -87,6 +101,8 @@ table::table repository::fake_repository::read_table(const std::string &table_na
 
 void repository::fake_repository::delete_table(const std::string &table_name)
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	// The data goes with the table, as it goes with a dropped column family.
 	tables.erase(table_name);
 	records.erase(table_name);
@@ -94,7 +110,9 @@ void repository::fake_repository::delete_table(const std::string &table_name)
 
 void repository::fake_repository::write_record(const std::string &table_name, const record::record &record)
 {
-	if (!has_table(table_name))
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	if (!holds(table_name))
 	{
 		throw storage_error("table_not_found", "No table named \"" + table_name + "\".");
 	}
@@ -106,7 +124,9 @@ std::optional<std::string> repository::fake_repository::read_record(
 	const std::string &table_name,
 	const std::string &key) const
 {
-	if (!has_table(table_name) || records.at(table_name).count(key) == 0)
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	if (!holds(table_name) || records.at(table_name).count(key) == 0)
 	{
 		return std::nullopt;
 	}
@@ -116,7 +136,9 @@ std::optional<std::string> repository::fake_repository::read_record(
 
 void repository::fake_repository::delete_record(const std::string &table_name, const std::string &key)
 {
-	if (has_table(table_name))
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	if (holds(table_name))
 	{
 		records[table_name].erase(key);
 	}
@@ -124,9 +146,11 @@ void repository::fake_repository::delete_record(const std::string &table_name, c
 
 scan::page repository::fake_repository::scan_records(const std::string &table_name, const scan::range &range) const
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	scan::page page;
 
-	if (!has_table(table_name))
+	if (!holds(table_name))
 	{
 		return page;
 	}
@@ -181,13 +205,56 @@ scan::page repository::fake_repository::scan_records(const std::string &table_na
 // A file of this store is its records written out one after another, each behind its length. It is
 // not an SST and does not need to be: what a file carries is settled by the seam, and both ends of
 // a transfer between two of these are this code.
+// Every key counts for the same, which is a store whose records are all in memory: what the real
+// one weighs by is how much is in the files a key starts.
+std::vector<std::string> repository::fake_repository::split_points(
+	const std::string &table_name,
+	size_t ways) const
+{
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	std::vector<std::string> points;
+
+	if (ways < 2 || !holds(table_name))
+	{
+		return points;
+	}
+
+	const std::map<std::string, std::string> &table_records = records.at(table_name);
+	size_t walked = 0;
+	size_t next = 1;
+
+	for (std::map<std::string, std::string>::const_iterator it = table_records.begin();
+		it != table_records.end() && next < ways;
+		++it)
+	{
+		walked++;
+
+		if (walked * ways >= table_records.size() * next)
+		{
+			points.push_back(it->first);
+
+			next++;
+		}
+	}
+
+	if (!points.empty() && points.size() == ways)
+	{
+		points.pop_back();
+	}
+
+	return points;
+}
+
 repository::extract repository::fake_repository::export_records(
 	const std::string &table_name,
 	const share &wanted) const
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	extract taken;
 
-	if (!has_table(table_name))
+	if (!holds(table_name))
 	{
 		return taken;
 	}
@@ -204,6 +271,13 @@ repository::extract repository::fake_repository::export_records(
 		if (wanted.has_from && it->first <= wanted.from)
 		{
 			continue;
+		}
+
+		// And the end of the piece is inclusive, so that the key one worker stops at is the key
+		// the next one starts after.
+		if (wanted.has_to && it->first > wanted.to)
+		{
+			break;
 		}
 
 		if (wanted.partitions.test(cluster::partition_of(it->first)))
@@ -240,7 +314,9 @@ repository::extract repository::fake_repository::export_records(
 
 size_t repository::fake_repository::import_records(const std::string &table_name, const std::string &file)
 {
-	if (!has_table(table_name))
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	if (!holds(table_name))
 	{
 		return 0;
 	}
@@ -273,7 +349,9 @@ size_t repository::fake_repository::import_records(const std::string &table_name
 
 size_t repository::fake_repository::clear_records(const std::string &table_name, const std::string &file)
 {
-	if (!has_table(table_name))
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	if (!holds(table_name))
 	{
 		return 0;
 	}
@@ -302,7 +380,9 @@ size_t repository::fake_repository::clear_records(const std::string &table_name,
 
 void repository::fake_repository::delete_records(const std::string &table_name, const scan::range &range)
 {
-	if (!has_table(table_name))
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	if (!holds(table_name))
 	{
 		return;
 	}
@@ -325,15 +405,21 @@ void repository::fake_repository::delete_records(const std::string &table_name, 
 
 bool repository::fake_repository::is_write_stalled() const
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	return stalled;
 }
 
 std::string repository::fake_repository::instance() const
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	return "fake";
 }
 
 void repository::fake_repository::stall()
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	stalled = true;
 }

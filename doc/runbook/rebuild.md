@@ -100,7 +100,9 @@ volume, or a `docker compose down -v` is what triggers it.
 4. Asks **every** node of that zone for
    [a file of its own share of each table](/database/cluster#moving-a-share-of-a-table),
    naming the partitions this node is about to hold, and takes each file into the
-   store as it arrives.
+   store as it arrives. Each table is read in
+   [four pieces at once](/database/cluster#several-pieces-at-once), and the files
+   of the next round are asked for while the last round's are still going in.
 5. Registers, and starts serving.
 
 Two details of the API carry it:
@@ -108,6 +110,7 @@ Two details of the API carry it:
 | Used | Because |
 | --- | --- |
 | A file rather than a scan | A scan pages a hundred records at a time, so a node holding hundreds of gigabytes would need millions of round trips to be filled. A file is one round trip for as much of the table as the budget covers, and the transfer then waits on the bandwidth between the two nodes rather than on the time to ask |
+| Several pieces of the table at once | One walk at a time is *ask, wait, take it in, ask again*, with the node being read, the network and the store each idle for most of it. The pieces are read together, and the next file of each is asked for while the last is still going in |
 | The partitions named by the node asking, not the node answering | The node serving a file asks its own membership nothing: it filters by the key's partition, which is a function of the key alone. So a source a moment behind in what it thinks the cluster is still sends the right records |
 
 A zone with a node that does not answer is a zone that cannot give the whole of
@@ -135,8 +138,9 @@ starts — because a process that fell over here would fall over in the same pla
 when it was restarted, and never register at all.
 
 A file is held whole in memory at both ends, which is what sizes the budget: one
-file is a walk of 64 MiB of the table, and a table this node holds a fraction of
-is a file that fraction of the size.
+walk is 64 MiB of the table, shared out between the pieces it is read in, and a
+table this node holds a fraction of is a file that fraction of the size. So a
+rebuild in four pieces costs what a rebuild in one piece does.
 
 ## Watching it
 
@@ -175,6 +179,10 @@ curl -s http://asyncdb-1:8080/health | jq '.nodes'
   zone boundary, and the node is not serving while it does. On a large store that
   is a slower start-up, and the load balancer will hold traffic off until it is
   done.
+- **It is not as parallel as the cluster is.** One node reads from one node at a
+  time, in four pieces. What it is *not* doing is reading from every node of the
+  zone at once, so a share spread over eight nodes is eight walks one after
+  another.
 
 ## The one hazard
 
@@ -211,6 +219,9 @@ membership change.
 fetch asks each node for
 [a file of the partitions this node now holds](/database/cluster#moving-a-share-of-a-table),
 so the only records that cross the network are the ones being taken over.
+
+Both are read in [several pieces at once](/database/cluster#several-pieces-at-once),
+the same as a rebuild.
 
 The clear down is two walks. The first is **local**: it reads this node's own keys
 and works out which partitions it is holding records it no longer owns in, grouped

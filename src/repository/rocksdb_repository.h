@@ -9,6 +9,7 @@
 #include <memory>
 #include <shared_mutex>
 #include <string>
+#include <vector>
 
 #include <rocksdb/cache.h>
 #include <rocksdb/db.h>
@@ -73,6 +74,8 @@ namespace repository
 		void delete_record(const std::string &table_name, const std::string &key) override;
 
 		scan::page scan_records(const std::string &table_name, const scan::range &range) const override;
+
+		std::vector<std::string> split_points(const std::string &table_name, size_t ways) const override;
 
 		extract export_records(const std::string &table_name, const share &wanted) const override;
 

@@ -68,6 +68,16 @@ namespace
 		return router::file_response(taken.file, taken.records, next.empty() ? "" : base64::encode(next));
 	}
 
+	// One worker, so that the order these tests read is the order they wrote. What several of them
+	// do is transfer_test's to say.
+	size_t rebuilt(
+		repository::repository &repository,
+		const cluster::cluster &nodes,
+		long seconds = rebuild::default_seconds)
+	{
+		return rebuild::rebuild(repository, nodes, seconds, 1);
+	}
+
 	// The partitions a request asked for, which is the whole of what decides what comes back.
 	cluster::partition_set asked_for(const router::request &request)
 	{
@@ -85,7 +95,7 @@ TEST(rebuild_test, rebuilds_nothing_when_the_store_already_holds_a_table)
 
 	nodes.answer(peer, tables({ "account" }));
 
-	EXPECT_EQ(0u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(0u, rebuilt(repository, nodes));
 
 	// Nothing was asked of anybody, because a node that kept its store has nothing to rebuild.
 	EXPECT_TRUE(nodes.sent().empty());
@@ -98,7 +108,7 @@ TEST(rebuild_test, rebuilds_nothing_when_there_is_only_one_zone)
 
 	nodes.answer(peer, tables({ "account" }));
 
-	EXPECT_EQ(0u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(0u, rebuilt(repository, nodes));
 	EXPECT_TRUE(nodes.sent().empty());
 }
 
@@ -107,7 +117,7 @@ TEST(rebuild_test, rebuilds_nothing_when_the_instance_stands_alone)
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, std::vector<std::string> { self });
 
-	EXPECT_EQ(0u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(0u, rebuilt(repository, nodes));
 	EXPECT_TRUE(nodes.sent().empty());
 }
 
@@ -118,7 +128,7 @@ TEST(rebuild_test, writes_the_tables_of_another_zone)
 
 	nodes.answer_in_turn(peer, { tables({ "account", "summary" }), file({}) });
 
-	rebuild::rebuild(repository, nodes);
+	rebuilt(repository, nodes);
 
 	EXPECT_TRUE(repository.has_table("account"));
 	EXPECT_TRUE(repository.has_table("summary"));
@@ -131,7 +141,7 @@ TEST(rebuild_test, writes_the_records_of_another_zone)
 
 	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a", "b" }) });
 
-	EXPECT_EQ(2u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(2u, rebuilt(repository, nodes));
 
 	EXPECT_EQ("value of a", repository.read_record("account", "a").value_or(""));
 	EXPECT_EQ("value of b", repository.read_record("account", "b").value_or(""));
@@ -151,7 +161,7 @@ TEST(rebuild_test, asks_for_the_partitions_this_node_will_hold)
 
 	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }) });
 
-	EXPECT_EQ(1u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(1u, rebuilt(repository, nodes));
 
 	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
 
@@ -170,7 +180,7 @@ TEST(rebuild_test, asks_for_a_file_of_the_table_rather_than_for_its_records)
 
 	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }) });
 
-	rebuild::rebuild(repository, nodes);
+	rebuilt(repository, nodes);
 
 	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
 
@@ -190,7 +200,7 @@ TEST(rebuild_test, asks_for_the_next_file_from_the_key_the_one_before_it_reached
 		file({ "c" })
 	});
 
-	EXPECT_EQ(3u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(3u, rebuilt(repository, nodes));
 
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 	EXPECT_TRUE(repository.read_record("account", "b").has_value());
@@ -215,7 +225,7 @@ TEST(rebuild_test, asks_every_node_of_the_zone_it_reads_from)
 	nodes.answer_in_turn(other, { file({ "b" }) });
 
 	// A zone holds a copy of the whole keyspace between its nodes, so both of them are asked.
-	EXPECT_EQ(2u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(2u, rebuilt(repository, nodes));
 
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 	EXPECT_TRUE(repository.read_record("account", "b").has_value());
@@ -231,7 +241,7 @@ TEST(rebuild_test, gives_up_on_a_zone_whose_node_does_not_answer)
 		router::error_response("storage_error", "Node did not answer.")
 	});
 
-	EXPECT_EQ(0u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(0u, rebuilt(repository, nodes));
 
 	// The table is still declared, because a node that holds no table can hold no record either.
 	EXPECT_TRUE(repository.has_table("account"));
@@ -250,7 +260,7 @@ TEST(rebuild_test, asks_the_next_zone_when_one_of_them_does_not_answer)
 	nodes.answer_in_turn(peer, { router::error_response("storage_error", "Node did not answer.") });
 	nodes.answer_in_turn(other, { tables({ "account" }), file({ "a" }) });
 
-	EXPECT_EQ(1u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(1u, rebuilt(repository, nodes));
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 }
 
@@ -269,7 +279,7 @@ TEST(rebuild_test, stops_rather_than_asking_for_ever_when_a_file_does_not_advanc
 
 	// A rebuild that did not read a whole zone answers nothing, and the node starts thin: what it
 	// took is still its own, and there is no zone left to ask.
-	EXPECT_EQ(0u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(0u, rebuilt(repository, nodes));
 	EXPECT_EQ(3u, nodes.sent().size());
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 }
@@ -285,7 +295,7 @@ TEST(rebuild_test, resumes_from_a_key_that_has_to_be_encoded)
 		file({ "d" })
 	});
 
-	EXPECT_EQ(3u, rebuild::rebuild(repository, nodes));
+	EXPECT_EQ(3u, rebuilt(repository, nodes));
 
 	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
 
@@ -305,7 +315,7 @@ TEST(rebuild_test, gives_up_when_it_is_answered_nothing)
 
 	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a", "b" }) });
 
-	EXPECT_EQ(0u, rebuild::rebuild(repository, nodes, 0));
+	EXPECT_EQ(0u, rebuilt(repository, nodes, 0));
 
 	// Nothing was asked of the zone, rather than asked and thrown away.
 	EXPECT_TRUE(nodes.sent().empty());
@@ -324,7 +334,7 @@ TEST(rebuild_test, keeps_going_while_the_files_keep_arriving)
 	// Three answers, each of them longer than the whole of the patience.
 	nodes.slow(peer, std::chrono::milliseconds(700));
 
-	EXPECT_EQ(2u, rebuild::rebuild(repository, nodes, 1));
+	EXPECT_EQ(2u, rebuilt(repository, nodes, 1));
 
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 	EXPECT_TRUE(repository.read_record("account", "b").has_value());

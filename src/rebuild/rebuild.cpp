@@ -1,3 +1,4 @@
+#include <atomic>
 #include <optional>
 #include <string>
 #include <vector>
@@ -8,33 +9,14 @@
 #include "cluster/partition.h"
 #include "progress/patience.h"
 #include "table/table.h"
-#include "url/url.h"
+#include "transfer/transfer.h"
 #include "rebuild.h"
 
 namespace
 {
-	// One file of the records another node holds that belong to this one. The partitions are this
-	// node's own, so what comes back is decided by the membership this node read rather than by
-	// the one the node answering happens to hold.
-	router::request file_request(
-		const std::string &table,
-		const std::string &partitions,
-		const std::string &from,
-		bool has_from)
-	{
-		router::request request;
-
-		request.method = boost::beast::http::verb::get;
-		request.path = std::vector<std::string> { "table", table, "file" };
-		request.query = "partitions=" + partitions;
-
-		if (has_from)
-		{
-			request.query += "&from=" + url::encode(from);
-		}
-
-		return request;
-	}
+	// Nothing stops a rebuild but its own patience: the node is not in the membership yet, so
+	// there is no pass to shut down and nothing waiting on it to finish.
+	const std::atomic<bool> running(true);
 
 	router::request table_request()
 	{
@@ -113,65 +95,40 @@ namespace
 		const cluster::cluster &nodes,
 		const std::string &node,
 		const std::string &name,
-		const std::string &partitions,
+		const cluster::partition_set &partitions,
+		size_t workers,
 		progress::patience &waiting)
 	{
 		restored taken;
-		std::string from;
-		bool has_from = false;
+		transfer::share wanted;
 
-		while (true)
-		{
-			// The file boundary is the only place a rebuild can be given up: what is written
-			// already is this node's own, and the file not asked for is all that is lost.
-			if (waiting.spent())
-			{
-				DEBUG("A file of \"" + name + "\" from " + node + " ran out of time for a rebuild.");
+		wanted.node = node;
+		wanted.table = name;
+		wanted.partitions = partitions;
+		wanted.workers = workers;
 
-				return taken;
-			}
+		// The count is added to from every worker at once, so it is an atomic rather than a field
+		// the last of them happens to have written.
+		std::atomic<size_t> records = 0;
 
-			router::response answer = nodes.send(node, file_request(name, partitions, from, has_from));
+		taken.whole = transfer::walk(
+			nodes,
+			wanted,
+			running,
+			waiting,
+			[&](const std::string &file) { records += repository.import_records(name, file); }).whole;
 
-			if (answer.status != boost::beast::http::status::ok)
-			{
-				DEBUG("Node " + node + " did not answer for a file of \"" + name + "\" for a rebuild.");
+		taken.records = records;
 
-				return taken;
-			}
-
-			taken.records += repository.import_records(name, answer.text);
-
-			// A file that arrived is a rebuild getting somewhere, whatever was in it: an empty one
-			// still moved the walk past the keys that are not this node's.
-			waiting.renew();
-
-			// Nowhere to resume is a walk that reached the end of the table.
-			if (answer.file.next.empty())
-			{
-				taken.whole = true;
-
-				return taken;
-			}
-
-			// A file that resumes where the one before it did is a walk that would ask for ever.
-			if (has_from && answer.file.next == from)
-			{
-				DEBUG("A file of \"" + name + "\" from " + node + " made no progress, so the rebuild stops.");
-
-				return taken;
-			}
-
-			from = answer.file.next;
-			has_from = true;
-		}
+		return taken;
 	}
 
 	restored from_zone(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
-		const std::string &partitions,
+		const cluster::partition_set &partitions,
+		size_t workers,
 		progress::patience &waiting)
 	{
 		restored taken;
@@ -193,7 +150,7 @@ namespace
 
 			for (size_t j = 0; j < zone.size(); j++)
 			{
-				restored copied = copy_table(repository, nodes, zone[j], name, partitions, waiting);
+				restored copied = copy_table(repository, nodes, zone[j], name, partitions, workers, waiting);
 
 				taken.records += copied.records;
 
@@ -213,7 +170,8 @@ namespace
 size_t rebuild::rebuild(
 	repository::repository &repository,
 	const cluster::cluster &nodes,
-	long seconds)
+	long seconds,
+	size_t workers)
 {
 	if (!repository.list_tables().empty())
 	{
@@ -231,7 +189,7 @@ size_t rebuild::rebuild(
 
 	// Read once, because it is what every file of every table of every zone is asked for and the
 	// membership this node is rebuilding against is one moment of it.
-	std::string partitions = cluster::encode_partitions(nodes.holdings());
+	cluster::partition_set partitions = nodes.holdings();
 
 	for (size_t i = 1; i < zones.size(); i++)
 	{
@@ -247,7 +205,7 @@ size_t rebuild::rebuild(
 			return 0;
 		}
 
-		restored taken = from_zone(repository, nodes, zones[i], partitions, waiting);
+		restored taken = from_zone(repository, nodes, zones[i], partitions, workers, waiting);
 
 		if (taken.whole)
 		{
