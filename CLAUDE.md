@@ -58,6 +58,15 @@ Notes:
   A struct that is only data sits beside whatever it belongs to (`http::request` in `http_client.h`,
   `cluster::placement` in `cluster.h`), and a test fixture belongs in the test file it is the fixture
   for; nothing else shares.
+- **A field of an abstract type is handed in, never chosen inside the class.** A class holding a
+  `cluster::cluster &`, an `http::client &` or a `repository::repository &` takes it as a parameter of
+  its one public constructor, and every caller — `main.cpp` and every test — supplies one. No second
+  constructor taking a raw pointer for the first to delegate to, and no concrete member to fall back
+  on when that pointer is `NULL`: a fallback makes the class own the implementation the seam exists
+  to keep out of it, and leaves the object carrying two candidates for one field. Where the class
+  needs a call the seam does not carry, the seam grows it — `start`, `discover` and `stop` are on
+  `cluster::cluster`, so `server::server` joins and leaves the cluster it routes through rather than
+  one of its own.
 
 ### UI (`ui/`)
 

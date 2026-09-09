@@ -27,6 +27,8 @@ namespace cluster
 
 		std::vector<member> member_list;
 
+		bool started = false;
+
 		http::curl_client curl;
 
 	public:
@@ -40,6 +42,17 @@ namespace cluster
 		// The leader is told to the cluster rather than claimed in etcd, the same way the
 		// membership is: what is under test here is what a leader does, not how it is chosen.
 		void led_by(const std::string &node, int64_t node_term);
+
+		// Whether the server was given this cluster to join, which is the one it routes through.
+		bool joined() const;
+
+		// The membership is the one join() was told, so there is nothing to read, and joining and
+		// leaving are recorded and do nothing else.
+		void start() override;
+
+		bool discover() override;
+
+		void stop() override;
 
 		std::vector<member> members() const override;
 

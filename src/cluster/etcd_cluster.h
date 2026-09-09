@@ -106,18 +106,11 @@ namespace cluster
 
 		etcd_cluster &operator=(const etcd_cluster &) = delete;
 
-		void start();
+		void start() override;
 
-		// Reads the membership without joining it, so that a node can see what it is about to hold
-		// before anything is routed to it. It is what a rebuild runs on: a node that has not
-		// registered is nobody's copy, so it can take as long as it needs.
-		//
-		// False when there was no etcd to read one from, which is an instance standing alone or a
-		// cluster a test handed in. A membership that was not read here is not one a rebuild should
-		// act on: its nodes were never asked whether they are serving yet.
-		bool discover();
+		bool discover() override;
 
-		void stop();
+		void stop() override;
 
 		std::vector<member> members() const override;
 
@@ -140,6 +133,9 @@ namespace cluster
 			const router::request &request) const override;
 
 	private:
+		// What stop() does, and what the destructor calls: a destructor cannot reach an override.
+		void leave();
+
 		void run();
 
 		void refresh();

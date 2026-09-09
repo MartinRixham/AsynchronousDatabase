@@ -23,6 +23,26 @@ void cluster::test_cluster::led_by(const std::string &node, int64_t node_term)
 	term = node_term;
 }
 
+bool cluster::test_cluster::joined() const
+{
+	return started;
+}
+
+void cluster::test_cluster::start()
+{
+	started = true;
+}
+
+bool cluster::test_cluster::discover()
+{
+	return false;
+}
+
+void cluster::test_cluster::stop()
+{
+	started = false;
+}
+
 std::vector<cluster::member> cluster::test_cluster::members() const
 {
 	return member_list;

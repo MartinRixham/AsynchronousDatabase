@@ -241,6 +241,14 @@ protected:
 	}
 };
 
+// The cluster a server routes through is the one it joins: a server that registered itself
+// somewhere else would be a member of a membership it never reads.
+TEST_F(cluster_test, joins_the_cluster_it_was_given)
+{
+	EXPECT_TRUE(first_cluster.joined());
+	EXPECT_TRUE(second_cluster.joined());
+}
+
 TEST_F(cluster_test, a_table_is_created_on_every_node)
 {
 	EXPECT_EQ(request(first, "PUT", "/table/account", "{}").code, 201);

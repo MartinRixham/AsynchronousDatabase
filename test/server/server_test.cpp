@@ -8,6 +8,7 @@
 #include <boost/json.hpp>
 
 #include "record/record.h"
+#include "cluster/etcd_cluster.h"
 #include "server/server.h"
 #include "listening.h"
 
@@ -35,6 +36,8 @@ struct result
 class server_test : public ::testing::Test
 {
 protected:
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config());
+
 	std::shared_ptr<server::server> database_server;
 
 	std::thread thread;
@@ -44,7 +47,7 @@ protected:
 	void SetUp()
 	{
 		std::filesystem::remove_all("/tmp/asyncdb/");
-		database_server = std::make_shared<server::server>(0, 2, "/tmp/asyncdb");
+		database_server = std::make_shared<server::server>(0, 2, cluster, "/tmp/asyncdb");
 		port = database_server->port();
 
 		thread = std::thread([server = database_server]() { server->serve(); });
@@ -206,8 +209,7 @@ TEST_F(server_test, write_a_value_that_is_too_large)
 {
 	request("PUT", "/table/account", "{}");
 
-	result response = request(
-		"PUT", "/table/account/key/4821", std::string(record::max_value_size + 1, 'v'));
+	result response = request("PUT", "/table/account/key/4821", std::string(record::max_value_size + 1, 'v'));
 
 	EXPECT_EQ(response.status, CURLE_OK);
 	EXPECT_EQ(response.code, 413);

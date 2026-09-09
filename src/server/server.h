@@ -14,7 +14,7 @@
 #include <boost/asio.hpp>
 #include <boost/beast/core.hpp>
 
-#include "cluster/etcd_cluster.h"
+#include "cluster/cluster.h"
 #include "router/router.h"
 #include "repository/rocksdb_repository.h"
 
@@ -55,8 +55,6 @@ namespace server
 
 		// The other instances, when there are any: a key belongs to one of them, and a request
 		// for a key this instance does not hold is answered by asking the one that does.
-		cluster::etcd_cluster own_nodes;
-
 		cluster::cluster &nodes;
 
 		router::router router;
@@ -78,20 +76,13 @@ namespace server
 		bool reconciling = false;
 
 	public:
-		explicit server(
-			boost::asio::ip::port_type port,
-			int thread_count,
-			const std::string &directory,
-			const cluster::config &configuration = cluster::config());
-
-		// The cluster a test names itself, rather than the one etcd names. Nothing is registered
-		// and nothing is renewed: the membership is what it was given.
+		// The cluster is handed in and never made here: this server joins and leaves whichever one
+		// it was given, which is etcd's for the binary and its own membership for a test.
 		server(
 			boost::asio::ip::port_type port,
 			int thread_count,
 			cluster::cluster &nodes,
-			const std::string &directory = data_directory(),
-			const cluster::config &configuration = cluster::config());
+			const std::string &directory = data_directory());
 
 		// A thread that is still joinable when it goes would take the process with it, so a server
 		// that was never closed still stops watching the membership here.
@@ -107,13 +98,6 @@ namespace server
 
 	private:
 		void hold(const std::shared_ptr<session> &session);
-
-		server(
-			boost::asio::ip::port_type port,
-			int thread_count,
-			const cluster::config &configuration,
-			cluster::cluster *external,
-			const std::string &directory);
 
 		// Opening the port to connections, which is done once the store is filled and the node has
 		// joined rather than when the socket is bound: a bound socket that is not listening yet

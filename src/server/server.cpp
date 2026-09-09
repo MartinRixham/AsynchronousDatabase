@@ -83,34 +83,13 @@ std::chrono::seconds server::reconcile_interval()
 server::server::server(
 	boost::asio::ip::port_type port,
 	int threads,
-	const std::string &directory,
-	const cluster::config &configuration):
-	server(port, threads, configuration, NULL, directory)
-{
-}
-
-server::server::server(
-	boost::asio::ip::port_type port,
-	int threads,
 	cluster::cluster &cluster_nodes,
-	const std::string &directory,
-	const cluster::config &configuration):
-	server(port, threads, configuration, &cluster_nodes, directory)
-{
-}
-
-server::server::server(
-	boost::asio::ip::port_type port,
-	int threads,
-	const cluster::config &configuration,
-	cluster::cluster *external,
 	const std::string &directory):
 	thread_count(threads),
 	io_context(thread_count),
 	acceptor(boost::asio::make_strand(io_context)),
 	repository(repository::rocksdb_repository(directory)),
-	own_nodes(cluster::etcd_cluster(configuration)),
-	nodes(external == NULL ? static_cast<cluster::cluster &>(own_nodes) : *external),
+	nodes(cluster_nodes),
 	router(router::router(repository, nodes))
 {
 	boost::beast::error_code error;
@@ -165,7 +144,7 @@ void server::server::serve()
 	// It is best effort: a store that refuses a write, or a neighbour that answers something
 	// unreadable, would otherwise take the process down before it ever registered, and again on
 	// every restart. A node that starts thin is a copy the cluster has.
-	if (own_nodes.discover())
+	if (nodes.discover())
 	{
 		try
 		{
@@ -181,7 +160,7 @@ void server::server::serve()
 		}
 	}
 
-	own_nodes.start();
+	nodes.start();
 
 	// Only once this node is a member. A node that has not joined owns every key it is asked
 	// about — replicas() answers a cluster of one — so a pass before this would find nothing to
@@ -362,7 +341,7 @@ void server::server::close()
 {
 	// Leaving the cluster before the acceptor is closed means the other nodes stop sending keys
 	// here while this instance can still answer for the ones already in flight.
-	own_nodes.stop();
+	nodes.stop();
 
 	// A pass holds a thread and asks the other nodes questions, so it goes before the connections
 	// it would ask them over do.

@@ -68,6 +68,14 @@ namespace cluster
 		// A term this node has already applied a write of, so that anything older is refused.
 		void applied(const std::string &key, int64_t term);
 
+		// The membership is the one the test named, so there is nothing to join, nothing to read
+		// and nothing to leave.
+		void start() override;
+
+		bool discover() override;
+
+		void stop() override;
+
 		std::vector<member> members() const override;
 
 		placement replicas(const std::string &key) const override;

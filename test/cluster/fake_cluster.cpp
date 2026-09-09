@@ -46,6 +46,19 @@ void cluster::fake_cluster::slow(const std::string &node, std::chrono::milliseco
 	delays[node] = delay;
 }
 
+void cluster::fake_cluster::start()
+{
+}
+
+bool cluster::fake_cluster::discover()
+{
+	return false;
+}
+
+void cluster::fake_cluster::stop()
+{
+}
+
 std::vector<cluster::member> cluster::fake_cluster::members() const
 {
 	return member_list;

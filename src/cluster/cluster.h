@@ -40,6 +40,21 @@ namespace cluster
 	class cluster
 	{
 	public:
+		// Joining the cluster, and leaving it again. A membership that was handed in rather than
+		// registered anywhere answers both and does nothing.
+		virtual void start() = 0;
+
+		// Reads the membership without joining it, so that a node can see what it is about to hold
+		// before anything is routed to it. It is what a rebuild runs on: a node that has not
+		// registered is nobody's copy, so it can take as long as it needs.
+		//
+		// False when there was no membership to read, which is an instance standing alone or a
+		// cluster a test handed in. A membership that was not read here is not one a rebuild should
+		// act on: its nodes were never asked whether they are serving yet.
+		virtual bool discover() = 0;
+
+		virtual void stop() = 0;
+
 		virtual std::vector<member> members() const = 0;
 
 		virtual placement replicas(const std::string &key) const = 0;

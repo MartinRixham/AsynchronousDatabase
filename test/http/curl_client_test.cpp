@@ -8,6 +8,7 @@
 
 #include "http/curl_client.h"
 #include "server/listening.h"
+#include "cluster/etcd_cluster.h"
 #include "server/server.h"
 
 // A client with a real server to talk to, because what is worth testing here is what libcurl does
@@ -16,6 +17,8 @@ class curl_client_test : public ::testing::Test
 {
 protected:
 	http::curl_client client { http::curl_client(10, 2) };
+
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config());
 
 	std::shared_ptr<server::server> database_server;
 
@@ -27,7 +30,7 @@ protected:
 	{
 		std::filesystem::remove_all("/tmp/asyncdb/");
 
-		database_server = std::make_shared<server::server>(0, 2, "/tmp/asyncdb");
+		database_server = std::make_shared<server::server>(0, 2, cluster, "/tmp/asyncdb");
 		serving = true;
 		thread = std::thread([server = database_server]() { server->serve(); });
 
@@ -144,8 +147,7 @@ TEST_F(curl_client_test, a_connection_that_is_kept_does_not_hold_the_server_open
 // belongs to the request it was asked for whatever order the transfers finished in.
 TEST_F(curl_client_test, answer_every_request_of_a_fan_out)
 {
-	std::vector<http::response> responses =
-		client.send_all({ get("/health"), get("/table/nothing"), get("/table") });
+	std::vector<http::response> responses = client.send_all({ get("/health"), get("/table/nothing"), get("/table") });
 
 	ASSERT_EQ(responses.size(), 3u);
 

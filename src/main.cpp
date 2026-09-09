@@ -27,7 +27,7 @@ int main(void)
 	cluster::config configuration = cluster::from_environment();
 	cluster::etcd_cluster cluster = cluster::etcd_cluster(configuration);
 
-	database_server = std::make_shared<server::server>(8080, thread_pool_size, cluster, data_directory, configuration);
+	database_server = std::make_shared<server::server>(8080, thread_pool_size, cluster, data_directory);
 
 	signal(SIGINT, handle_signal);
 	signal(SIGTERM, handle_signal);

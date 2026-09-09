@@ -103,7 +103,7 @@ cluster::etcd_cluster::etcd_cluster(const config &cluster_config, const http::cl
 
 cluster::etcd_cluster::~etcd_cluster()
 {
-	stop();
+	leave();
 }
 
 void cluster::etcd_cluster::start()
@@ -154,6 +154,11 @@ bool cluster::etcd_cluster::discover()
 }
 
 void cluster::etcd_cluster::stop()
+{
+	leave();
+}
+
+void cluster::etcd_cluster::leave()
 {
 	{
 		std::lock_guard<std::mutex> lock(wait_mutex);
