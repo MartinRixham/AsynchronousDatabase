@@ -4,11 +4,13 @@
 #include <vector>
 
 #include <gtest/gtest.h>
-#include <boost/json.hpp>
 
+#include "base64/base64.h"
+#include "cluster/partition.h"
 #include "reconcile/reconcile.h"
 #include "record/record.h"
 #include "table/table.h"
+#include "url/url.h"
 #include "../cluster/fake_cluster.h"
 #include "../repository/fake_repository.h"
 
@@ -35,23 +37,27 @@ namespace
 		};
 	}
 
-	router::response page(const std::vector<std::string> &keys)
+	// A file as the node being read from would have answered with, which is that node's own store
+	// exporting it. Both ends of a transfer are a repository, so the file a test hands back is one
+	// a repository wrote rather than bytes made up here.
+	router::response file(const std::vector<std::string> &keys, const std::string &next = "")
 	{
-		boost::json::array records;
+		repository::fake_repository source;
+
+		source.create_table(table::valid_table("account", std::vector<std::string>()));
 
 		for (size_t i = 0; i < keys.size(); i++)
 		{
-			records.push_back(boost::json::object { { "key", boost::json::string(keys[i]) } });
+			source.write_record("account", record::valid_record(keys[i], "value of " + keys[i]));
 		}
 
-		return router::json_response(
-			boost::beast::http::status::ok, boost::json::object { { "records", records } });
-	}
+		repository::share whole;
 
-	// The value of one record, which is what a node answers a fetch of a key its share named.
-	router::response value_of(const std::string &key)
-	{
-		return router::text_response(boost::beast::http::status::ok, "value of " + key);
+		whole.partitions.set();
+
+		repository::extract taken = source.export_records("account", whole);
+
+		return router::file_response(taken.file, taken.records, next.empty() ? "" : base64::encode(next));
 	}
 
 	// A node that holds the key it is asked for, and an answer a scan of it reads nothing out of:
@@ -80,21 +86,28 @@ namespace
 		return repository;
 	}
 
-	// The keys whose values crossed the network, which is what a share walked as keys is for.
-	std::vector<std::string> values_taken(const cluster::fake_cluster &nodes)
+	// The partitions the first file asked of a node named, which is the whole of what decides what
+	// that node sends back.
+	cluster::partition_set asked_for(const cluster::fake_cluster &nodes, const std::string &node)
 	{
 		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
-		std::vector<std::string> keys;
 
-		for (size_t i = 0; i < sent.size(); i++)
-		{
-			if (sent[i].second.method == boost::beast::http::verb::get && sent[i].second.path.size() == 4)
+		std::vector<std::pair<std::string, router::request>>::const_iterator asked = std::find_if(
+			sent.begin(),
+			sent.end(),
+			[&node](const std::pair<std::string, router::request> &request)
 			{
-				keys.push_back(sent[i].second.path[3]);
-			}
+				return request.first == node &&
+					request.second.path.size() == 3 && request.second.path[2] == "file";
+			});
+
+		if (asked == sent.end())
+		{
+			return cluster::partition_set();
 		}
 
-		return keys;
+		return cluster::decode_partitions(url::read_parameter(asked->second.query, "partitions"))
+			.value_or(cluster::partition_set());
 	}
 
 	// Where a HEAD of this key went, which is the whole of what makes clearing down safe.
@@ -138,7 +151,7 @@ TEST(reconcile_test, fetches_a_record_this_node_owns_and_holds_nothing_for)
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer_in_turn(mate, { page({ "a" }), value_of("a") });
+	nodes.answer(mate, file({ "a" }));
 
 	reconcile::outcome done = reconcile::reconcile(repository, nodes);
 
@@ -152,12 +165,12 @@ TEST(reconcile_test, does_not_overwrite_a_record_it_holds_already)
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(mate, page({ "a" }));
+	nodes.answer(mate, file({ "a" }));
 
 	reconcile::outcome done = reconcile::reconcile(repository, nodes);
 
-	// A local record is this node's own copy and as current as any: a write reaches every copy, so
-	// another node's answer is the same value or an older one.
+	// A local record is this node's own copy and the newer of the two: every write since the
+	// ownership moved came here, and what the file carries was written before it did.
 	EXPECT_EQ(0u, done.fetched);
 	EXPECT_EQ("here already", repository.read_record("account", "a").value_or(""));
 }
@@ -168,11 +181,12 @@ TEST(reconcile_test, does_not_fetch_a_record_it_does_not_own)
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer(mate, page({ "a" }));
+	nodes.answer(mate, file({}));
 
 	reconcile::outcome done = reconcile::reconcile(repository, nodes);
 
 	EXPECT_EQ(0u, done.fetched);
+	EXPECT_FALSE(asked_for(nodes, mate).test(cluster::partition_of("a")));
 	EXPECT_FALSE(repository.read_record("account", "a").has_value());
 }
 
@@ -185,9 +199,9 @@ TEST(reconcile_test, fetches_from_a_further_zone_when_the_nearer_ones_hold_nothi
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(mate, page({}));
-	nodes.answer(peer, page({}));
-	nodes.answer_in_turn(other, { page({ "a" }), value_of("a") });
+	nodes.answer(mate, file({}));
+	nodes.answer(peer, file({}));
+	nodes.answer(other, file({ "a" }));
 
 	reconcile::outcome done = reconcile::reconcile(repository, nodes);
 
@@ -275,7 +289,7 @@ TEST(reconcile_test, fetches_what_it_gained_and_clears_down_what_it_lost)
 	nodes.copies("gained", { self, peer, other });
 	nodes.copies("gone", { mate, peer, other });
 
-	nodes.answer_in_turn(mate, { page({ "gained" }), value_of("gained"), holds() });
+	nodes.answer_in_turn(mate, { file({ "gained" }), holds() });
 
 	reconcile::outcome done = reconcile::reconcile(repository, nodes);
 
@@ -328,8 +342,8 @@ TEST(reconcile_test, clears_down_what_it_lost_when_the_fetch_ran_out_of_time)
 }
 
 // A share is every record another node holds, and what a pass wants of it is the fraction whose
-// owner moved: the walk carries keys, and a value crosses for the record being taken over alone.
-TEST(reconcile_test, takes_the_value_of_a_record_it_gained_and_of_no_other)
+// owner moved. The file it asks for is what says which fraction, so nothing else crosses at all.
+TEST(reconcile_test, asks_for_the_partitions_it_gained_and_for_no_others)
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
@@ -337,15 +351,42 @@ TEST(reconcile_test, takes_the_value_of_a_record_it_gained_and_of_no_other)
 	nodes.copies("gained", { self, peer, other });
 	nodes.copies("theirs", { mate, peer, other });
 
-	nodes.answer_in_turn(mate, { page({ "gained", "theirs" }), value_of("gained") });
+	nodes.answer(mate, file({ "gained" }));
 
 	reconcile::outcome done = reconcile::reconcile(repository, nodes);
 
-	EXPECT_EQ(1u, done.fetched);
-	EXPECT_EQ(std::vector<std::string> { "gained" }, values_taken(nodes));
+	cluster::partition_set wanted = asked_for(nodes, mate);
 
+	EXPECT_TRUE(wanted.test(cluster::partition_of("gained")));
+	EXPECT_FALSE(wanted.test(cluster::partition_of("theirs")));
+
+	EXPECT_EQ(1u, done.fetched);
 	EXPECT_EQ("value of gained", repository.read_record("account", "gained").value_or(""));
 	EXPECT_FALSE(repository.read_record("account", "theirs").has_value());
+}
+
+// The fetch half asks for a file at a time, and a share larger than one is several of them, resumed
+// from the key the walk that wrote the one before it reached.
+TEST(reconcile_test, asks_for_the_next_file_from_the_key_the_one_before_it_reached)
+{
+	repository::fake_repository repository = store({});
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { self, peer, other });
+	nodes.copies("b", { self, peer, other });
+
+	nodes.answer_in_turn(mate, { file({ "a" }, "a"), file({ "b" }) });
+
+	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+
+	EXPECT_EQ(2u, done.fetched);
+	EXPECT_TRUE(repository.read_record("account", "a").has_value());
+	EXPECT_TRUE(repository.read_record("account", "b").has_value());
+
+	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+
+	ASSERT_LE(2u, sent.size());
+	EXPECT_NE(std::string::npos, sent[1].second.query.find("from=" + url::encode(base64::encode("a"))));
 }
 
 TEST(reconcile_test, walks_a_store_larger_than_one_page)

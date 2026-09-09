@@ -9,6 +9,7 @@
 #include "router/request.h"
 #include "router/response.h"
 #include "member.h"
+#include "partition.h"
 
 namespace cluster
 {
@@ -58,6 +59,11 @@ namespace cluster
 		virtual std::vector<member> members() const = 0;
 
 		virtual placement replicas(const std::string &key) const = 0;
+
+		// Every partition this node holds a copy of. replicas() answers the same question of one
+		// key, and a pass that moves records has no key to ask about: what it asks another node
+		// for is its share, and a share is a set of partitions.
+		virtual partition_set holdings() const = 0;
 
 		virtual std::vector<std::string> peers() const = 0;
 

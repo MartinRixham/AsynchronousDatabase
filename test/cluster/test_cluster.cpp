@@ -50,7 +50,7 @@ std::vector<cluster::member> cluster::test_cluster::members() const
 
 cluster::placement cluster::test_cluster::replicas(const std::string &key) const
 {
-	std::vector<member> owners = owners_of(key, member_list);
+	std::vector<member> owners = owners_of(partition_name(partition_of(key)), member_list);
 	placement where;
 
 	where.local = false;
@@ -68,6 +68,26 @@ cluster::placement cluster::test_cluster::replicas(const std::string &key) const
 	}
 
 	return where;
+}
+
+cluster::partition_set cluster::test_cluster::holdings() const
+{
+	partition_set held;
+
+	for (size_t partition = 0; partition < partition_count; partition++)
+	{
+		std::vector<member> owners = owners_of(partition_name(partition), member_list);
+
+		for (size_t i = 0; i < owners.size(); i++)
+		{
+			if (owners[i].node == self)
+			{
+				held.set(partition);
+			}
+		}
+	}
+
+	return held;
 }
 
 std::vector<std::string> cluster::test_cluster::peers() const

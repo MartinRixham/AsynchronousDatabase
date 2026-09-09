@@ -15,6 +15,11 @@ router::response router::empty_response(boost::beast::http::status status)
 	return { status, "", boost::json::object(), "", 0 };
 }
 
+router::response router::file_response(const std::string &file, size_t records, const std::string &next)
+{
+	return { boost::beast::http::status::ok, file_content_type, boost::json::object(), file, 0, { records, next } };
+}
+
 router::response router::head_response(
 	boost::beast::http::status status,
 	const std::string &content_type,

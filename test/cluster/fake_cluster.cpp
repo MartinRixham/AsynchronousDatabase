@@ -94,6 +94,28 @@ cluster::placement cluster::fake_cluster::replicas(const std::string &key) const
 	return where;
 }
 
+// Every partition, less the ones holding a key the test said belongs somewhere else. It is
+// replicas() asked of all of them at once, and a key nothing was said about is this node's own
+// there too.
+cluster::partition_set cluster::fake_cluster::holdings() const
+{
+	partition_set held;
+
+	held.set();
+
+	for (std::map<std::string, std::vector<std::string>>::const_iterator it = owners.begin();
+		it != owners.end();
+		++it)
+	{
+		if (std::find(it->second.begin(), it->second.end(), self) == it->second.end())
+		{
+			held.reset(partition_of(it->first));
+		}
+	}
+
+	return held;
+}
+
 std::vector<std::string> cluster::fake_cluster::peers() const
 {
 	std::vector<std::string> peers;

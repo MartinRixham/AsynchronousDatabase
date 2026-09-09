@@ -17,23 +17,33 @@ namespace
 	boost::beast::http::response<boost::beast::http::string_body> make_response(
 		unsigned version,
 		bool keep_alive,
-		const boost::beast::http::status &status,
-		const std::string &content_type,
-		const std::string &body,
-		size_t length,
+		const router::response &answered,
 		bool head)
 	{
+		std::string body = router::response_body(answered);
 		boost::beast::http::response<boost::beast::http::string_body> response {
-			status,
+			answered.status,
 			version,
 			head ? "" : body
 		};
 
 		response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
 
-		if (!content_type.empty())
+		if (!answered.content_type.empty())
 		{
-			response.set(boost::beast::http::field::content_type, content_type);
+			response.set(boost::beast::http::field::content_type, answered.content_type);
+		}
+
+		// A file of records answers with the two things its bytes cannot say. Nothing else sets
+		// either, so nothing else carries them.
+		if (answered.file.records > 0)
+		{
+			response.set(router::records_header, std::to_string(answered.file.records));
+		}
+
+		if (!answered.file.next.empty())
+		{
+			response.set(router::next_header, answered.file.next);
 		}
 
 		response.keep_alive(keep_alive);
@@ -41,11 +51,11 @@ namespace
 
 		if (head)
 		{
-			size_t answered = body.empty() ? length : body.size();
+			size_t length = body.empty() ? answered.length : body.size();
 
-			if (answered > 0)
+			if (length > 0)
 			{
-				response.set(boost::beast::http::field::content_length, std::to_string(answered));
+				response.set(boost::beast::http::field::content_length, std::to_string(length));
 			}
 		}
 
@@ -223,14 +233,7 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 
 	// A connection is not kept alive into a shutdown: the client is told to close, and finds
 	// another node or comes back to this one.
-	return make_response(
-		request.version(),
-		request.keep_alive() && !stopping,
-		response.status,
-		response.content_type,
-		router::response_body(response),
-		response.length,
-		head);
+	return make_response(request.version(), request.keep_alive() && !stopping, response, head);
 }
 
 void server::session::close()

@@ -3,11 +3,9 @@
 #include <string>
 #include <vector>
 
-#include <boost/json.hpp>
-
 #include "log.h"
+#include "cluster/partition.h"
 #include "cluster/placements.h"
-#include "record/record.h"
 #include "scan/scan.h"
 #include "table/table.h"
 #include "url/url.h"
@@ -15,28 +13,24 @@
 
 namespace
 {
-	router::request share_request(const std::string &table, const std::string &from, bool has_from, size_t page)
+	// One file of the records another node holds that belong to this one, which is how a partition
+	// whose owner moved travels: a key at a time is a round trip for every record of a share.
+	router::request file_request(
+		const std::string &table,
+		const std::string &partitions,
+		const std::string &from,
+		bool has_from)
 	{
 		router::request request;
 
 		request.method = boost::beast::http::verb::get;
-		request.path = std::vector<std::string> { "table", table, "key" };
-		request.query = "limit=" + std::to_string(page) + "&values=false";
+		request.path = std::vector<std::string> { "table", table, "file" };
+		request.query = "partitions=" + partitions;
 
 		if (has_from)
 		{
 			request.query += "&from=" + url::encode(from);
 		}
-
-		return request;
-	}
-
-	router::request record_request(const std::string &table, const std::string &key)
-	{
-		router::request request;
-
-		request.method = boost::beast::http::verb::get;
-		request.path = std::vector<std::string> { "table", table, "key", key };
 
 		return request;
 	}
@@ -56,115 +50,56 @@ namespace
 		return std::chrono::steady_clock::now() >= deadline;
 	}
 
-	std::string field(const boost::json::object &object, const std::string &name)
-	{
-		if (!object.contains(name) || !object.at(name).is_string())
-		{
-			return "";
-		}
-
-		return std::string(object.at(name).as_string());
-	}
-
-	// Paging is by bound and not by cursor: a cursor names the instance that issued it, where a
-	// key is a position any node will take.
+	// What this node now owns and holds nothing for, taken from the node that held it. A file it
+	// already has a key of is a file that key is left out of, which is decided by the store and
+	// not here: what is here was written before the ownership moved, and what is there was written
+	// after it.
 	reconcile::outcome fetch_from(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::string &node,
 		const std::string &name,
-		size_t page,
+		const std::string &partitions,
 		const std::chrono::steady_clock::time_point &deadline)
 	{
 		reconcile::outcome taken;
 		std::string from;
 		bool has_from = false;
 
-		// Where a key belongs is decided by its partition, so one walk asks that 256 times rather
-		// than once for every key of another node's share.
-		cluster::placements where(nodes);
-
 		while (!out_of_time(deadline))
 		{
-			router::response answer = nodes.send(node, share_request(name, from, has_from, page));
+			router::response answer = nodes.send(node, file_request(name, partitions, from, has_from));
 
-			if (answer.status != boost::beast::http::status::ok ||
-				!answer.json.contains("records") || !answer.json.at("records").is_array())
+			if (answer.status != boost::beast::http::status::ok)
 			{
-				DEBUG("Node " + node + " did not answer a scan of \"" + name + "\" for a reconcile.");
+				DEBUG("Node " + node + " did not answer for a file of \"" + name + "\" for a reconcile.");
 
 				taken.finished = true;
 
 				return taken;
 			}
 
-			const boost::json::array &records = answer.json.at("records").as_array();
-			std::string last;
-			bool has_last = false;
-			bool read_any = false;
+			taken.fetched += repository.import_records(name, answer.text);
 
-			for (size_t i = 0; i < records.size(); i++)
-			{
-				if (!records[i].is_object())
-				{
-					continue;
-				}
-
-				const boost::json::object &object = records[i].as_object();
-				std::string key = field(object, "key");
-
-				if (key.empty())
-				{
-					continue;
-				}
-
-				last = key;
-				has_last = true;
-
-				// A bound is inclusive, so every page after the first begins again with the key it
-				// resumed at.
-				if (has_from && key == from)
-				{
-					continue;
-				}
-
-				read_any = true;
-
-				if (where.of(key).local && !repository.read_record(name, key))
-				{
-					// A record that went between the page and this is one there is nothing to
-					// take: the node that had it is not the node that owns it.
-					router::response value = nodes.send(node, record_request(name, key));
-
-					if (value.status == boost::beast::http::status::ok)
-					{
-						repository.write_record(name, record::valid_record(key, value.text));
-
-						taken.fetched++;
-					}
-				}
-			}
-
-			// No cursor is a range that is exhausted.
-			if (!answer.json.contains("next"))
+			// Nowhere to resume is a walk that reached the end of the table.
+			if (answer.file.next.empty())
 			{
 				taken.finished = true;
 
 				return taken;
 			}
 
-			// A page that carried nothing to resume from, or nothing but the key it resumed at, is
-			// a page that asking again would ask for for ever.
-			if (!has_last || !read_any)
+			// A file that resumes where the one before it did is a walk that would ask for ever.
+			if (has_from && answer.file.next == from)
 			{
-				DEBUG("A scan of \"" + name + "\" on " + node + " made no progress, so the fetch stops.");
+				DEBUG("A file of \"" + name + "\" on " + node + " made no progress, so the fetch stops.");
 
 				taken.finished = true;
 
 				return taken;
 			}
 
-			from = last;
+			from = answer.file.next;
 			has_from = true;
 		}
 
@@ -293,6 +228,10 @@ reconcile::outcome reconcile::reconcile(
 
 	std::set<table::table> tables = repository.list_tables();
 
+	// Read once, because every file of every table of every node is asked for against it and the
+	// membership this pass is acting on is one moment of it.
+	std::string partitions = cluster::encode_partitions(nodes.holdings());
+
 	// A half that has run out of its own time is what a walk it is given answers, so the loops
 	// carry no clock of their own: what is left of them is asked and does nothing.
 	bool finished = true;
@@ -303,7 +242,7 @@ reconcile::outcome reconcile::reconcile(
 		{
 			for (size_t node = 0; node < zones[zone].size(); node++)
 			{
-				outcome taken = fetch_from(repository, nodes, zones[zone][node], it->name, page, fetching);
+				outcome taken = fetch_from(repository, nodes, zones[zone][node], it->name, partitions, fetching);
 
 				done.fetched += taken.fetched;
 

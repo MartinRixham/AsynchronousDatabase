@@ -1,4 +1,5 @@
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -305,4 +306,41 @@ TEST(forwarder_test, ask_nobody_when_no_node_is_named)
 
 	EXPECT_TRUE(forwarder.forward_all({}, request(boost::beast::http::verb::put, { "table", "account" })).empty());
 	EXPECT_TRUE(http.sent().empty());
+}
+
+// A file of records answers with two things its bytes cannot say, and they are headers rather than
+// fields of a document. What they are here is what the node that asked reads them back as.
+TEST(forwarder_test, reads_back_what_a_file_of_records_said_beside_its_bytes)
+{
+	http::fake_client http;
+	http::response answered = http::answer(200, router::file_content_type, "the file");
+
+	answered.headers.push_back(std::pair<std::string, std::string>(router::records_header, "17"));
+	answered.headers.push_back(std::pair<std::string, std::string>(router::next_header, "YSBrZXk="));
+
+	http.answer(one, answered);
+
+	cluster::forwarder forwarder(http);
+	router::response response =
+		forwarder.forward(one, request(boost::beast::http::verb::get, { "table", "account", "file" }));
+
+	EXPECT_EQ(response.text, "the file");
+	EXPECT_EQ(17u, response.file.records);
+	EXPECT_EQ("YSBrZXk=", response.file.next);
+}
+
+// A node that answered something else says nothing here, so a walk reading an answer that is not a
+// file is a walk with nowhere to resume rather than one that resumes at nothing.
+TEST(forwarder_test, an_answer_that_is_not_a_file_carries_no_transfer)
+{
+	http::fake_client http;
+
+	http.answer(one, http::answer(200, "text/plain; charset=utf-8", "a value"));
+
+	cluster::forwarder forwarder(http);
+	router::response response =
+		forwarder.forward(one, request(boost::beast::http::verb::get, { "table", "account", "key", "4821" }));
+
+	EXPECT_EQ(0u, response.file.records);
+	EXPECT_TRUE(response.file.next.empty());
 }

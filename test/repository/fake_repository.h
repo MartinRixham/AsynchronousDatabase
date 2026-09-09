@@ -39,6 +39,10 @@ namespace repository
 
 		scan::page scan_records(const std::string &table_name, const scan::range &range) const override;
 
+		extract export_records(const std::string &table_name, const share &wanted) const override;
+
+		size_t import_records(const std::string &table_name, const std::string &file) override;
+
 		void delete_records(const std::string &table_name, const scan::range &range) override;
 
 		bool is_write_stalled() const override;

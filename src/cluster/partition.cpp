@@ -1,9 +1,23 @@
+#include <cctype>
 #include <map>
 
 #include "partition.h"
 
 namespace
 {
+	const std::string digits = "0123456789abcdef";
+
+	constexpr size_t bits_per_digit = 4;
+
+	// The digit a character stands for, or nothing. Either case is read, because a set is written
+	// by one node and read by another and neither is a place to be strict about it.
+	std::optional<size_t> digit_of(char character)
+	{
+		size_t found = digits.find(static_cast<char>(std::tolower(static_cast<unsigned char>(character))));
+
+		return found == std::string::npos ? std::nullopt : std::optional<size_t>(found);
+	}
+
 	constexpr uint64_t fnv_offset = 14695981039346656037ULL;
 
 	constexpr uint64_t fnv_prime = 1099511628211ULL;
@@ -36,6 +50,57 @@ namespace
 size_t cluster::partition_of(const std::string &key)
 {
 	return mix(hash(key, fnv_offset)) % partition_count;
+}
+
+std::string cluster::encode_partitions(const partition_set &partitions)
+{
+	std::string text;
+
+	for (size_t partition = partition_count; partition > 0; partition -= bits_per_digit)
+	{
+		size_t digit = 0;
+
+		for (size_t bit = 0; bit < bits_per_digit; bit++)
+		{
+			digit = digit * 2 + (partitions.test(partition - 1 - bit) ? 1 : 0);
+		}
+
+		text += digits[digit];
+	}
+
+	return text;
+}
+
+std::optional<cluster::partition_set> cluster::decode_partitions(const std::string &text)
+{
+	if (text.size() != partition_count / bits_per_digit)
+	{
+		return std::nullopt;
+	}
+
+	partition_set partitions;
+
+	for (size_t i = 0; i < text.size(); i++)
+	{
+		std::optional<size_t> digit = digit_of(text[i]);
+
+		if (!digit)
+		{
+			return std::nullopt;
+		}
+
+		size_t highest = partition_count - 1 - bits_per_digit * i;
+
+		for (size_t bit = 0; bit < bits_per_digit; bit++)
+		{
+			if ((*digit >> (bits_per_digit - 1 - bit)) & 1)
+			{
+				partitions.set(highest - bit);
+			}
+		}
+	}
+
+	return partitions;
 }
 
 std::string cluster::partition_name(size_t partition)

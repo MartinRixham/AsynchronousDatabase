@@ -16,6 +16,7 @@ Every endpoint, status code, error code and limit in one place.
 | `DELETE` | `/table/{table}/key/{key}` | [Delete a record](/database/records#delete-a-record) |
 | `GET` | `/table/{table}/key` | [Scan a range](/database/scans) |
 | `DELETE` | `/table/{table}/key` | [Delete a range](/database/tables#delete-a-range) |
+| `GET` | `/table/{table}/file` | One node asking another for [its share of a table](/database/cluster#moving-a-share-of-a-table). Between nodes, not for clients |
 | `GET` | `/health` | Liveness, whether writes are stalled, [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) and how many partitions this node leads |
 
 ## Errors
@@ -43,7 +44,8 @@ status — is what a client should branch on.
 | `key_too_large` | 413 | Over 4 KiB |
 | `value_too_large` | 413 | Over 16 MiB |
 | `invalid_range` | 400 | A range whose `from` is not below its `to`, or a range delete with no bounds |
-| `invalid_cursor` | 400 | A cursor this instance did not issue |
+| `invalid_cursor` | 400 | A cursor this instance did not issue, or a file resumed at something that is not base64 |
+| `invalid_partitions` | 400 | A [file](/database/cluster#moving-a-share-of-a-table) asked for with something that is not a set of this cluster's partitions |
 | `write_stalled` | 503 | RocksDB is applying back pressure |
 | `no_leader` | 503 | No node is [leading this key's partition](/database/cluster#one-leader-for-each-partition) yet. Run the write again |
 | `stale_leader` | 409 | The write was ordered by a node that has since been replaced. Run it again |
@@ -62,6 +64,7 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 | Value | 16 MiB | A value is read whole into memory to be served |
 | Scan `limit` | 1000, default 100 | One page is one response, held in memory |
 | Scan page | 8 MiB | The same reason counted in bytes, because a limit cannot see the size of what it lets through: a page ends early and carries a cursor rather than building a response the node cannot hold |
+| File | 64 MiB walked | What one [transfer between nodes](/database/cluster#moving-a-share-of-a-table) reads of a table. Far larger than a page, because past this a transfer waits on the bandwidth between two nodes rather than on the time to ask for it |
 | Table name | 64 characters | |
 | Tables | dozens | [Each is a memtable](/database/#tables-are-column-families) |
 
@@ -73,10 +76,18 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 | `ASYNCDB_NODE` | This node as the other nodes reach it. Unset is one instance on its own |
 | `ASYNCDB_ZONE` | The availability zone this node is in. Every zone holds [one copy of every record](/database/cluster#one-copy-in-every-zone). Unset is one zone, which is one copy |
 
+| Variable | Is |
+| --- | --- |
+| `ASYNCDB_DATA` | The directory the store is kept in. Default `/var/lib/asyncdb` |
+| `ASYNCDB_THREADS` | How many threads serve requests. Default eight a core, between 16 and 128 |
+| `ASYNCDB_MEMORY` | Mebibytes the store may hold in memory — the block cache and the memtables together. Default 512. It is the one number to size to the instance: a node holding a share of a terabyte wants a great deal more of it than a node in a test |
+
 | Header | Means |
 | --- | --- |
 | `X-Asyncdb-Forwarded` | Another node sent this request here. It is served where it lands |
 | `X-Asyncdb-Term` | The [term](/database/cluster#the-term) the leader of the key's partition ordered this write in. A copy refuses anything older |
+| `X-Asyncdb-Records` | On the answer to a `file`: how many records it carries |
+| `X-Asyncdb-Next` | On the answer to a `file`: base64 of the key the walk reached, and absent when it reached the end of the table |
 
 See [the cluster](/database/cluster) for what each endpoint does when there is
 more than one instance, and for what partitioning and replication do not do.

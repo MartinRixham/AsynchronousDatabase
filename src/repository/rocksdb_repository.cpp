@@ -1,14 +1,76 @@
+#include <algorithm>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include <boost/json.hpp>
+#include <rocksdb/convenience.h>
+#include <rocksdb/filter_policy.h>
+#include <rocksdb/sst_file_reader.h>
+#include <rocksdb/sst_file_writer.h>
+#include <rocksdb/table.h>
 
 #include "error.h"
+#include "scratch_file.h"
 #include "rocksdb_repository.h"
 
 namespace
 {
 	const std::string table_prefix = "TABLE_";
+
+	const std::string transfer_prefix = "transfer";
+
+	constexpr size_t mebibyte = 1024 * 1024;
+
+	// Three quarters of the budget to the block cache and a quarter to the memtables. Reads are
+	// what a cache miss costs a client; a memtable only has to be large enough that a flush is
+	// worth doing.
+	constexpr size_t cache_share = 4;
+
+	// A memtable each, capped so that a store of many tables is not a store of many memtables: a
+	// table is a column family, and a fixed size apiece is memory that grows with the schema.
+	constexpr size_t largest_write_buffer = 64 * mebibyte;
+
+	constexpr size_t smallest_write_buffer = 8 * mebibyte;
+
+	// A file open and a table reader for every file is what an unbounded reader cache costs, and
+	// a table reader holds index and filter blocks outside the block cache — which is the budget
+	// the cache is there to be.
+	constexpr int open_files = 1024;
+
+	// The usual trade: about one read in a hundred goes to a file that does not hold the key.
+	constexpr double filter_bits = 10;
+
+	// Small enough that a partitioned index or filter is read a block at a time rather than
+	// whole, which is what keeps a file's metadata off the heap for a store larger than memory.
+	constexpr uint64_t metadata_block_size = 4 * 1024;
+
+	bool supports(rocksdb::CompressionType compression)
+	{
+		const std::vector<rocksdb::CompressionType> &supported = rocksdb::GetSupportedCompressions();
+
+		return std::find(supported.begin(), supported.end(), compression) != supported.end();
+	}
+
+	// What a level compaction rewrites again and again, so it is the cheap one. The store is
+	// opened with whatever the build was linked against rather than with a fixed choice: a
+	// compression this binary does not have is a store it cannot read back.
+	rocksdb::CompressionType compression()
+	{
+		if (supports(rocksdb::kLZ4Compression))
+		{
+			return rocksdb::kLZ4Compression;
+		}
+
+		return supports(rocksdb::kSnappyCompression) ? rocksdb::kSnappyCompression : rocksdb::kNoCompression;
+	}
+
+	// The last level is most of the store and is written once, so it is worth the slower
+	// compression that a level being rewritten hourly is not.
+	rocksdb::CompressionType bottom_compression()
+	{
+		return supports(rocksdb::kZSTD) ? rocksdb::kZSTD : compression();
+	}
 
 	// RocksDB slows writers down when memtables or level zero back up. That is back pressure and
 	// not a failure, so it is told apart from an error the client can do nothing about.
@@ -27,23 +89,64 @@ namespace
 		throw repository::storage_error("storage_error", what + " failed: " + status.ToString());
 	}
 
-	std::vector<rocksdb::ColumnFamilyDescriptor> describe(const std::vector<std::string> &names)
+	std::vector<rocksdb::ColumnFamilyDescriptor> describe(
+		const std::vector<std::string> &names,
+		const rocksdb::ColumnFamilyOptions &family_options)
 	{
 		std::vector<rocksdb::ColumnFamilyDescriptor> descriptors;
 
 		for (size_t i = 0; i < names.size(); i++)
 		{
-			descriptors.push_back(rocksdb::ColumnFamilyDescriptor(names[i], rocksdb::ColumnFamilyOptions()));
+			descriptors.push_back(rocksdb::ColumnFamilyDescriptor(names[i], family_options));
 		}
 
 		return descriptors;
 	}
 }
 
-repository::rocksdb_repository::rocksdb_repository(const std::string &directory)
+repository::rocksdb_repository::rocksdb_repository(const std::string &directory, size_t memory_bytes)
 {
-	rocksdb::Options options;
+	rocksdb::LRUCacheOptions cache_options;
+
+	cache_options.capacity = memory_bytes - memory_bytes / cache_share;
+
+	block_cache = cache_options.MakeSharedCache();
+
+	rocksdb::BlockBasedTableOptions table_options;
+
+	table_options.block_cache = block_cache;
+	table_options.filter_policy.reset(rocksdb::NewBloomFilterPolicy(filter_bits));
+
+	// A two level index and a partitioned filter are read a block at a time. A store holding a
+	// share of a terabyte is thousands of files, and one index block and one filter block a file
+	// is metadata alone larger than the machine.
+	table_options.index_type = rocksdb::BlockBasedTableOptions::kTwoLevelIndexSearch;
+	table_options.partition_filters = true;
+	table_options.metadata_block_size = metadata_block_size;
+
+	// Which only bounds anything if the blocks are charged to the cache like any other. What is
+	// pinned instead is the top level of each, because it is one block a file and every read of
+	// that file goes through it.
+	table_options.cache_index_and_filter_blocks = true;
+	table_options.cache_index_and_filter_blocks_with_high_priority = true;
+	table_options.pin_top_level_index_and_filter = true;
+
+	size_t memtable_bytes = memory_bytes / cache_share;
+
+	family_options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
+	family_options.compression = compression();
+	family_options.bottommost_compression = bottom_compression();
+	family_options.write_buffer_size =
+		std::clamp(memtable_bytes / cache_share, smallest_write_buffer, largest_write_buffer);
+
+	rocksdb::Options options(rocksdb::DBOptions(), family_options);
+
 	options.create_if_missing = true;
+	options.max_open_files = open_files;
+
+	// The cap the per table memtables are held under together. Without it the store's memory is
+	// the write buffer times however many tables somebody declared.
+	options.db_write_buffer_size = memtable_bytes;
 
 	std::filesystem::path database_path = std::filesystem::path(directory);
 	std::filesystem::create_directories(database_path);
@@ -60,7 +163,8 @@ repository::rocksdb_repository::rocksdb_repository(const std::string &directory)
 	}
 
 	std::vector<rocksdb::ColumnFamilyHandle *> handle_list;
-	rocksdb::Status status = rocksdb::DB::Open(options, database_path.string(), describe(names), &handle_list, &database);
+	rocksdb::Status status = rocksdb::DB::Open(
+		options, database_path.string(), describe(names, family_options), &handle_list, &database);
 
 	if (!status.ok())
 	{
@@ -71,6 +175,25 @@ repository::rocksdb_repository::rocksdb_repository(const std::string &directory)
 	{
 		handles.insert({ names[i], handle_list[i] });
 	}
+
+	// After the store is open, and emptied every time: what is in here is a transfer that was in
+	// flight when the process before this one went, and there is nothing to resume it with.
+	transfer_directory = database_path / transfer_prefix;
+
+	std::error_code ignored;
+
+	std::filesystem::remove_all(transfer_directory, ignored);
+	std::filesystem::create_directories(transfer_directory);
+}
+
+rocksdb::Options repository::rocksdb_repository::file_options() const
+{
+	return rocksdb::Options(rocksdb::DBOptions(), family_options);
+}
+
+std::string repository::rocksdb_repository::transfer_name() const
+{
+	return instance_name + "-" + std::to_string(transfers++) + ".sst";
 }
 
 repository::rocksdb_repository::~rocksdb_repository()
@@ -101,7 +224,7 @@ void repository::rocksdb_repository::create_table(const table::table &table)
 		rocksdb::ColumnFamilyHandle *handle = NULL;
 
 		written(
-			database->CreateColumnFamily(rocksdb::ColumnFamilyOptions(), table.name, &handle),
+			database->CreateColumnFamily(family_options, table.name, &handle),
 			"Creating table \"" + table.name + "\"");
 
 		handles.insert({ table.name, handle });
@@ -253,6 +376,182 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 	check(it->status(), "Scanning \"" + table_name + "\"");
 
 	return page;
+}
+
+repository::extract repository::rocksdb_repository::export_records(
+	const std::string &table_name,
+	const share &wanted) const
+{
+	std::shared_lock<std::shared_mutex> lock(handle_mutex);
+	std::string what = "Exporting a file of \"" + table_name + "\"";
+	rocksdb::ReadOptions options;
+	rocksdb::Slice lower(wanted.from);
+
+	if (wanted.has_from)
+	{
+		options.iterate_lower_bound = &lower;
+	}
+
+	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(options, table_handle(table_name)));
+	scratch_file written_file(transfer_directory, transfer_name());
+	rocksdb::SstFileWriter writer(rocksdb::EnvOptions(), file_options());
+	extract taken;
+	size_t bytes = 0;
+
+	check(writer.Open(written_file.path()), what);
+
+	for (it->SeekToFirst(); it->Valid(); it->Next())
+	{
+		// A bound is inclusive, so every file after the first begins again at the key it resumed
+		// at.
+		if (wanted.has_from && it->key().compare(lower) == 0)
+		{
+			continue;
+		}
+
+		std::string key = it->key().ToString();
+
+		if (wanted.partitions.test(cluster::partition_of(key)))
+		{
+			check(writer.Put(it->key(), it->value()), what);
+
+			taken.records++;
+		}
+
+		// The budget is what the walk read and not what it wrote, so a node holding a share of a
+		// zone reads its way through the table once over the whole transfer rather than once for
+		// every file of it.
+		bytes += it->key().size() + it->value().size();
+
+		if (bytes >= wanted.bytes)
+		{
+			taken.last = key;
+
+			it->Next();
+
+			taken.has_more = it->Valid();
+
+			break;
+		}
+	}
+
+	check(it->status(), what);
+
+	// A file with nothing in it is one SstFileWriter refuses to finish, and one there would be
+	// nothing to send. Where the walk reached still stands: the file after this one resumes there.
+	if (taken.records == 0)
+	{
+		return taken;
+	}
+
+	check(writer.Finish(), what);
+
+	taken.file = written_file.read();
+
+	return taken;
+}
+
+size_t repository::rocksdb_repository::import_records(const std::string &table_name, const std::string &file)
+{
+	if (file.empty())
+	{
+		return 0;
+	}
+
+	std::shared_lock<std::shared_mutex> lock(handle_mutex);
+	std::string what = "Importing a file into \"" + table_name + "\"";
+	rocksdb::ColumnFamilyHandle *handle = table_handle(table_name);
+	scratch_file given(transfer_directory, transfer_name());
+
+	if (!given.write(file))
+	{
+		throw storage_error("storage_error", what + " failed: the file could not be written.");
+	}
+
+	rocksdb::SstFileReader reader(file_options());
+
+	check(reader.Open(given.path()), what);
+
+	size_t records = 0;
+	size_t held = 0;
+
+	// Two walks of the file rather than one, because the first is what says whether the second is
+	// needed: a store holding none of these keys — a node being rebuilt, which is most of them —
+	// takes the file it was sent and never writes a second copy of it.
+	{
+		std::unique_ptr<rocksdb::Iterator> it(reader.NewIterator(rocksdb::ReadOptions()));
+		rocksdb::PinnableSlice value;
+
+		for (it->SeekToFirst(); it->Valid(); it->Next())
+		{
+			value.Reset();
+
+			if (database->Get(rocksdb::ReadOptions(), handle, it->key(), &value).ok())
+			{
+				held++;
+			}
+			else
+			{
+				records++;
+			}
+		}
+
+		check(it->status(), what);
+	}
+
+	if (records == 0)
+	{
+		return 0;
+	}
+
+	rocksdb::IngestExternalFileOptions ingest;
+
+	// The file is on the store's own volume, so it is linked into place rather than copied.
+	ingest.move_files = true;
+	ingest.snapshot_consistency = false;
+
+	if (held == 0)
+	{
+		written(database->IngestExternalFile(handle, { given.path() }, ingest), what);
+
+		return records;
+	}
+
+	scratch_file kept(transfer_directory, transfer_name());
+	rocksdb::SstFileWriter writer(rocksdb::EnvOptions(), file_options());
+	std::unique_ptr<rocksdb::Iterator> it(reader.NewIterator(rocksdb::ReadOptions()));
+	rocksdb::PinnableSlice value;
+
+	check(writer.Open(kept.path()), what);
+
+	records = 0;
+
+	for (it->SeekToFirst(); it->Valid(); it->Next())
+	{
+		value.Reset();
+
+		if (!database->Get(rocksdb::ReadOptions(), handle, it->key(), &value).ok())
+		{
+			check(writer.Put(it->key(), it->value()), what);
+
+			records++;
+		}
+	}
+
+	check(it->status(), what);
+
+	// A write that landed between the two walks is a key this store now holds, and the second walk
+	// is the one that decides: there may be nothing left to take.
+	if (records == 0)
+	{
+		return 0;
+	}
+
+	check(writer.Finish(), what);
+
+	written(database->IngestExternalFile(handle, { kept.path() }, ingest), what);
+
+	return records;
 }
 
 void repository::rocksdb_repository::delete_records(const std::string &table_name, const scan::range &range)

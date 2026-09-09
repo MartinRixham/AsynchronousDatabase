@@ -15,6 +15,7 @@ namespace
 		{ "value_too_large", boost::beast::http::status::payload_too_large },
 		{ "invalid_range", boost::beast::http::status::bad_request },
 		{ "invalid_cursor", boost::beast::http::status::bad_request },
+		{ "invalid_partitions", boost::beast::http::status::bad_request },
 		{ "write_stalled", boost::beast::http::status::service_unavailable },
 		{ "no_leader", boost::beast::http::status::service_unavailable },
 		{ "stale_leader", boost::beast::http::status::conflict },

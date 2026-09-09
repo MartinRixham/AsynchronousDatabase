@@ -11,6 +11,7 @@
 #include <boost/json.hpp>
 
 #include "base64/base64.h"
+#include "cluster/partition.h"
 #include "cluster/fake_cluster.h"
 #include "repository/fake_repository.h"
 #include "router/router.h"
@@ -60,6 +61,24 @@ namespace
 	cluster::fake_cluster lone_node()
 	{
 		return cluster::fake_cluster(here, std::vector<std::string>());
+	}
+
+	std::string every_partition()
+	{
+		cluster::partition_set held;
+
+		held.set();
+
+		return cluster::encode_partitions(held);
+	}
+
+	std::string only(const std::string &key)
+	{
+		cluster::partition_set held;
+
+		held.set(cluster::partition_of(key));
+
+		return cluster::encode_partitions(held);
 	}
 
 	std::vector<std::string> keys(const router::response &response)
@@ -1816,4 +1835,84 @@ TEST(router_cluster_test, name_no_nodes_when_the_instance_stands_alone)
 	router::router router(repository, alone);
 
 	EXPECT_FALSE(router.route(get("/health")).json.contains("nodes"));
+}
+
+// How a node's share of a table reaches another node. It is served out of this store alone and is
+// never forwarded: what is being asked for is what this node holds.
+TEST(router_test, answers_a_file_of_the_records_of_the_partitions_asked_for)
+{
+	repository::fake_repository repository;
+	repository::fake_repository taking;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	write_record(router, "account", "1", "one");
+	write_record(router, "account", "2", "two");
+
+	taking.create_table(table::valid_table("account", std::vector<std::string>()));
+
+	router::response response = router.route(get("/table/account/file?partitions=" + only("1")));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.content_type, router::file_content_type);
+	EXPECT_EQ(1u, response.file.records);
+	EXPECT_TRUE(response.file.next.empty());
+
+	EXPECT_EQ(1u, taking.import_records("account", response.text));
+	EXPECT_TRUE(taking.read_record("account", "1").has_value());
+	EXPECT_FALSE(taking.read_record("account", "2").has_value());
+}
+
+TEST(router_test, answers_no_file_of_a_table_that_is_not_there)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router::response response = router.route(get("/table/account/file?partitions=" + every_partition()));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
+	EXPECT_EQ(error_code(response), "table_not_found");
+}
+
+// A set this cluster does not agree with is a node that cuts the keyspace up some other way, and
+// answering it would be answering a share nobody asked for.
+TEST(router_test, refuses_a_file_of_something_that_is_not_a_set_of_partitions)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+
+	EXPECT_EQ(error_code(router.route(get("/table/account/file"))), "invalid_partitions");
+	EXPECT_EQ(error_code(router.route(get("/table/account/file?partitions=ff"))), "invalid_partitions");
+}
+
+TEST(router_test, refuses_a_file_resumed_at_something_that_is_not_a_cursor)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+
+	router::response response = router.route(
+		get("/table/account/file?partitions=" + every_partition() + "&from=not%20base64"));
+
+	EXPECT_EQ(error_code(response), "invalid_cursor");
+}
+
+TEST(router_test, a_file_is_read_and_never_written)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+
+	router::response response = router.route(del("/table/account/file?partitions=" + every_partition()));
+
+	EXPECT_EQ(error_code(response), "method_not_allowed");
 }

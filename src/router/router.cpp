@@ -9,7 +9,10 @@
 #include <boost/json.hpp>
 #include <boost/beast.hpp>
 
+#include "base64/base64.h"
+#include "cluster/partition.h"
 #include "record/record.h"
+#include "repository/repository.h"
 #include "scan/scan.h"
 #include "url/url.h"
 #include "router.h"
@@ -236,6 +239,13 @@ router::response router::router::route(const request &request)
 		return route_table(request, path[1]);
 	}
 
+	// A node asking this one for its share of a table. It is answered from this store alone and is
+	// never forwarded: what is being asked for is what this node holds, and no other node has it.
+	if (path.size() == 3 && path[2] == "file")
+	{
+		return route_file(request, path[1]);
+	}
+
 	if (path[2] != "key")
 	{
 		return not_found("route for this path");
@@ -313,6 +323,51 @@ router::response router::router::route_range(const request &request, const std::
 	}
 
 	return scan_records(request, name);
+}
+
+router::response router::router::route_file(const request &request, const std::string &name)
+{
+	if (request.method != boost::beast::http::verb::get)
+	{
+		return method_not_allowed(request.method);
+	}
+
+	if (!repository.has_table(name))
+	{
+		return table_not_found(name);
+	}
+
+	std::optional<cluster::partition_set> partitions =
+		cluster::decode_partitions(url::read_parameter(request.query, "partitions"));
+
+	if (!partitions)
+	{
+		return error_response(
+			"invalid_partitions", "The partitions asked for are not a set of the partitions this cluster has.");
+	}
+
+	repository::share wanted;
+
+	wanted.partitions = *partitions;
+
+	std::string cursor = url::read_parameter(request.query, "from");
+
+	if (!cursor.empty())
+	{
+		std::optional<std::string> resumed = base64::decode(cursor);
+
+		if (!resumed)
+		{
+			return error_response("invalid_cursor", "The key to resume the file at is not base64.");
+		}
+
+		wanted.from = *resumed;
+		wanted.has_from = true;
+	}
+
+	repository::extract taken = repository.export_records(name, wanted);
+
+	return file_response(taken.file, taken.records, taken.has_more ? base64::encode(taken.last) : "");
 }
 
 router::response router::router::route_record(

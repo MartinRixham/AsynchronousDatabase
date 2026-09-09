@@ -9,6 +9,8 @@
 
 #include "record/record.h"
 #include "cluster/etcd_cluster.h"
+#include "cluster/partition.h"
+#include "http/curl_client.h"
 #include "cluster/forwarder.h"
 #include "server/server.h"
 #include "listening.h"
@@ -437,4 +439,35 @@ TEST(server_threads_test, take_the_directory_of_the_store_from_the_environment)
 	EXPECT_EQ(server::data_directory(), "/var/lib/asyncdb");
 
 	unsetenv("ASYNCDB_DATA");
+}
+
+// The two things a file of records says that its bytes cannot, over a real socket: the session
+// writes them as headers of its own and the client the other nodes use reads them back.
+TEST_F(server_test, a_file_of_records_says_what_it_carries_in_a_header)
+{
+	request("PUT", "/table/account", "{}");
+	request("PUT", "/table/account/key/1", "one");
+
+	cluster::partition_set every;
+
+	every.set();
+
+	http::curl_client curl(2);
+	http::request asked {
+		"GET",
+		"http://localhost:" + std::to_string(port) + "/table/account/file?partitions=" +
+			cluster::encode_partitions(every),
+		"",
+		std::vector<std::string>()
+	};
+
+	http::response answered = curl.send(asked, 5);
+
+	ASSERT_TRUE(answered.is_valid);
+	EXPECT_EQ(200, answered.status);
+	EXPECT_EQ("1", http::header_of(answered, router::records_header));
+
+	// Nothing to resume at, because the walk reached the end of the table.
+	EXPECT_TRUE(http::header_of(answered, router::next_header).empty());
+	EXPECT_FALSE(answered.body.empty());
 }

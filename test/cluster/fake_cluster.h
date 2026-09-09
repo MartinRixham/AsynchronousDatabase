@@ -80,6 +80,8 @@ namespace cluster
 
 		placement replicas(const std::string &key) const override;
 
+		partition_set holdings() const override;
+
 		std::vector<std::string> peers() const override;
 
 		std::vector<std::vector<std::string>> zones() const override;

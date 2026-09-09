@@ -6,21 +6,27 @@
 #include <boost/json.hpp>
 
 #include "log.h"
-#include "cluster/placements.h"
-#include "record/record.h"
+#include "cluster/partition.h"
 #include "table/table.h"
 #include "url/url.h"
 #include "rebuild.h"
 
 namespace
 {
-	router::request scan_request(const std::string &table, const std::string &from, bool has_from, size_t page)
+	// One file of the records another node holds that belong to this one. The partitions are this
+	// node's own, so what comes back is decided by the membership this node read rather than by
+	// the one the node answering happens to hold.
+	router::request file_request(
+		const std::string &table,
+		const std::string &partitions,
+		const std::string &from,
+		bool has_from)
 	{
 		router::request request;
 
 		request.method = boost::beast::http::verb::get;
-		request.path = std::vector<std::string> { "table", table, "key" };
-		request.query = "limit=" + std::to_string(page) + "&values=true";
+		request.path = std::vector<std::string> { "table", table, "file" };
+		request.query = "partitions=" + partitions;
 
 		if (has_from)
 		{
@@ -110,87 +116,52 @@ namespace
 		const cluster::cluster &nodes,
 		const std::string &node,
 		const std::string &name,
-		size_t page,
+		const std::string &partitions,
 		const std::chrono::steady_clock::time_point &deadline)
 	{
 		restored taken;
 		std::string from;
 		bool has_from = false;
 
-		// Where a key belongs is decided by its partition, so one walk asks that 256 times rather
-		// than once for every key of the zone being read.
-		cluster::placements where(nodes);
-
 		while (true)
 		{
-	// The page boundary is the only place a rebuild can be given up: what is written already
-	// is this node's own, and the page not asked for is all that is lost.
+			// The file boundary is the only place a rebuild can be given up: what is written
+			// already is this node's own, and the file not asked for is all that is lost.
 			if (out_of_time(deadline))
 			{
-				DEBUG("A scan of \"" + name + "\" on " + node + " ran out of time for a rebuild.");
+				DEBUG("A file of \"" + name + "\" from " + node + " ran out of time for a rebuild.");
 
 				return taken;
 			}
 
-			router::response answer = nodes.send(node, scan_request(name, from, has_from, page));
+			router::response answer = nodes.send(node, file_request(name, partitions, from, has_from));
 
-			if (answer.status != boost::beast::http::status::ok ||
-				!answer.json.contains("records") || !answer.json.at("records").is_array())
+			if (answer.status != boost::beast::http::status::ok)
 			{
-				DEBUG("Node " + node + " did not answer a scan of \"" + name + "\" for a rebuild.");
+				DEBUG("Node " + node + " did not answer for a file of \"" + name + "\" for a rebuild.");
 
 				return taken;
 			}
 
-			const boost::json::array &records = answer.json.at("records").as_array();
-			std::string last;
-			bool has_last = false;
-			bool read_any = false;
+			taken.records += repository.import_records(name, answer.text);
 
-			for (size_t i = 0; i < records.size(); i++)
-			{
-				if (!records[i].is_object() || !records[i].as_object().contains("key") ||
-					!records[i].as_object().at("key").is_string())
-				{
-					continue;
-				}
-
-				const boost::json::object &object = records[i].as_object();
-				std::string key = field(object, "key");
-
-				last = key;
-				has_last = true;
-
-				if (has_from && key == from)
-				{
-					continue;
-				}
-
-				read_any = true;
-
-				if (where.of(key).local)
-				{
-					repository.write_record(name, record::valid_record(key, field(object, "value")));
-
-					taken.records++;
-				}
-			}
-
-			if (!answer.json.contains("next"))
+			// Nowhere to resume is a walk that reached the end of the table.
+			if (answer.file.next.empty())
 			{
 				taken.whole = true;
 
 				return taken;
 			}
 
-			if (!has_last || !read_any)
+			// A file that resumes where the one before it did is a walk that would ask for ever.
+			if (has_from && answer.file.next == from)
 			{
-				DEBUG("A scan of \"" + name + "\" on " + node + " made no progress, so the rebuild stops.");
+				DEBUG("A file of \"" + name + "\" from " + node + " made no progress, so the rebuild stops.");
 
 				return taken;
 			}
 
-			from = last;
+			from = answer.file.next;
 			has_from = true;
 		}
 	}
@@ -199,7 +170,7 @@ namespace
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
-		size_t page,
+		const std::string &partitions,
 		const std::chrono::steady_clock::time_point &deadline)
 	{
 		restored taken;
@@ -221,7 +192,7 @@ namespace
 
 			for (size_t j = 0; j < zone.size(); j++)
 			{
-				restored copied = copy_table(repository, nodes, zone[j], name, page, deadline);
+				restored copied = copy_table(repository, nodes, zone[j], name, partitions, deadline);
 
 				taken.records += copied.records;
 
@@ -241,7 +212,6 @@ namespace
 size_t rebuild::rebuild(
 	repository::repository &repository,
 	const cluster::cluster &nodes,
-	size_t page,
 	long seconds)
 {
 	if (!repository.list_tables().empty())
@@ -259,6 +229,10 @@ size_t rebuild::rebuild(
 	std::chrono::steady_clock::time_point deadline =
 		std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
 
+	// Read once, because it is what every file of every table of every zone is asked for and the
+	// membership this node is rebuilding against is one moment of it.
+	std::string partitions = cluster::encode_partitions(nodes.holdings());
+
 	for (size_t i = 1; i < zones.size(); i++)
 	{
 		if (zones[i].empty())
@@ -273,7 +247,7 @@ size_t rebuild::rebuild(
 			return 0;
 		}
 
-		restored taken = from_zone(repository, nodes, zones[i], page, deadline);
+		restored taken = from_zone(repository, nodes, zones[i], partitions, deadline);
 
 		if (taken.whole)
 		{

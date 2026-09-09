@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -363,4 +364,52 @@ TEST(partition_test, the_zones_of_a_scan_hold_every_node_but_this_one)
 
 	EXPECT_EQ(asked.size(), zoned.size() - 1);
 	EXPECT_EQ(asked.count("http://asyncdb-3:8080"), 0u);
+}
+
+TEST(partition_test, a_partition_set_survives_being_written_down_and_read_back)
+{
+	cluster::partition_set held;
+
+	held.set(0);
+	held.set(1);
+	held.set(97);
+	held.set(cluster::partition_count - 1);
+
+	std::optional<cluster::partition_set> read = cluster::decode_partitions(cluster::encode_partitions(held));
+
+	ASSERT_TRUE(read.has_value());
+	EXPECT_EQ(held, *read);
+}
+
+TEST(partition_test, a_partition_set_is_written_down_at_one_length_whatever_is_in_it)
+{
+	cluster::partition_set none;
+	cluster::partition_set every;
+
+	every.set();
+
+	EXPECT_EQ(cluster::encode_partitions(none).size(), cluster::encode_partitions(every).size());
+	EXPECT_EQ(cluster::partition_count / 4, cluster::encode_partitions(every).size());
+}
+
+TEST(partition_test, the_empty_set_and_the_whole_of_it_are_read_back_as_themselves)
+{
+	cluster::partition_set every;
+
+	every.set();
+
+	EXPECT_EQ(0u, cluster::decode_partitions(cluster::encode_partitions(cluster::partition_set()))->count());
+	EXPECT_EQ(cluster::partition_count, cluster::decode_partitions(cluster::encode_partitions(every))->count());
+}
+
+// A set this cluster does not agree with is a node asking for a keyspace cut up some other way,
+// which is refused rather than read as whatever the first characters happen to say.
+TEST(partition_test, a_set_that_is_not_this_many_partitions_is_no_set_at_all)
+{
+	std::string whole = cluster::encode_partitions(cluster::partition_set());
+
+	EXPECT_FALSE(cluster::decode_partitions("").has_value());
+	EXPECT_FALSE(cluster::decode_partitions(whole.substr(1)).has_value());
+	EXPECT_FALSE(cluster::decode_partitions(whole + "0").has_value());
+	EXPECT_FALSE(cluster::decode_partitions(whole.substr(1) + "q").has_value());
 }

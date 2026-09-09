@@ -267,6 +267,7 @@ stays missing until the record is written again.
 | `GET` `/table`, `GET /table/{table}` | Answered where they are asked. Every node holds every table |
 | `GET` `/table/{table}/key` | Asked of **one zone** — this node's own — and the pages merged back into key order |
 | `DELETE` `/table/{table}/key` | Carried out on every node, because every node holds a share of the range |
+| `GET /table/{table}/file` | Answered out of **this node's own store**, and never forwarded: what is being asked for is what this node holds |
 | `GET /health` | Answered where it is asked, and names the nodes and zones it can see |
 
 Nodes keep their connections to each other open between requests, so a forwarded
@@ -305,6 +306,50 @@ has claimed them.
 `zones` is absent when no node in the membership names one, so it is also the way
 to see that a cluster meant to keep a copy per zone is keeping one: the number of
 zones is the number of copies.
+
+## Moving a share of a table
+
+Two passes move records between nodes rather than serving anybody:
+[a rebuild](/runbook/rebuild) fills a node that came back empty, and
+[a reconcile](/runbook/rebuild#when-ownership-moves) moves the records whose owner
+moved. Both want the same thing of another node — *the part of a table that
+belongs to me* — and both ask for it the same way.
+
+```
+GET /table/{table}/file?partitions={set}[&from={cursor}]
+```
+
+`partitions` is the set of the 256 partitions the node asking for the file holds,
+written as 64 hexadecimal characters. The answer is a file of the records of that
+table whose keys fall in that set, `application/octet-stream`, with two headers
+of its own:
+
+| Header | Is |
+| --- | --- |
+| `X-Asyncdb-Records` | How many records the file carries |
+| `X-Asyncdb-Next` | Base64 of the key the walk reached, absent when it reached the end of the table |
+
+**The set is the asking node's, not the answering node's.** The node serving the
+file does not ask its own membership anything: it filters by the key's partition,
+which is a function of the key and nothing else. So two nodes a moment apart in
+what they think the cluster is still agree on what was sent, and a wrong set is a
+wrong file rather than a disagreement.
+
+**One file is a walk of 64 MiB of the table, not 64 MiB of records.** The budget
+is what the walk *read*, so a node that holds a sixth of a zone reads its way
+through that table once over the whole transfer rather than once for every file
+of it — and a file the partitions emptied still moves the walk along, which is
+what `X-Asyncdb-Next` says. A share larger than one file is several of them,
+each resumed at the key the one before it reached.
+
+Why a file rather than a scan: a scan pages a hundred records at a time, so a
+node holding hundreds of gigabytes would need millions of round trips to be
+filled, which is not a thing that finishes. A file is one round trip for as much
+of the table as the budget covers.
+
+**A file never overwrites.** The store it is taken into keeps whatever it already
+holds for a key the file also carries — see
+[what makes a fetch safe](/runbook/rebuild#when-ownership-moves).
 
 ## Scans across a cluster
 

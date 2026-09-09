@@ -1,4 +1,5 @@
 #include <boost/json.hpp>
+#include <boost/lexical_cast/try_lexical_convert.hpp>
 
 #include "log.h"
 #include "router/api_error.h"
@@ -52,15 +53,22 @@ namespace
 		return headers;
 	}
 
-	router::response to_response(const std::string &node, const http::response &answer, bool head)
+	// What a file of records said beside its bytes. A node that answered anything else says
+	// nothing here, which is a transfer of no records with nowhere to resume.
+	router::transfer transfer_of(const http::response &answer)
 	{
-		if (!answer.is_valid)
-		{
-			return router::error_response(
-				"storage_error",
-				"Node \"" + node + "\" did not answer: " + answer.message + ".");
-		}
+		router::transfer file;
 
+		boost::conversion::try_lexical_convert(
+			http::header_of(answer, router::records_header), file.records);
+
+		file.next = http::header_of(answer, router::next_header);
+
+		return file;
+	}
+
+	router::response body_of(const std::string &node, const http::response &answer, bool head)
+	{
 		boost::beast::http::status status = static_cast<boost::beast::http::status>(answer.status);
 
 		if (head)
@@ -89,6 +97,22 @@ namespace
 		}
 
 		return router::json_response(status, value.as_object());
+	}
+
+	router::response to_response(const std::string &node, const http::response &answer, bool head)
+	{
+		if (!answer.is_valid)
+		{
+			return router::error_response(
+				"storage_error",
+				"Node \"" + node + "\" did not answer: " + answer.message + ".");
+		}
+
+		router::response response = body_of(node, answer, head);
+
+		response.file = transfer_of(answer);
+
+		return response;
 	}
 }
 

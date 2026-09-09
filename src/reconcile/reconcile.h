@@ -8,8 +8,8 @@
 
 namespace reconcile
 {
-	// How many keys a page of a reconcile asks for, of another node's share or of this node's own
-	// store.
+	// How many keys a page of a reconcile walks of this node's own store, which is the half that
+	// gives records up. The half that takes them asks for a file and not for a page.
 	constexpr size_t default_page = 100;
 
 	// How long one pass is given, half of it to each half of the pass. It is short because a node

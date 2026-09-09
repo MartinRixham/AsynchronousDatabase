@@ -217,9 +217,13 @@ protected:
 		return false;
 	}
 
+	// The rule the cluster itself owns by: a key belongs to a partition, and it is the partition
+	// that is hashed against the nodes.
 	std::shared_ptr<server::server> &owner(const std::string &key)
 	{
-		return cluster::owner_of(key, { node(first), node(second) }) == node(first) ? first : second;
+		std::string partition = cluster::partition_name(cluster::partition_of(key));
+
+		return cluster::owner_of(partition, { node(first), node(second) }) == node(first) ? first : second;
 	}
 
 	std::shared_ptr<server::server> &stranger(const std::string &key)

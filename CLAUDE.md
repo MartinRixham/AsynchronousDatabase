@@ -416,8 +416,9 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 - **`url`** splits the target at its unencoded slashes *before* percent-decoding each segment, so a key
   containing `/`, `?` or a zero byte stays one segment. Query values are decoded the same way.
 - **`router::router`** matches routes by hand — `/health`, `/table`, `/table/{table}`,
-  `/table/{table}/key` and `/table/{table}/key/{key}` — and returns a `router::response` (status,
-  content type, and either a `boost::json::object` or the raw text of a value). `router/api_error.cpp`
+  `/table/{table}/key`, `/table/{table}/key/{key}` and `/table/{table}/file` — and returns a
+  `router::response` (status, content type, and either a `boost::json::object` or the raw text of a
+  value). `router/api_error.cpp`
   is the one place a documented error code is mapped to a status.
 - **`http::client`** is the seam over libcurl, and `curl_client` keeps **one handle per thread**,
   reset before each request — `http::handle` is that one easy handle and `http::group` the multi
@@ -435,7 +436,9 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   nodes hold this key" and "ask that node". `cluster::replicas` answers a `cluster::placement` —
   whether this node holds a copy, and the other nodes that do, this node's own zone first.
   `cluster::zones` groups the membership for a scan: the nodes of each zone, this node's own first,
-  which is why a scan asks one zone rather than every node. `cluster::etcd_cluster` registers
+  which is why a scan asks one zone rather than every node. `cluster::holdings` is `replicas` asked of
+  every partition at once, because a pass that moves records has no key to ask about: what it asks
+  another node for is a share, and a share is a set of partitions. `cluster::etcd_cluster` registers
   `/asyncdb/node/{address}` in etcd on a lease with `{"node":...,"zone":...}` as its value (a bare
   address is still read, as a node in no zone), renews it on a thread of its own, and reads the
   membership back — and **a membership of fewer than two nodes is this node holding every key**,
@@ -443,14 +446,20 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   the seam for standing alone. The seam itself is `cluster/cluster.h`, and the rest of the
   directory is what stands behind it: `partition.h` is the hashing — `partition_of` is the 256
   partitions, `owner_of` is rendezvous hashing over a set of nodes, `owners_of` runs it once per
-  zone and `zones_of` is the grouping behind `zones()`; `cluster::forwarder` is how a request
+  zone and `zones_of` is the grouping behind `zones()`; `partition_set` is 256 bits of them and
+  `encode_partitions`/`decode_partitions` are how one travels, 64 hexadecimal characters wide
+  whatever is in it; `cluster::forwarder` is how a request
   travels, `forward` and `forward_all` over the `http::client` it is handed, and it is handed to
   `etcd_cluster` in turn rather than made inside it; `member.h` is `member` and `membership`,
   the whole list held as a `shared_ptr<const vector<member>>` and swapped rather than edited, so a
   reader loads it without excluding the thread that replaces it; and `placements.h` answers
   `replicas` once a partition rather than once a key, which is what a pass walking a million keys
   asks through.
-- **`repository::repository`** is the pure-virtual seam, over tables, records, scans and range deletes.
+- **`repository::repository`** is the pure-virtual seam, over tables, records, scans, range deletes and
+  the **files a node's share of a table travels in** — `export_records` writes one and `import_records`
+  takes one. It is `cluster::partition_set` that says which records a file carries, so the seam includes
+  `cluster/partition.h`: what a store is asked to walk for is a set of partitions, and the hashing that
+  answers "which partition is this key in" is a pure function of the key.
   `rocksdb_repository` makes each table a **column family** and keeps its document in the default one
   under `"TABLE_<name>"`; dropping a table drops the column family, so the data goes with it. The
   handle map is guarded by a `shared_mutex`. Every write goes through `written` rather than `check`,
@@ -495,9 +504,25 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   because a record can only be written where its table is; a scan is asked of **one zone** — this
   node's own, since a zone holds a copy of the whole keyspace — and merged back into key order,
   falling back to another zone when a node of that one does not answer. A forwarded request carries
-  `X-Asyncdb-Forwarded` and is served where it lands, which is what stops two nodes bouncing it.
+  `X-Asyncdb-Forwarded` and is served where it lands, which is what stops two nodes bouncing it. A
+  `GET /table/{table}/file` is the same thing by construction: it is answered out of the store it
+  landed on and asks the membership nothing.
   `doc/database/cluster.md` is the spec, including what this deliberately does not do (no read
   repair, no replication log, and a write that needs both a leader and every copy).
+- **A share of a table moves as a file, never a record at a time.** `GET /table/{table}/file?partitions=`
+  is what a rebuild and a reconcile's fetch half both ask for: the partitions are the *asking* node's,
+  so the node answering filters by `partition_of` and asks its own membership nothing, and two nodes a
+  moment apart still agree on what was sent. The budget — `repository::max_file_bytes`, 64 MiB — is
+  what the walk **read** rather than what it wrote, so a node holding a sixth of a zone reads through
+  the table once over the whole transfer, and a file the partitions emptied still moves the walk along.
+  `X-Asyncdb-Records` and `X-Asyncdb-Next` are what the bytes cannot say: how many records, and base64
+  of the key to resume at, absent at the end of the table. Paging a hundred records at a time over HTTP
+  is a round trip per hundred, which is not a thing a node holding hundreds of gigabytes finishes.
+- **A file never overwrites.** `import_records` keeps whatever the store already holds for a key the
+  file also carries, which is what makes the fetch half safe: this node owns the key now, so every
+  write since the ownership moved landed here and the file was written by the node that had it before.
+  It is the store that decides and not the caller — the RocksDB one walks the incoming file once to see
+  whether anything is held at all, and ingests the file as it stands when nothing is.
 - **Records move when ownership moves, and only then.** A membership change redraws the split inside
   a zone without moving a record, so `reconcile::reconcile` does: it **fetches** what this node now
   owns and holds nothing for, from every other node, and **clears down** what it no longer owns.
@@ -552,11 +577,23 @@ ephemeral port a test binds — because production reaches those through the oth
 and a test that cannot substitute anything is a test against etcd and a fixed port. The line is
 whether the code is a way *in* or a second copy of what production already does.
 
+**How much of the store is in memory is `ASYNCDB_MEMORY`,** mebibytes, read by `server::memory_size()`
+the way `ASYNCDB_DATA` and `ASYNCDB_THREADS` are read beside it and handed to the repository. It is one
+number because it is one thing to size to the instance: three quarters of it is the block cache and a
+quarter is the memtables, capped together by `db_write_buffer_size` so that a store of many tables is
+not a store of many memtables. Everything else the store is opened with is fixed — a bounded reader
+cache, a two level index and a partitioned filter charged to the cache (a node holding a share of a
+terabyte is thousands of files, and one index and one filter block apiece is metadata larger than the
+machine), and the compression the build was actually linked against, asked for at run time because a
+compression this binary does not have is a store it cannot read back.
+
 **The store is one directory, named by `ASYNCDB_DATA`.** `server::data_directory()` reads it and
 defaults to `/var/lib/asyncdb`, which the image mounts a volume over — a named one per node in
 `docker-compose.yml`, a bind of the host's own in `cloudformation.yaml` — so an instance that is
 started again opens what the one before it wrote. The repository opens the directory **as it stands**
-rather than something random underneath it.
+rather than something random underneath it, and keeps one subdirectory of its own, `transfer/`, where a
+file being exported or imported is built. It is emptied at open: what is in it is a transfer the
+process before this one died holding, and there is nothing to resume it with.
 
 **Gotcha: RocksDB locks the directory it opens**, so two servers in one process are two directories —
 which is why the server constructors take one and `cluster_test` gives its two `/tmp/asyncdb/first`

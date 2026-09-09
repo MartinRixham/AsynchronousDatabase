@@ -1,3 +1,4 @@
+#include <fstream>
 #include <memory>
 #include <set>
 #include <vector>
@@ -6,6 +7,7 @@
 #include <gtest/gtest.h>
 #include <boost/json/src.hpp>
 
+#include "cluster/partition.h"
 #include "repository/rocksdb_repository.h"
 #include "table/table.h"
 
@@ -412,4 +414,181 @@ TEST_F(repository_test, delete_a_range_that_runs_to_the_last_key)
 TEST_F(repository_test, writes_are_not_stalled)
 {
 	EXPECT_FALSE(repository->is_write_stalled());
+}
+
+namespace
+{
+	repository::share every_partition()
+	{
+		repository::share wanted;
+
+		wanted.partitions.set();
+
+		return wanted;
+	}
+}
+
+// The whole of what a rebuild does, over the two stores rather than over the network: a share is
+// one file, and the node it reaches reads it back as records of its own.
+TEST_F(repository_test, a_file_carries_a_table_from_one_store_to_another)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	repository->write_record("a_table", record::valid_record("1", "one"));
+	repository->write_record("a_table", record::valid_record("2", "two"));
+
+	repository::extract taken = repository->export_records("a_table", every_partition());
+
+	EXPECT_EQ(2u, taken.records);
+	EXPECT_FALSE(taken.has_more);
+	EXPECT_EQ(2u, other_repository->import_records("a_table", taken.file));
+
+	EXPECT_EQ("one", other_repository->read_record("a_table", "1").value_or(""));
+	EXPECT_EQ("two", other_repository->read_record("a_table", "2").value_or(""));
+}
+
+TEST_F(repository_test, a_file_carries_the_partitions_it_was_asked_for_and_no_others)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	repository->write_record("a_table", record::valid_record("1", "one"));
+	repository->write_record("a_table", record::valid_record("2", "two"));
+
+	repository::share wanted;
+
+	wanted.partitions.set(cluster::partition_of("1"));
+
+	repository::extract taken = repository->export_records("a_table", wanted);
+
+	EXPECT_EQ(1u, taken.records);
+	EXPECT_EQ(1u, other_repository->import_records("a_table", taken.file));
+
+	EXPECT_TRUE(other_repository->read_record("a_table", "1").has_value());
+	EXPECT_FALSE(other_repository->read_record("a_table", "2").has_value());
+}
+
+TEST_F(repository_test, a_file_that_carried_nothing_is_no_file_at_all)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	repository->write_record("a_table", record::valid_record("1", "one"));
+
+	repository::extract taken = repository->export_records("a_table", repository::share());
+
+	EXPECT_EQ(0u, taken.records);
+	EXPECT_TRUE(taken.file.empty());
+	EXPECT_EQ(0u, other_repository->import_records("a_table", taken.file));
+}
+
+TEST_F(repository_test, an_export_of_a_table_holding_nothing_carries_nothing)
+{
+	create_table("a_table");
+
+	repository::extract taken = repository->export_records("a_table", every_partition());
+
+	EXPECT_EQ(0u, taken.records);
+	EXPECT_FALSE(taken.has_more);
+	EXPECT_TRUE(taken.file.empty());
+}
+
+// What makes a fetch safe. The store being written to owns the key now, so every write since the
+// ownership moved landed there: the file was written by the node that used to own it and carries
+// the older of the two values.
+TEST_F(repository_test, a_store_keeps_what_it_holds_already_when_a_file_carries_that_key_too)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	repository->write_record("a_table", record::valid_record("1", "theirs"));
+	repository->write_record("a_table", record::valid_record("2", "theirs"));
+
+	other_repository->write_record("a_table", record::valid_record("1", "mine"));
+
+	repository::extract taken = repository->export_records("a_table", every_partition());
+
+	EXPECT_EQ(1u, other_repository->import_records("a_table", taken.file));
+
+	EXPECT_EQ("mine", other_repository->read_record("a_table", "1").value_or(""));
+	EXPECT_EQ("theirs", other_repository->read_record("a_table", "2").value_or(""));
+}
+
+// A share larger than one file is several of them, resumed from the key the walk reached rather
+// than from the last key written: a file the partitions emptied still moved the walk along.
+TEST_F(repository_test, a_walk_larger_than_one_file_resumes_where_it_reached)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	repository->write_record("a_table", record::valid_record("1", "one"));
+	repository->write_record("a_table", record::valid_record("2", "two"));
+	repository->write_record("a_table", record::valid_record("3", "three"));
+
+	repository::share wanted = every_partition();
+
+	// One record at a time, which is a budget the first record of any file spends.
+	wanted.bytes = 1;
+
+	repository::extract first = repository->export_records("a_table", wanted);
+
+	ASSERT_TRUE(first.has_more);
+	EXPECT_EQ("1", first.last);
+	EXPECT_EQ(1u, other_repository->import_records("a_table", first.file));
+
+	wanted.from = first.last;
+	wanted.has_from = true;
+
+	repository::extract second = repository->export_records("a_table", wanted);
+
+	ASSERT_TRUE(second.has_more);
+	EXPECT_EQ("2", second.last);
+	EXPECT_EQ(1u, other_repository->import_records("a_table", second.file));
+
+	wanted.from = second.last;
+
+	repository::extract third = repository->export_records("a_table", wanted);
+
+	EXPECT_FALSE(third.has_more);
+	EXPECT_EQ(1u, other_repository->import_records("a_table", third.file));
+
+	EXPECT_EQ(
+		keys(other_repository->scan_records("a_table", whole_table())),
+		(std::vector<std::string> { "1", "2", "3" }));
+}
+
+// The budget an operator sizes to the instance. It is the block cache and the memtables together,
+// and a store given a small one is a store that still opens and still answers.
+TEST_F(repository_test, a_store_serves_within_the_memory_budget_it_was_given)
+{
+	std::filesystem::remove_all("/tmp/asyncdb_small/");
+
+	repository::rocksdb_repository small("/tmp/asyncdb_small", 16 * 1024 * 1024);
+
+	small.create_table(table::valid_table("a_table", std::vector<std::string>()));
+	small.write_record("a_table", record::valid_record("1", "one"));
+
+	EXPECT_EQ("one", small.read_record("a_table", "1").value_or(""));
+}
+
+// A transfer that was in flight when the process before this one went leaves a file behind, and
+// there is nothing to resume it with. The store opening over it is what clears it away, and the
+// store itself opens as it was.
+TEST_F(repository_test, a_transfer_the_process_before_it_left_behind_goes_when_the_store_opens)
+{
+	create_table("a_table");
+	repository->write_record("a_table", record::valid_record("a key", "a value"));
+
+	std::filesystem::path left("/tmp/asyncdb/transfer/left-behind.sst");
+
+	std::ofstream(left) << "half of a file nothing can finish";
+
+	ASSERT_TRUE(std::filesystem::exists(left));
+
+	repository = nullptr;
+	repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
+
+	EXPECT_FALSE(std::filesystem::exists(left));
+	EXPECT_EQ(repository->read_record("a_table", "a key"), "a value");
 }

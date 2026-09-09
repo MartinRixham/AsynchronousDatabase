@@ -1,3 +1,7 @@
+#include <cctype>
+#include <cstring>
+#include <strings.h>
+
 #include <curl/curl.h>
 
 #include "log.h"
@@ -12,6 +16,49 @@ namespace
 		static_cast<std::string *>(body)->append(static_cast<const char *>(contents), size * count);
 
 		return size * count;
+	}
+
+	// Every header of this API's own, kept for the answer they belong to. A status line starts a
+	// block of them, so an answer that carried more than one block — a redirect, an interim answer
+	// — is read as the last block alone rather than as all of them at once.
+	size_t read_header(char *buffer, size_t size, size_t count, void *carried)
+	{
+		size_t length = size * count;
+		std::vector<std::pair<std::string, std::string>> *headers =
+			static_cast<std::vector<std::pair<std::string, std::string>> *>(carried);
+		std::string line(buffer, length);
+
+		if (line.compare(0, 5, "HTTP/") == 0)
+		{
+			headers->clear();
+
+			return length;
+		}
+
+		size_t colon = line.find(':');
+
+		if (colon == std::string::npos || colon < std::strlen(http::header_prefix))
+		{
+			return length;
+		}
+
+		std::string name = line.substr(0, colon);
+
+		if (strncasecmp(name.c_str(), http::header_prefix, std::strlen(http::header_prefix)) != 0)
+		{
+			return length;
+		}
+
+		size_t start = line.find_first_not_of(" \t", colon + 1);
+		size_t end = line.find_last_not_of(" \t\r\n");
+
+		headers->push_back(std::pair<std::string, std::string>(
+			name,
+			start == std::string::npos || end == std::string::npos || end < start
+				? ""
+				: line.substr(start, end - start + 1)));
+
+		return length;
 	}
 
 	CURL *thread_handle()
@@ -38,7 +85,7 @@ namespace
 	struct curl_slist *apply(
 		CURL *curl,
 		const http::request &request,
-		std::string *body,
+		http::response *response,
 		long timeout,
 		long connect_timeout)
 	{
@@ -57,7 +104,9 @@ namespace
 		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request.method.c_str());
 		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_body);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, body);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response->body);
+		curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, read_header);
+		curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response->headers);
 		curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
 		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connect_timeout);
 		curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
@@ -182,7 +231,7 @@ http::response http::curl_client::send(const request &request, long timeout_seco
 		return response;
 	}
 
-	struct curl_slist *headers = apply(curl, request, &response.body, timeout_seconds, connect_timeout_seconds);
+	struct curl_slist *headers = apply(curl, request, &response, timeout_seconds, connect_timeout_seconds);
 
 	complete(curl, curl_easy_perform(curl), request.url, &response);
 
@@ -238,7 +287,7 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 			continue;
 		}
 
-		lists[i] = apply(easy, requests[i], &responses[i].body, timeout_seconds, connect_timeout_seconds);
+		lists[i] = apply(easy, requests[i], &responses[i], timeout_seconds, connect_timeout_seconds);
 
 		// The answers are held still for the whole fan out, so a handle can carry a pointer to
 		// its own.

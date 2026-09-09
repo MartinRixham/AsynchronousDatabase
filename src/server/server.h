@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -25,6 +26,11 @@ namespace server
 	std::string data_directory();
 
 	int thread_pool_size();
+
+	// What the store may keep in memory, from ASYNCDB_MEMORY in mebibytes. It is read here rather
+	// than in the repository for the same reason the data directory is: a test that wants its own
+	// store hands one in, and only the binary reads the environment.
+	size_t memory_size();
 
 	// How often the membership is read to see whether it moved, which is how soon a node starts
 	// moving the records whose owner changed. It is a poll rather than a signal because the
@@ -81,7 +87,8 @@ namespace server
 			boost::asio::ip::port_type port,
 			int thread_count,
 			cluster::cluster &nodes,
-			const std::string &directory = data_directory());
+			const std::string &directory = data_directory(),
+			size_t memory_bytes = memory_size());
 
 		// A thread that is still joinable when it goes would take the process with it, so a server
 		// that was never closed still stops watching the membership here.

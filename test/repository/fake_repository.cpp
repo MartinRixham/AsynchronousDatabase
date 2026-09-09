@@ -1,10 +1,44 @@
 #include <algorithm>
+#include <optional>
 #include <vector>
+
+#include <boost/lexical_cast/try_lexical_convert.hpp>
 
 #include "fake_repository.h"
 
 namespace
 {
+	void append(std::string &file, const std::string &text)
+	{
+		file += std::to_string(text.size());
+		file += '\n';
+		file += text;
+	}
+
+	// One length prefixed string, leaving the position after it. Nothing when the file does not
+	// carry one there, which ends the read rather than guessing at the rest.
+	std::optional<std::string> take(const std::string &file, size_t &position)
+	{
+		size_t newline = file.find('\n', position);
+
+		if (newline == std::string::npos)
+		{
+			return std::nullopt;
+		}
+
+		size_t length = 0;
+
+		if (!boost::conversion::try_lexical_convert(file.substr(position, newline - position), length) ||
+			newline + 1 + length > file.size())
+		{
+			return std::nullopt;
+		}
+
+		position = newline + 1 + length;
+
+		return file.substr(newline + 1, length);
+	}
+
 	bool is_in_range(const std::string &key, const scan::range &range)
 	{
 		return (!range.has_from || key >= range.from) && (!range.has_to || key < range.to);
@@ -142,6 +176,99 @@ scan::page repository::fake_repository::scan_records(const std::string &table_na
 	}
 
 	return page;
+}
+
+// A file of this store is its records written out one after another, each behind its length. It is
+// not an SST and does not need to be: what a file carries is settled by the seam, and both ends of
+// a transfer between two of these are this code.
+repository::extract repository::fake_repository::export_records(
+	const std::string &table_name,
+	const share &wanted) const
+{
+	extract taken;
+
+	if (!has_table(table_name))
+	{
+		return taken;
+	}
+
+	const std::map<std::string, std::string> &table_records = records.at(table_name);
+	size_t bytes = 0;
+
+	for (std::map<std::string, std::string>::const_iterator it = table_records.begin();
+		it != table_records.end();
+		++it)
+	{
+		// A bound is inclusive, so every file after the first begins again at the key it resumed
+		// at.
+		if (wanted.has_from && it->first <= wanted.from)
+		{
+			continue;
+		}
+
+		if (wanted.partitions.test(cluster::partition_of(it->first)))
+		{
+			append(taken.file, it->first);
+			append(taken.file, it->second);
+
+			taken.records++;
+		}
+
+		// The budget of the real store, ended the way the real store ends it: what the walk read
+		// and not what it wrote.
+		bytes += it->first.size() + it->second.size();
+
+		if (bytes >= wanted.bytes)
+		{
+			taken.last = it->first;
+
+			std::map<std::string, std::string>::const_iterator next = it;
+
+			taken.has_more = ++next != table_records.end();
+
+			break;
+		}
+	}
+
+	if (taken.records == 0)
+	{
+		taken.file.clear();
+	}
+
+	return taken;
+}
+
+size_t repository::fake_repository::import_records(const std::string &table_name, const std::string &file)
+{
+	if (!has_table(table_name))
+	{
+		return 0;
+	}
+
+	std::map<std::string, std::string> &table_records = records[table_name];
+	size_t position = 0;
+	size_t taken = 0;
+
+	while (position < file.size())
+	{
+		std::optional<std::string> key = take(file, position);
+		std::optional<std::string> value = take(file, position);
+
+		if (!key || !value)
+		{
+			return taken;
+		}
+
+		// A key this store already holds is kept, which is what the real store does and what makes
+		// a fetch safe: what is here was written after the ownership moved and what is in the file
+		// was written before it.
+		if (table_records.try_emplace(*key, *value).second)
+		{
+			taken++;
+		}
+	}
+
+	return taken;
 }
 
 void repository::fake_repository::delete_records(const std::string &table_name, const scan::range &range)

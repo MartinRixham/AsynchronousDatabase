@@ -97,16 +97,18 @@ volume, or a `docker compose down -v` is what triggers it.
 3. Asks one node of that zone for the tables, and writes them straight into the
    store. The schema is *written*, not declared: the graph was validated when it
    was created, so nothing has to name its dependencies in order.
-4. Asks **every** node of that zone for its own share of each table, a page at a
-   time, and writes back every record it will own.
+4. Asks **every** node of that zone for
+   [a file of its own share of each table](/database/cluster#moving-a-share-of-a-table),
+   naming the partitions this node is about to hold, and takes each file into the
+   store as it arrives.
 5. Registers, and starts serving.
 
 Two details of the API carry it:
 
 | Used | Because |
 | --- | --- |
-| The forwarded header on every scan | A forwarded scan is served where it lands, so it answers one node's own share rather than its zone's merged copy — which is what lets a rebuild ask each node once and add up what they hold |
-| `from=` paging, not cursors | A cursor names the instance that issued it, so a node that restarted under a long rebuild would refuse the next page. A key is a position any node will take |
+| A file rather than a scan | A scan pages a hundred records at a time, so a node holding hundreds of gigabytes would need millions of round trips to be filled. A file is one round trip for as much of the table as the budget covers, and the transfer then waits on the bandwidth between the two nodes rather than on the time to ask |
+| The partitions named by the node asking, not the node answering | The node serving a file asks its own membership nothing: it filters by the key's partition, which is a function of the key alone. So a source a moment behind in what it thinks the cluster is still sends the right records |
 
 A zone with a node that does not answer is a zone that cannot give the whole of
 what it holds, so the **next zone is asked for the whole thing again** — the same
@@ -115,19 +117,27 @@ has, which is what it would have had anyway.
 
 The whole of it is bounded by a clock as well, at five minutes. Every round trip
 inside has a timeout of its own, but how many of them there are is a count of
-tables, pages and nodes — so the arithmetic that says "four timeouts is two
+tables, files and nodes — so the arithmetic that says "four timeouts is two
 minutes" is only ever wrong in one direction. A rebuild that runs out of time
 stops where it is and the node starts thin, which is a copy the cluster has
 rather than one it is still waiting for. It will not try again: an empty store is
 the only trigger, and the store is no longer empty.
+
+**That clock is what a store too large to move runs into.** A rebuild is bounded
+by bandwidth now rather than by round trips, so what five minutes buys is a
+figure an operator can work out: it is the link between two nodes times five
+minutes, and a share larger than that is a node that starts thin every time. A
+file boundary is the only place it stops, so what is lost is the file it did not
+ask for and never a file half taken.
 
 Nothing the rebuild does is worth dying over either. A store that refuses a
 write, or a neighbour that answers something unreadable, is logged and the node
 starts — because a process that fell over here would fall over in the same place
 when it was restarted, and never register at all.
 
-Pages carry values, so they are asked in hundreds rather than in thousands: a
-value may be sixteen megabytes, and a page is built whole in memory at both ends.
+A file is held whole in memory at both ends, which is what sizes the budget: one
+file is a walk of 64 MiB of the table, and a table this node holds a fraction of
+is a file that fraction of the size.
 
 ## Watching it
 
@@ -198,10 +208,12 @@ Clearing down alone is a shrink that loses records rather than staling them.
 Fetching alone is a store that only grows and a stale value waiting for the next
 membership change.
 
-**Both walks carry keys and no values.** Another node's share is every record it
-holds, and what a pass wants of it is the fraction whose owner moved, so the
-values that cross the network are asked for one record at a time once it is known
-which those are.
+**The two halves ask for different things.** The fetch asks each node for
+[a file of the partitions this node now holds](/database/cluster#moving-a-share-of-a-table),
+so the only records that cross the network are the ones being taken over, and
+they cross in one transfer rather than one round trip apiece. The clear down
+walks this node's own store carrying keys and no values, because what is being
+decided there is where a record belongs and not what is in it.
 
 ### What makes deleting safe
 
@@ -220,9 +232,10 @@ pass.
 - **It is not a repair.** It moves what some node still has. A key whose owner in
   every zone was terminated by the same update is gone, and this does not bring
   it back.
-- **It does not choose between two values.** It never overwrites a record this
-  node already holds: a write reaches every copy, so another node's answer is the
-  same value or an older one.
+- **It does not choose between two values.** A file never overwrites a record this
+  node already holds — the store keeps what it has and takes the rest. This node
+  owns the key now, so every write since the ownership moved landed here, and what
+  the file carries was written before it did.
 - **It is not triggered by anything but the membership.** A store that matches the
   membership it was left with is never walked, so a node whose cluster does not
   change never runs a pass at all.

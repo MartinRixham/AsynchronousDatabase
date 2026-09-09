@@ -59,6 +59,21 @@ std::string server::data_directory()
 	return configured == NULL || *configured == '\0' ? "/var/lib/asyncdb" : configured;
 }
 
+size_t server::memory_size()
+{
+	const char *configured = getenv("ASYNCDB_MEMORY");
+	size_t mebibytes = 0;
+
+	if (configured != NULL &&
+		boost::conversion::try_lexical_convert(std::string(configured), mebibytes) &&
+		mebibytes > 0)
+	{
+		return mebibytes * 1024 * 1024;
+	}
+
+	return repository::default_memory_bytes;
+}
+
 int server::thread_pool_size()
 {
 	const char *configured = getenv("ASYNCDB_THREADS");
@@ -84,11 +99,12 @@ server::server::server(
 	boost::asio::ip::port_type port,
 	int threads,
 	cluster::cluster &cluster_nodes,
-	const std::string &directory):
+	const std::string &directory,
+	size_t memory_bytes):
 	thread_count(threads),
 	io_context(thread_count),
 	acceptor(boost::asio::make_strand(io_context)),
-	repository(repository::rocksdb_repository(directory)),
+	repository(repository::rocksdb_repository(directory, memory_bytes)),
 	nodes(cluster_nodes),
 	router(router::router(repository, nodes))
 {

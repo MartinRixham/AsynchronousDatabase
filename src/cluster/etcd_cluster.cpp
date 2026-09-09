@@ -227,6 +227,36 @@ cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 	return where;
 }
 
+cluster::partition_set cluster::etcd_cluster::holdings() const
+{
+	membership registered = snapshot();
+	partition_set held;
+
+	// A membership of fewer than two nodes is this node holding every key, which is every
+	// partition — the cluster an instance told nothing runs as.
+	if (registered->size() < 2)
+	{
+		held.set();
+
+		return held;
+	}
+
+	for (size_t partition = 0; partition < partition_count; partition++)
+	{
+		std::vector<member> owners = ::cluster::owners_of(::cluster::partition_name(partition), *registered);
+
+		for (size_t i = 0; i < owners.size(); i++)
+		{
+			if (owners[i].node == configuration.node)
+			{
+				held.set(partition);
+			}
+		}
+	}
+
+	return held;
+}
+
 std::vector<std::string> cluster::etcd_cluster::peers() const
 {
 	membership registered = snapshot();
