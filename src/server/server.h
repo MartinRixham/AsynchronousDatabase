@@ -80,8 +80,9 @@ namespace server
 	public:
 		explicit server(
 			boost::asio::ip::port_type port,
-			int thread_count = thread_pool_size(),
-			const std::string &directory = data_directory());
+			int thread_count,
+			const std::string &directory,
+			const cluster::config &configuration = cluster::config());
 
 		// The cluster a test names itself, rather than the one etcd names. Nothing is registered
 		// and nothing is renewed: the membership is what it was given.
@@ -89,7 +90,8 @@ namespace server
 			boost::asio::ip::port_type port,
 			int thread_count,
 			cluster::cluster &nodes,
-			const std::string &directory = data_directory());
+			const std::string &directory = data_directory(),
+			const cluster::config &configuration = cluster::config());
 
 		// A thread that is still joinable when it goes would take the process with it, so a server
 		// that was never closed still stops watching the membership here.

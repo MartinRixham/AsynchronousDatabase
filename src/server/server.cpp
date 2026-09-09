@@ -33,9 +33,7 @@ namespace
 	// The membership as it stands against the one a node last acted on. Two readings naming the
 	// same nodes in the same zones are the same membership: the order is etcd's own, which is name
 	// order, so a difference here is a node that joined, left, or moved zone.
-	bool same_membership(
-		const std::vector<cluster::member> &before,
-		const std::vector<cluster::member> &after)
+	bool same_membership(const std::vector<cluster::member> &before, const std::vector<cluster::member> &after)
 	{
 		if (before.size() != after.size())
 		{
@@ -66,9 +64,7 @@ int server::thread_pool_size()
 	const char *configured = getenv("ASYNCDB_THREADS");
 	int threads = 0;
 
-	if (configured != NULL &&
-		boost::conversion::try_lexical_convert(std::string(configured), threads) &&
-		threads > 0)
+	if (configured != NULL && boost::conversion::try_lexical_convert(std::string(configured), threads) && threads > 0)
 	{
 		return threads;
 	}
@@ -87,8 +83,9 @@ std::chrono::seconds server::reconcile_interval()
 server::server::server(
 	boost::asio::ip::port_type port,
 	int threads,
-	const std::string &directory):
-		server(port, threads, cluster::from_environment(), NULL, directory)
+	const std::string &directory,
+	const cluster::config &configuration):
+	server(port, threads, configuration, NULL, directory)
 {
 }
 
@@ -96,8 +93,9 @@ server::server::server(
 	boost::asio::ip::port_type port,
 	int threads,
 	cluster::cluster &cluster_nodes,
-	const std::string &directory):
-		server(port, threads, cluster::config(), &cluster_nodes, directory)
+	const std::string &directory,
+	const cluster::config &configuration):
+	server(port, threads, configuration, &cluster_nodes, directory)
 {
 }
 
@@ -107,13 +105,13 @@ server::server::server(
 	const cluster::config &configuration,
 	cluster::cluster *external,
 	const std::string &directory):
-		thread_count(threads),
-		io_context(thread_count),
-		acceptor(boost::asio::make_strand(io_context)),
-		repository(repository::rocksdb_repository(directory)),
-		own_nodes(cluster::etcd_cluster(configuration)),
-		nodes(external == NULL ? static_cast<cluster::cluster &>(own_nodes) : *external),
-		router(router::router(repository, nodes))
+	thread_count(threads),
+	io_context(thread_count),
+	acceptor(boost::asio::make_strand(io_context)),
+	repository(repository::rocksdb_repository(directory)),
+	own_nodes(cluster::etcd_cluster(configuration)),
+	nodes(external == NULL ? static_cast<cluster::cluster &>(own_nodes) : *external),
+	router(router::router(repository, nodes))
 {
 	boost::beast::error_code error;
 	boost::asio::ip::tcp::endpoint endpoint { boost::asio::ip::address_v4::any(), port };

@@ -5,6 +5,7 @@
 #include <boost/json/src.hpp>
 
 #include "server/server.h"
+#include "cluster/etcd_cluster.h"
 
 std::shared_ptr<server::server> database_server;
 
@@ -21,7 +22,12 @@ int main(void)
 	// node talks to etcd and to its neighbours from several threads at once.
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 
-	database_server = std::make_shared<server::server>(8080);
+	int thread_pool_size = server::thread_pool_size();
+	std::string data_directory = server::data_directory();
+	cluster::config configuration = cluster::from_environment();
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(configuration);
+
+	database_server = std::make_shared<server::server>(8080, thread_pool_size, cluster, data_directory, configuration);
 
 	signal(SIGINT, handle_signal);
 	signal(SIGTERM, handle_signal);
