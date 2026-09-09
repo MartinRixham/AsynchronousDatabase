@@ -4,7 +4,6 @@
 #include <filesystem>
 
 #include <gtest/gtest.h>
-#include <rocksdb/db.h>
 #include <boost/json/src.hpp>
 
 #include "repository/rocksdb_repository.h"

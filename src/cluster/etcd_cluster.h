@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
-#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <thread>

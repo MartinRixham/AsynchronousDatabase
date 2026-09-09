@@ -4,10 +4,8 @@
 #include <gtest/gtest.h>
 #include <boost/json.hpp>
 
-#include "cluster/cluster.h"
 #include "rebuild/rebuild.h"
 #include "router/api_error.h"
-#include "record/record.h"
 #include "table/table.h"
 #include "url/url.h"
 #include "../cluster/fake_cluster.h"

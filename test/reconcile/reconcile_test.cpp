@@ -6,7 +6,6 @@
 #include <gtest/gtest.h>
 #include <boost/json.hpp>
 
-#include "cluster/cluster.h"
 #include "reconcile/reconcile.h"
 #include "record/record.h"
 #include "table/table.h"

@@ -9,7 +9,6 @@
 
 #include "base64/base64.h"
 #include "cluster/etcd_cluster.h"
-#include "cluster/partition.h"
 #include "http/fake_http_client.h"
 
 namespace

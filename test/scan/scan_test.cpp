@@ -1,7 +1,6 @@
 #include <string>
 
 #include <gtest/gtest.h>
-#include <boost/json.hpp>
 
 #include "scan/scan.h"
 
