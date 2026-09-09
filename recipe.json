@@ -42,6 +42,7 @@
 				"phase": "verify",
 				"config":
 					{
+						"options": "--suppressions=valgrind.supp"
 					}
 			}
 		],

@@ -1,0 +1,18 @@
+# Leaks the memcheck in valgrind.chevre is told to pass over, because they are
+# not this project's to fix: a block of ours belongs in the leak summary, where
+# the build fails on it.
+
+# A thread_local of RocksDB's own, on one of the background threads it flushes
+# and compacts on. The destructor libstdc++ registers for it is freed when the
+# thread exits, and these threads never do: they belong to the default Env,
+# which RocksDB deliberately never destroys, so they are running when the
+# process ends. Nothing here holds the pointer and nothing here can free it.
+{
+	rocksdb-background-thread-local
+	Memcheck:Leak
+	match-leak-kinds: definite,possible
+	fun:_ZnwmRKSt9nothrow_t
+	fun:__cxa_thread_atexit
+	...
+	fun:_ZN7rocksdb14ThreadPoolImpl4Impl8BGThreadEm
+}

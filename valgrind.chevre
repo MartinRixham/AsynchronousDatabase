@@ -13,6 +13,10 @@
 # musl, where a block still held at exit by libstdc++, RocksDB or curl would fail
 # the build untested. Hence the grep: the summary names the kinds separately, so
 # a count that is not zero in either of those two is what stops the build.
+#
+# valgrind.supp is the other side of that line: a block a library holds on a
+# thread it never joins is counted as lost, and no code here can free it, so it
+# is named there and passed over rather than left to fail the build.
 
 options="$(echo "$@" | jq -r .options | not is_null)"
 args="$(echo "$@" | jq -r .args | not is_null)"

@@ -46,7 +46,11 @@ Notes:
   `build/test/test_main.valgrind`. **A definite or possible leak fails the build**, and the suite is clean of
   both. It is the plugin's own grep of the leak summary that fails it, and not `--error-exitcode=1`: that
   would fail on every error valgrind reports, still reachable included, and the release image builds on musl,
-  where a block libstdc++ or RocksDB still holds at exit would fail the build untested.
+  where a block libstdc++ or RocksDB still holds at exit would fail the build untested. `valgrind.supp` is
+  the exception the plugin is given on the command line, and it names one block and no more: the thread_local
+  RocksDB registers on a background thread of the default `Env`, which it never destroys, so the thread is
+  still running when the process ends and nothing here can free what it holds. A leak that is ours belongs in
+  the summary, where the build fails on it.
 - **A test that starts a server has to stop it.** `serve()` returns only when the acceptor is closed, and an
   always-pending accept holds a `shared_ptr` to the server, so a detached serving thread leaks the server,
   its thread pool and its RocksDB. `server_test` closes and joins in `TearDown`.
