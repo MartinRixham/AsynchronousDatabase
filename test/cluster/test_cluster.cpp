@@ -1,9 +1,9 @@
-#include "cluster/forwarder.h"
 #include "cluster/partition.h"
 #include "test_cluster.h"
 
 cluster::test_cluster::test_cluster():
-	curl(http::curl_client(10, 2))
+	curl(http::curl_client(2)),
+	request_forwarder(forwarder(curl))
 {
 }
 
@@ -119,12 +119,12 @@ bool cluster::test_cluster::accept(const std::string &, int64_t sent)
 
 router::response cluster::test_cluster::send(const std::string &node, const router::request &request) const
 {
-	return forward(curl, node, request);
+	return request_forwarder.forward(node, request);
 }
 
 std::optional<router::response> cluster::test_cluster::send_all(
 	const std::vector<std::string> &node_list,
 	const router::request &request) const
 {
-	return refusal(forward_all(curl, node_list, request));
+	return refusal(request_forwarder.forward_all(node_list, request));
 }

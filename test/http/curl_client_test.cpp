@@ -9,6 +9,7 @@
 #include "http/curl_client.h"
 #include "server/listening.h"
 #include "cluster/etcd_cluster.h"
+#include "cluster/forwarder.h"
 #include "server/server.h"
 
 // A client with a real server to talk to, because what is worth testing here is what libcurl does
@@ -16,9 +17,11 @@
 class curl_client_test : public ::testing::Test
 {
 protected:
-	http::curl_client client { http::curl_client(10, 2) };
+	http::curl_client client { http::curl_client(2) };
 
-	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config(), client);
+	cluster::forwarder forwarder = cluster::forwarder(client);
+
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config(), client, forwarder);
 
 	std::shared_ptr<server::server> database_server;
 
@@ -66,7 +69,7 @@ protected:
 
 TEST_F(curl_client_test, answer_a_request)
 {
-	http::response response = client.send(get("/health"));
+	http::response response = client.send(get("/health"), 30);
 
 	EXPECT_TRUE(response.is_valid);
 	EXPECT_EQ(response.status, 200);
@@ -78,9 +81,9 @@ TEST_F(curl_client_test, answer_a_request)
 // and over, and the second request is not another three way handshake.
 TEST_F(curl_client_test, keep_the_connection_between_requests)
 {
-	EXPECT_FALSE(client.send(get("/health")).reused);
-	EXPECT_TRUE(client.send(get("/health")).reused);
-	EXPECT_TRUE(client.send(get("/health")).reused);
+	EXPECT_FALSE(client.send(get("/health"), 30).reused);
+	EXPECT_TRUE(client.send(get("/health"), 30).reused);
+	EXPECT_TRUE(client.send(get("/health"), 30).reused);
 }
 
 // A handle that is used again is a handle that remembers what it was told last time, which is why
@@ -91,9 +94,9 @@ TEST_F(curl_client_test, forget_the_request_before)
 
 	head.method = "HEAD";
 
-	EXPECT_TRUE(client.send(head).body.empty());
+	EXPECT_TRUE(client.send(head, 30).body.empty());
 
-	http::response response = client.send(get("/health"));
+	http::response response = client.send(get("/health"), 30);
 
 	EXPECT_EQ(response.status, 200);
 	EXPECT_FALSE(response.body.empty());
@@ -107,7 +110,7 @@ TEST_F(curl_client_test, answer_the_length_of_a_body_a_head_left_out)
 
 	head.method = "HEAD";
 
-	http::response response = client.send(head);
+	http::response response = client.send(head, 30);
 
 	EXPECT_EQ(response.status, 200);
 	EXPECT_TRUE(response.body.empty());
@@ -121,7 +124,7 @@ TEST_F(curl_client_test, answer_that_there_was_no_answer)
 	// A port nothing listens on, which is a node that is gone rather than a node that refused.
 	request.url = "http://localhost:1/health";
 
-	http::response response = client.send(request);
+	http::response response = client.send(request, 30);
 
 	EXPECT_FALSE(response.is_valid);
 	EXPECT_FALSE(response.message.empty());
@@ -131,7 +134,7 @@ TEST_F(curl_client_test, answer_that_there_was_no_answer)
 // that is trying to stop, and shutting down waits for connections rather than for their timeouts.
 TEST_F(curl_client_test, a_connection_that_is_kept_does_not_hold_the_server_open)
 {
-	EXPECT_TRUE(client.send(get("/health")).is_valid);
+	EXPECT_TRUE(client.send(get("/health"), 30).is_valid);
 
 	std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 
@@ -147,7 +150,8 @@ TEST_F(curl_client_test, a_connection_that_is_kept_does_not_hold_the_server_open
 // belongs to the request it was asked for whatever order the transfers finished in.
 TEST_F(curl_client_test, answer_every_request_of_a_fan_out)
 {
-	std::vector<http::response> responses = client.send_all({ get("/health"), get("/table/nothing"), get("/table") });
+	std::vector<http::response> responses =
+		client.send_all({ get("/health"), get("/table/nothing"), get("/table") }, 30);
 
 	ASSERT_EQ(responses.size(), 3u);
 
@@ -170,7 +174,7 @@ TEST_F(curl_client_test, carry_the_body_of_every_request_of_a_fan_out)
 	table.method = "PUT";
 	table.body = "{}";
 
-	ASSERT_EQ(client.send(table).status, 201);
+	ASSERT_EQ(client.send(table, 30).status, 201);
 
 	http::request first = get("/table/account/key/1");
 	http::request second = get("/table/account/key/2");
@@ -180,14 +184,14 @@ TEST_F(curl_client_test, carry_the_body_of_every_request_of_a_fan_out)
 	second.method = "PUT";
 	second.body = "the second value";
 
-	std::vector<http::response> written = client.send_all({ first, second });
+	std::vector<http::response> written = client.send_all({ first, second }, 30);
 
 	ASSERT_EQ(written.size(), 2u);
 	EXPECT_EQ(written[0].status, 204);
 	EXPECT_EQ(written[1].status, 204);
 
-	EXPECT_EQ(client.send(get("/table/account/key/1")).body, "the first value");
-	EXPECT_EQ(client.send(get("/table/account/key/2")).body, "the second value");
+	EXPECT_EQ(client.send(get("/table/account/key/1"), 30).body, "the first value");
+	EXPECT_EQ(client.send(get("/table/account/key/2"), 30).body, "the second value");
 }
 
 // A node of a fan out that is not there is answered against on its own, and the nodes that did
@@ -199,7 +203,7 @@ TEST_F(curl_client_test, answer_that_a_node_of_a_fan_out_did_not_answer)
 	// A port nothing listens on, which is a node that is gone rather than a node that refused.
 	gone.url = "http://localhost:1/health";
 
-	std::vector<http::response> responses = client.send_all({ gone, get("/health") });
+	std::vector<http::response> responses = client.send_all({ gone, get("/health") }, 30);
 
 	ASSERT_EQ(responses.size(), 2u);
 
@@ -216,13 +220,13 @@ TEST_F(curl_client_test, keep_the_connections_of_a_fan_out_between_them)
 {
 	std::vector<http::request> requests { get("/health"), get("/table") };
 
-	std::vector<http::response> first = client.send_all(requests);
+	std::vector<http::response> first = client.send_all(requests, 30);
 
 	ASSERT_EQ(first.size(), 2u);
 	EXPECT_FALSE(first[0].reused);
 	EXPECT_FALSE(first[1].reused);
 
-	std::vector<http::response> second = client.send_all(requests);
+	std::vector<http::response> second = client.send_all(requests, 30);
 
 	ASSERT_EQ(second.size(), 2u);
 	EXPECT_TRUE(second[0].reused);
@@ -233,9 +237,9 @@ TEST_F(curl_client_test, keep_the_connections_of_a_fan_out_between_them)
 // thread's connections rather than opening one of its own.
 TEST_F(curl_client_test, answer_a_fan_out_of_one_on_the_handle_of_the_thread)
 {
-	EXPECT_EQ(client.send(get("/health")).status, 200);
+	EXPECT_EQ(client.send(get("/health"), 30).status, 200);
 
-	std::vector<http::response> responses = client.send_all({ get("/health") });
+	std::vector<http::response> responses = client.send_all({ get("/health") }, 30);
 
 	ASSERT_EQ(responses.size(), 1u);
 	EXPECT_EQ(responses[0].status, 200);
@@ -244,5 +248,5 @@ TEST_F(curl_client_test, answer_a_fan_out_of_one_on_the_handle_of_the_thread)
 
 TEST_F(curl_client_test, answer_a_fan_out_of_nothing)
 {
-	EXPECT_TRUE(client.send_all({}).empty());
+	EXPECT_TRUE(client.send_all({}, 30).empty());
 }

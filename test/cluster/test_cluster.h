@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "cluster/cluster.h"
+#include "cluster/forwarder.h"
 #include "http/curl_client.h"
 
 namespace cluster
@@ -30,6 +31,8 @@ namespace cluster
 		bool started = false;
 
 		http::curl_client curl;
+
+		forwarder request_forwarder;
 
 	public:
 		test_cluster();

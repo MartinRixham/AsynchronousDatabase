@@ -12,7 +12,6 @@
 #include <boost/json.hpp>
 
 #include "log.h"
-#include "forwarder.h"
 #include "partition.h"
 #include "etcd_cluster.h"
 
@@ -81,9 +80,12 @@ cluster::config cluster::from_environment()
 	return config;
 }
 
-cluster::etcd_cluster::etcd_cluster(const config &cluster_config, const http::client &http):
+cluster::etcd_cluster::etcd_cluster(
+	const config &cluster_config,
+	const http::client &http,
+	const forwarder &forwarding):
 	configuration(cluster_config),
-	http_client(http),
+	request_forwarder(forwarding),
 	etcd_client(etcd::client(http, cluster_config.endpoints, cluster_config.etcd_timeout_seconds)),
 	member_list(std::make_shared<const std::vector<member>>())
 {
@@ -311,14 +313,14 @@ std::vector<std::vector<std::string>> cluster::etcd_cluster::zones() const
 
 router::response cluster::etcd_cluster::send(const std::string &node, const router::request &request) const
 {
-	return forward(http_client, node, request);
+	return request_forwarder.forward(node, request);
 }
 
 std::optional<router::response> cluster::etcd_cluster::send_all(
 	const std::vector<std::string> &node_list,
 	const router::request &request) const
 {
-	return refusal(forward_all(http_client, node_list, request));
+	return refusal(request_forwarder.forward_all(node_list, request));
 }
 
 void cluster::etcd_cluster::run()

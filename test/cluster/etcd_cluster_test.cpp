@@ -5,10 +5,10 @@
 
 #include <gtest/gtest.h>
 #include <boost/json.hpp>
-#include <boost/beast/http.hpp>
 
 #include "base64/base64.h"
 #include "cluster/etcd_cluster.h"
+#include "cluster/forwarder.h"
 #include "http/fake_http_client.h"
 
 namespace
@@ -131,11 +131,6 @@ namespace
 	{
 		answer_etcd(http, zoneless(nodes));
 	}
-
-	router::request request(boost::beast::http::verb method, const std::vector<std::string> &path)
-	{
-		return { method, path, "", "", false };
-	}
 }
 
 TEST(etcd_cluster_test, stand_alone_when_no_etcd_is_configured)
@@ -145,7 +140,8 @@ TEST(etcd_cluster_test, stand_alone_when_no_etcd_is_configured)
 
 	config.node = one;
 
-	cluster::etcd_cluster cluster(config, http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
 
 	cluster.start();
 
@@ -163,7 +159,8 @@ TEST(etcd_cluster_test, stand_alone_when_no_node_is_configured)
 
 	config.endpoints = { "http://etcd:2379" };
 
-	cluster::etcd_cluster cluster(config, http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
 
 	cluster.start();
 
@@ -177,7 +174,8 @@ TEST(etcd_cluster_test, register_the_node_and_read_the_membership)
 
 	answer_etcd(&http, { one, two });
 
-	cluster::etcd_cluster cluster(configuration(one), http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
 
 	cluster.start();
 
@@ -201,7 +199,8 @@ TEST(etcd_cluster_test, register_the_node_and_read_the_membership)
 TEST(etcd_cluster_test, be_a_member_of_its_own_cluster_when_etcd_is_not_there)
 {
 	http::fake_client http;
-	cluster::etcd_cluster cluster(configuration(one), http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
 
 	cluster.start();
 
@@ -218,7 +217,8 @@ TEST(etcd_cluster_test, hold_every_key_when_no_other_node_is_registered)
 
 	answer_etcd(&http, { one });
 
-	cluster::etcd_cluster cluster(configuration(one), http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
 
 	cluster.start();
 
@@ -236,7 +236,8 @@ TEST(etcd_cluster_test, name_the_node_that_holds_a_key)
 
 	answer_etcd(&http, { one, two });
 
-	cluster::etcd_cluster cluster(configuration(one), http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
 
 	cluster.start();
 
@@ -275,7 +276,8 @@ TEST(etcd_cluster_test, register_the_zone_the_node_is_in)
 
 	answer_etcd(&http, { cluster::member { one, "a" } });
 
-	cluster::etcd_cluster cluster(configuration(one, "a"), http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
 
 	cluster.start();
 
@@ -300,7 +302,8 @@ TEST(etcd_cluster_test, read_a_node_that_registered_nothing_but_its_address)
 
 	answer_etcd(&http, { one, two });
 
-	cluster::etcd_cluster cluster(configuration(one), http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
 
 	cluster.start();
 
@@ -332,7 +335,8 @@ TEST(etcd_cluster_test, keep_a_copy_of_every_key_in_every_zone)
 		cluster::member { three, "c" }
 	});
 
-	cluster::etcd_cluster cluster(configuration(one, "a"), http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
 
 	cluster.start();
 
@@ -363,7 +367,8 @@ TEST(etcd_cluster_test, keep_one_copy_of_a_key_in_each_zone)
 		cluster::member { four, "b" }
 	});
 
-	cluster::etcd_cluster cluster(configuration(one, "a"), http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
 
 	cluster.start();
 
@@ -398,155 +403,6 @@ TEST(etcd_cluster_test, keep_one_copy_of_a_key_in_each_zone)
 	cluster.stop();
 }
 
-TEST(etcd_cluster_test, send_a_request_to_another_node)
-{
-	http::fake_client http;
-
-	answer_etcd(&http, { one, two });
-	http.answer(two, http::answer(200, "text/plain; charset=utf-8", "a value"));
-
-	cluster::etcd_cluster cluster(configuration(one), http);
-	router::request forwarded = request(boost::beast::http::verb::get, { "table", "account", "key", "4821" });
-	router::response response = cluster.send(two, forwarded);
-
-	EXPECT_EQ(response.status, boost::beast::http::status::ok);
-	EXPECT_EQ(response.text, "a value");
-
-	ASSERT_EQ(http.sent_to(two).size(), 1u);
-
-	http::request sent = http.sent_to(two)[0];
-
-	EXPECT_EQ(sent.method, "GET");
-	EXPECT_EQ(sent.url, two + "/table/account/key/4821");
-	ASSERT_EQ(sent.headers.size(), 1u);
-	EXPECT_EQ(sent.headers[0], "X-Asyncdb-Forwarded: true");
-}
-
-TEST(etcd_cluster_test, send_a_key_that_holds_punctuation_of_a_url)
-{
-	http::fake_client http;
-
-	http.answer(two, http::answer(200, "text/plain; charset=utf-8", "a value"));
-
-	cluster::etcd_cluster cluster(configuration(one), http);
-
-	cluster.send(two, request(boost::beast::http::verb::get, { "table", "account", "key", "a/b?c" }));
-
-	EXPECT_EQ(http.sent()[0].url, two + "/table/account/key/a%2Fb%3Fc");
-}
-
-TEST(etcd_cluster_test, send_a_query_as_it_stands)
-{
-	http::fake_client http;
-
-	http.answer(two, http::answer(200, "application/json", "{\"records\":[]}"));
-
-	cluster::etcd_cluster cluster(configuration(one), http);
-	router::request scan { boost::beast::http::verb::get, { "table", "account", "key" }, "limit=10&from=a", "", false };
-
-	cluster.send(two, scan);
-
-	EXPECT_EQ(http.sent()[0].url, two + "/table/account/key?limit=10&from=a");
-}
-
-TEST(etcd_cluster_test, send_a_body)
-{
-	http::fake_client http;
-
-	http.answer(two, http::answer(204, "", ""));
-
-	cluster::etcd_cluster cluster(configuration(one), http);
-	router::request write {
-		boost::beast::http::verb::put,
-		{ "table", "account", "key", "4821" },
-		"",
-		"a value",
-		false
-	};
-
-	router::response response = cluster.send(two, write);
-
-	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
-	EXPECT_TRUE(response.content_type.empty());
-	EXPECT_EQ(http.sent()[0].method, "PUT");
-	EXPECT_EQ(http.sent()[0].body, "a value");
-}
-
-// The node that owns the key is the only one that can say how large the value is, and it says so
-// without sending it: what asking costs is the headers of the value and not the value.
-TEST(etcd_cluster_test, send_a_head_request_as_a_head)
-{
-	http::fake_client http;
-
-	http.answer(two, http::head_answer(200, "text/plain; charset=utf-8", 7));
-
-	cluster::etcd_cluster cluster(configuration(one), http);
-	router::response response =
-		cluster.send(two, request(boost::beast::http::verb::head, { "table", "account", "key", "4821" }));
-
-	EXPECT_EQ(http.sent()[0].method, "HEAD");
-	EXPECT_EQ(response.status, boost::beast::http::status::ok);
-	EXPECT_EQ(response.content_type, "text/plain; charset=utf-8");
-	EXPECT_EQ(response.length, 7u);
-
-	// The length of a body that is not there is not a body to answer with.
-	EXPECT_TRUE(router::response_body(response).empty());
-}
-
-// A key nothing holds is answered the same way a local miss is, so a HEAD of one is a 404 with
-// nothing to say about a length.
-TEST(etcd_cluster_test, answer_a_head_of_a_key_that_is_not_there)
-{
-	http::fake_client http;
-
-	http.answer(two, http::head_answer(404, "", 0));
-
-	cluster::etcd_cluster cluster(configuration(one), http);
-	router::response response =
-		cluster.send(two, request(boost::beast::http::verb::head, { "table", "account", "key", "4821" }));
-
-	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
-	EXPECT_EQ(response.length, 0u);
-}
-
-TEST(etcd_cluster_test, answer_a_document_as_a_document)
-{
-	http::fake_client http;
-
-	http.answer(two, http::answer(404, "application/json", "{\"error\":{\"code\":\"table_not_found\"}}"));
-
-	cluster::etcd_cluster cluster(configuration(one), http);
-	router::response response =
-		cluster.send(two, request(boost::beast::http::verb::get, { "table", "account", "key", "4821" }));
-
-	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
-	EXPECT_EQ(response.json.at("error").as_object().at("code").as_string(), "table_not_found");
-}
-
-TEST(etcd_cluster_test, answer_a_storage_error_when_the_node_is_not_there)
-{
-	http::fake_client http;
-	cluster::etcd_cluster cluster(configuration(one), http);
-	router::response response =
-		cluster.send(two, request(boost::beast::http::verb::get, { "table", "account", "key", "4821" }));
-
-	EXPECT_EQ(response.status, boost::beast::http::status::internal_server_error);
-	EXPECT_EQ(response.json.at("error").as_object().at("code").as_string(), "storage_error");
-}
-
-TEST(etcd_cluster_test, answer_a_storage_error_when_the_node_answers_with_something_else)
-{
-	http::fake_client http;
-
-	http.answer(two, http::answer(200, "application/json", "not a document"));
-
-	cluster::etcd_cluster cluster(configuration(one), http);
-	router::response response =
-		cluster.send(two, request(boost::beast::http::verb::get, { "table", "account", "key", "4821" }));
-
-	EXPECT_EQ(response.status, boost::beast::http::status::internal_server_error);
-}
-
 TEST(etcd_cluster_test, register_again_when_the_lease_has_gone)
 {
 	http::fake_client http;
@@ -559,7 +415,8 @@ TEST(etcd_cluster_test, register_again_when_the_lease_has_gone)
 	// what a node does when it has been away long enough to be dropped.
 	config.lease_seconds = 1;
 
-	cluster::etcd_cluster cluster(config, http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
 
 	cluster.start();
 
@@ -682,7 +539,8 @@ TEST(etcd_cluster_test, claim_the_partitions_this_node_holds)
 
 	config.claims_per_refresh = cluster::partition_count;
 
-	cluster::etcd_cluster cluster(config, http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
 
 	cluster.start();
 
@@ -727,7 +585,8 @@ TEST(etcd_cluster_test, name_the_node_that_leads_a_partition)
 	// whichever it is.
 	config.claims_per_refresh = cluster::partition_count;
 
-	cluster::etcd_cluster cluster(config, http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
 
 	cluster.start();
 
@@ -749,7 +608,8 @@ TEST(etcd_cluster_test, lead_nothing_when_the_instance_stands_alone)
 
 	config.node = one;
 
-	cluster::etcd_cluster cluster(config, http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
 
 	cluster.start();
 
@@ -765,7 +625,8 @@ TEST(etcd_cluster_test, lead_nothing_that_etcd_does_not_answer_for)
 
 	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
 
-	cluster::etcd_cluster cluster(configuration(one, "a"), http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
 
 	cluster.start();
 
@@ -785,7 +646,8 @@ TEST(etcd_cluster_test, refuse_a_write_ordered_in_a_term_that_has_passed)
 
 	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
 
-	cluster::etcd_cluster cluster(configuration(one, "a"), http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
 
 	EXPECT_TRUE(cluster.accept("4821", 41));
 	EXPECT_TRUE(cluster.accept("4821", 41));
@@ -812,7 +674,8 @@ TEST(etcd_cluster_test, claim_only_so_many_partitions_on_one_pass)
 
 	config.claims_per_refresh = 4;
 
-	cluster::etcd_cluster cluster(config, http);
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
 
 	cluster.start();
 
@@ -842,8 +705,10 @@ TEST(etcd_cluster_test, claim_from_an_offset_of_this_node_s_own)
 	first_config.claims_per_refresh = 8;
 	second_config.claims_per_refresh = 8;
 
-	cluster::etcd_cluster first_cluster(first_config, first);
-	cluster::etcd_cluster second_cluster(second_config, second);
+	cluster::forwarder first_forwarder(first);
+	cluster::forwarder second_forwarder(second);
+	cluster::etcd_cluster first_cluster(first_config, first, first_forwarder);
+	cluster::etcd_cluster second_cluster(second_config, second, second_forwarder);
 
 	first_cluster.start();
 	second_cluster.start();

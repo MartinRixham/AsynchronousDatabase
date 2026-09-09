@@ -25,8 +25,9 @@ int main(void)
 	int thread_pool_size = server::thread_pool_size();
 	std::string data_directory = server::data_directory();
 	cluster::config configuration = cluster::from_environment();
-	http::curl_client client = http::curl_client(configuration.timeout_seconds, configuration.connect_timeout_seconds);
-	cluster::etcd_cluster cluster = cluster::etcd_cluster(configuration, client);
+	http::curl_client client = http::curl_client(configuration.connect_timeout_seconds);
+	cluster::forwarder forwarder = cluster::forwarder(client);
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(configuration, client, forwarder);
 
 	database_server = std::make_shared<server::server>(8080, thread_pool_size, cluster, data_directory);
 

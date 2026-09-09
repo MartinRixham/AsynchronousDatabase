@@ -9,6 +9,7 @@
 
 #include "record/record.h"
 #include "cluster/etcd_cluster.h"
+#include "cluster/forwarder.h"
 #include "server/server.h"
 #include "listening.h"
 #include "http/fake_http_client.h"
@@ -38,7 +39,8 @@ class server_test : public ::testing::Test
 {
 protected:
 	http::fake_client client;
-	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config(), client);
+	cluster::forwarder forwarder = cluster::forwarder(client);
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config(), client, forwarder);
 
 	std::shared_ptr<server::server> database_server;
 

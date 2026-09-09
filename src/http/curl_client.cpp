@@ -165,18 +165,12 @@ namespace
 	}
 }
 
-http::curl_client::curl_client(long timeout, long connect_timeout):
-	timeout_seconds(timeout),
+http::curl_client::curl_client(long connect_timeout):
 	connect_timeout_seconds(connect_timeout)
 {
 }
 
-http::response http::curl_client::send(const request &request) const
-{
-	return send(request, timeout_seconds);
-}
-
-http::response http::curl_client::send(const request &request, long timeout_override) const
+http::response http::curl_client::send(const request &request, long timeout_seconds) const
 {
 	CURL *curl = thread_handle();
 	response response;
@@ -202,7 +196,8 @@ http::response http::curl_client::send(const request &request, long timeout_over
 // Every request at once, in one multi handle on this thread, so a node writing a record to its
 // copies waits for the slowest rather than for one after another — which is what keeps the thread
 // it is serving on free.
-std::vector<http::response> http::curl_client::send_all(const std::vector<request> &requests) const
+std::vector<http::response> http::curl_client::send_all(const std::vector<request> &requests, long timeout_seconds)
+	const
 {
 	std::vector<response> responses(requests.size());
 
@@ -210,7 +205,7 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 	{
 		if (requests.size() == 1)
 		{
-			responses[0] = send(requests[0]);
+			responses[0] = send(requests[0], timeout_seconds);
 		}
 
 		return responses;

@@ -443,8 +443,9 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   the seam for standing alone. The seam itself is `cluster/cluster.h`, and the rest of the
   directory is what stands behind it: `partition.h` is the hashing — `partition_of` is the 256
   partitions, `owner_of` is rendezvous hashing over a set of nodes, `owners_of` runs it once per
-  zone and `zones_of` is the grouping behind `zones()`; `forwarder.h` is how a request travels,
-  `forward` and `forward_all` over an `http::client`; `member.h` is `member` and `membership`,
+  zone and `zones_of` is the grouping behind `zones()`; `cluster::forwarder` is how a request
+  travels, `forward` and `forward_all` over the `http::client` it is handed, and it is handed to
+  `etcd_cluster` in turn rather than made inside it; `member.h` is `member` and `membership`,
   the whole list held as a `shared_ptr<const vector<member>>` and swapped rather than edited, so a
   reader loads it without excluding the thread that replaces it; and `placements.h` answers
   `replicas` once a partition rather than once a key, which is what a pass walking a million keys

@@ -16,6 +16,7 @@
 #include "http/curl_client.h"
 #include "http/http_client.h"
 #include "cluster.h"
+#include "forwarder.h"
 #include "member.h"
 #include "partition.h"
 
@@ -58,7 +59,7 @@ namespace cluster
 	{
 		config configuration;
 
-		const http::client &http_client;
+		const forwarder &request_forwarder;
 
 		etcd::client etcd_client;
 
@@ -89,7 +90,7 @@ namespace cluster
 		bool running = false;
 
 	public:
-		etcd_cluster(const config &cluster_config, const http::client &http);
+		etcd_cluster(const config &cluster_config, const http::client &http, const forwarder &forwarding);
 
 		~etcd_cluster();
 

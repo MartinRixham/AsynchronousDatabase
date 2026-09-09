@@ -57,7 +57,8 @@ namespace
 		if (!answer.is_valid)
 		{
 			return router::error_response(
-				"storage_error", "Node \"" + node + "\" did not answer: " + answer.message + ".");
+				"storage_error",
+				"Node \"" + node + "\" did not answer: " + answer.message + ".");
 		}
 
 		boost::beast::http::status status = static_cast<boost::beast::http::status>(answer.status);
@@ -83,42 +84,44 @@ namespace
 		if (error || !value.is_object())
 		{
 			return router::error_response(
-				"storage_error", "Node \"" + node + "\" answered with something that is not a document.");
+				"storage_error",
+				"Node \"" + node + "\" answered with something that is not a document.");
 		}
 
 		return router::json_response(status, value.as_object());
 	}
 }
 
-router::response cluster::forward(
-	const http::client &http,
-	const std::string &node,
-	const router::request &request)
+cluster::forwarder::forwarder(const http::client &http, long timout_seconds):
+	http_client(http),
+	timout_seconds(timout_seconds)
+{
+}
+
+router::response cluster::forwarder::forward(const std::string &node, const router::request &request) const
 {
 	http::request forwarded { method_of(request), target(node, request), request.body, headers_of(request) };
 
 	DEBUG("Forwarding " + forwarded.method + " " + forwarded.url + ".");
 
-	return to_response(node, http.send(forwarded), is_head(request));
+	return to_response(node, http_client.send(forwarded, timout_seconds), is_head(request));
 }
 
-std::vector<router::response> cluster::forward_all(
-	const http::client &http,
+std::vector<router::response> cluster::forwarder::forward_all(
 	const std::vector<std::string> &nodes,
-	const router::request &request)
+	const router::request &request) const
 {
 	std::vector<std::string> headers = headers_of(request);
 	std::vector<http::request> forwarded;
 
 	for (size_t i = 0; i < nodes.size(); i++)
 	{
-		forwarded.push_back(
-			http::request { method_of(request), target(nodes[i], request), request.body, headers });
+		forwarded.push_back(http::request { method_of(request), target(nodes[i], request), request.body, headers });
 
 		DEBUG("Forwarding " + forwarded.back().method + " " + forwarded.back().url + ".");
 	}
 
-	std::vector<http::response> answers = http.send_all(forwarded);
+	std::vector<http::response> answers = http_client.send_all(forwarded, timout_seconds);
 	std::vector<router::response> responses;
 
 	// One answer for each node asked, whatever the client made of them, so that the node a
