@@ -18,7 +18,7 @@ class curl_client_test : public ::testing::Test
 protected:
 	http::curl_client client { http::curl_client(10, 2) };
 
-	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config());
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config(), client);
 
 	std::shared_ptr<server::server> database_server;
 

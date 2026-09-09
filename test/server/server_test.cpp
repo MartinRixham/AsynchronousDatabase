@@ -11,6 +11,7 @@
 #include "cluster/etcd_cluster.h"
 #include "server/server.h"
 #include "listening.h"
+#include "http/fake_http_client.h"
 
 size_t writer(void *ptr, size_t size, size_t nmemb, std::string *stream)
 {
@@ -36,7 +37,8 @@ struct result
 class server_test : public ::testing::Test
 {
 protected:
-	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config());
+	http::fake_client client;
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config(), client);
 
 	std::shared_ptr<server::server> database_server;
 

@@ -27,6 +27,11 @@ http::response http::fake_client::send(const request &request) const
 	return response;
 }
 
+http::response http::fake_client::send(const request &request, long timeout_override) const
+{
+	return send(request);
+}
+
 // A fake with nothing to run at once runs them one after another.
 std::vector<http::response> http::fake_client::send_all(const std::vector<request> &request_list) const
 {

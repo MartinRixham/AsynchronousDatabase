@@ -40,6 +40,8 @@ namespace http
 	public:
 		virtual response send(const request &request) const = 0;
 
+		virtual response send(const request &request, long timeout_override) const = 0;
+
 		// The fan out: the caller waits for the slowest of the requests rather than for the sum
 		// of them, so a client that can run them at once runs them at once.
 		virtual std::vector<response> send_all(const std::vector<request> &requests) const = 0;

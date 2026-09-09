@@ -135,8 +135,7 @@ namespace
 
 				break;
 			}
-		}
-		while (running > 0);
+		} while (running > 0);
 
 		CURLMsg *message = NULL;
 		int left = 0;
@@ -172,9 +171,12 @@ http::curl_client::curl_client(long timeout, long connect_timeout):
 {
 }
 
-// libcurl is initialised once by the process — main() and the test binary both do it — because
-// curl_global_init is not itself safe to race.
 http::response http::curl_client::send(const request &request) const
+{
+	return send(request, timeout_seconds);
+}
+
+http::response http::curl_client::send(const request &request, long timeout_override) const
 {
 	CURL *curl = thread_handle();
 	response response;

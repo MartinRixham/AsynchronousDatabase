@@ -81,22 +81,10 @@ cluster::config cluster::from_environment()
 	return config;
 }
 
-cluster::etcd_cluster::etcd_cluster(const config &cluster_config):
-	configuration(cluster_config),
-	node_curl(http::curl_client(cluster_config.timeout_seconds, cluster_config.connect_timeout_seconds)),
-	etcd_curl(http::curl_client(cluster_config.etcd_timeout_seconds, cluster_config.connect_timeout_seconds)),
-	http_client(node_curl),
-	etcd_client(etcd::client(etcd_curl, cluster_config.endpoints)),
-	member_list(std::make_shared<const std::vector<member>>())
-{
-}
-
 cluster::etcd_cluster::etcd_cluster(const config &cluster_config, const http::client &http):
 	configuration(cluster_config),
-	node_curl(http::curl_client(cluster_config.timeout_seconds, cluster_config.connect_timeout_seconds)),
-	etcd_curl(http::curl_client(cluster_config.etcd_timeout_seconds, cluster_config.connect_timeout_seconds)),
 	http_client(http),
-	etcd_client(etcd::client(http, cluster_config.endpoints)),
+	etcd_client(etcd::client(http, cluster_config.endpoints, cluster_config.etcd_timeout_seconds)),
 	member_list(std::make_shared<const std::vector<member>>())
 {
 }
@@ -181,8 +169,11 @@ void cluster::etcd_cluster::leave()
 	if (lease != 0 && !etcd_client.revoke(lease))
 	{
 		DEBUG(
-			"Node " + configuration.node + " could not tell etcd it was leaving, and is dropped in " +
-			std::to_string(configuration.lease_seconds) + " seconds when its lease runs out.");
+			"Node " +
+			configuration.node +
+			" could not tell etcd it was leaving, and is dropped in " +
+			std::to_string(configuration.lease_seconds) +
+			" seconds when its lease runs out.");
 	}
 
 	lease = 0;
@@ -372,13 +363,9 @@ bool cluster::etcd_cluster::register_node()
 
 	lease = *granted;
 
-	boost::json::object registration {
-		{ "node", configuration.node },
-		{ "zone", configuration.zone }
-	};
+	boost::json::object registration { { "node", configuration.node }, { "zone", configuration.zone } };
 
-	return etcd_client.put(
-		configuration.prefix + configuration.node, boost::json::serialize(registration), lease);
+	return etcd_client.put(configuration.prefix + configuration.node, boost::json::serialize(registration), lease);
 }
 
 void cluster::etcd_cluster::read_leaders()
@@ -454,8 +441,13 @@ void cluster::etcd_cluster::read_leaders()
 			raise_term(partition, claimed->revision);
 
 			DEBUG(
-				"Node " + configuration.node + " leads partition " + std::to_string(partition) +
-				" in term " + std::to_string(claimed->revision) + ".");
+				"Node " +
+				configuration.node +
+				" leads partition " +
+				std::to_string(partition) +
+				" in term " +
+				std::to_string(claimed->revision) +
+				".");
 		}
 	}
 

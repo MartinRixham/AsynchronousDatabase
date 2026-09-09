@@ -58,12 +58,6 @@ namespace cluster
 	{
 		config configuration;
 
-		// The clients a cluster talks to its neighbours and to etcd with, unless it was given one,
-		// which is how a cluster is driven in a test without a network.
-		http::curl_client node_curl;
-
-		http::curl_client etcd_curl;
-
 		const http::client &http_client;
 
 		etcd::client etcd_client;
@@ -95,8 +89,6 @@ namespace cluster
 		bool running = false;
 
 	public:
-		explicit etcd_cluster(const config &cluster_config);
-
 		etcd_cluster(const config &cluster_config, const http::client &http);
 
 		~etcd_cluster();

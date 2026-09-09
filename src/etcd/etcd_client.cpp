@@ -61,7 +61,8 @@ namespace
 
 	std::optional<etcd::claim> read_claim(const boost::json::object &response)
 	{
-		if (!response.contains("responses") || !response.at("responses").is_array() ||
+		if (!response.contains("responses") ||
+			!response.at("responses").is_array() ||
 			response.at("responses").as_array().empty())
 		{
 			return std::nullopt;
@@ -69,7 +70,8 @@ namespace
 
 		const boost::json::value &answered = response.at("responses").as_array()[0];
 
-		if (!answered.is_object() || !answered.as_object().contains("responseRange") ||
+		if (!answered.is_object() ||
+			!answered.as_object().contains("responseRange") ||
 			!answered.as_object().at("responseRange").is_object())
 		{
 			return std::nullopt;
@@ -77,7 +79,9 @@ namespace
 
 		const boost::json::object &ranged = answered.as_object().at("responseRange").as_object();
 
-		if (!ranged.contains("kvs") || !ranged.at("kvs").is_array() || ranged.at("kvs").as_array().empty() ||
+		if (!ranged.contains("kvs") ||
+			!ranged.at("kvs").is_array() ||
+			ranged.at("kvs").as_array().empty() ||
 			!ranged.at("kvs").as_array()[0].is_object())
 		{
 			return std::nullopt;
@@ -107,9 +111,10 @@ namespace
 	}
 }
 
-etcd::client::client(const http::client &http, const std::vector<std::string> &etcd_endpoints):
+etcd::client::client(const http::client &http, const std::vector<std::string> &etcd_endpoints, long timeout_seconds):
 	http_client(http),
-	endpoints(etcd_endpoints)
+	endpoints(etcd_endpoints),
+	timeout_seconds(timeout_seconds)
 {
 }
 
@@ -143,37 +148,30 @@ bool etcd::client::keep_alive(int64_t lease) const
 
 bool etcd::client::put(const std::string &key, const std::string &value, int64_t lease) const
 {
-	boost::json::object request {
-		{ "key", base64::encode(key) },
-		{ "value", base64::encode(value) },
-		{ "lease", std::to_string(lease) }
-	};
+	boost::json::object request { { "key", base64::encode(key) },
+								  { "value", base64::encode(value) },
+								  { "lease", std::to_string(lease) } };
 
 	return call("kv/put", request, true).has_value();
 }
 
-std::optional<etcd::claim> etcd::client::create(
-	const std::string &key,
-	const std::string &value,
-	int64_t lease) const
+std::optional<etcd::claim> etcd::client::create(const std::string &key, const std::string &value, int64_t lease) const
 {
 	boost::json::object request {
-		{ "compare", boost::json::array { boost::json::object {
-			{ "key", base64::encode(key) },
-			{ "target", "CREATE" },
-			{ "result", "EQUAL" },
-			{ "create_revision", "0" }
-		} } },
-		{ "success", boost::json::array { boost::json::object {
-			{ "requestPut", boost::json::object {
-				{ "key", base64::encode(key) },
-				{ "value", base64::encode(value) },
-				{ "lease", std::to_string(lease) }
-			} }
-		} } },
-		{ "failure", boost::json::array { boost::json::object {
-			{ "requestRange", boost::json::object { { "key", base64::encode(key) } } }
-		} } }
+		{ "compare",
+		  boost::json::array { boost::json::object { { "key", base64::encode(key) },
+													 { "target", "CREATE" },
+													 { "result", "EQUAL" },
+													 { "create_revision", "0" } } } },
+		{ "success",
+		  boost::json::array {
+			  boost::json::object { { "requestPut",
+									  boost::json::object { { "key", base64::encode(key) },
+															{ "value", base64::encode(value) },
+															{ "lease", std::to_string(lease) } } } } } },
+		{ "failure",
+		  boost::json::array {
+			  boost::json::object { { "requestRange", boost::json::object { { "key", base64::encode(key) } } } } } }
 	};
 
 	std::optional<boost::json::object> response = call("kv/txn", request, true);
@@ -185,8 +183,7 @@ std::optional<etcd::claim> etcd::client::create(
 
 	claim claimed;
 
-	if (response->contains("succeeded") && response->at("succeeded").is_bool() &&
-		response->at("succeeded").as_bool())
+	if (response->contains("succeeded") && response->at("succeeded").is_bool() && response->at("succeeded").as_bool())
 	{
 		std::optional<int64_t> revision = header_revision(*response);
 
@@ -207,10 +204,8 @@ std::optional<etcd::claim> etcd::client::create(
 
 std::map<std::string, std::string> etcd::client::range(const std::string &prefix) const
 {
-	boost::json::object request {
-		{ "key", base64::encode(prefix) },
-		{ "range_end", base64::encode(range_end(prefix)) }
-	};
+	boost::json::object request { { "key", base64::encode(prefix) },
+								  { "range_end", base64::encode(range_end(prefix)) } };
 
 	std::optional<boost::json::object> response = call("kv/range", request, true);
 	std::map<std::string, std::string> values;
@@ -231,8 +226,10 @@ std::map<std::string, std::string> etcd::client::range(const std::string &prefix
 
 		const boost::json::object &pair = pairs[i].as_object();
 
-		if (!pair.contains("key") || !pair.at("key").is_string() ||
-			!pair.contains("value") || !pair.at("value").is_string())
+		if (!pair.contains("key") ||
+			!pair.at("key").is_string() ||
+			!pair.contains("value") ||
+			!pair.at("value").is_string())
 		{
 			continue;
 		}
@@ -280,14 +277,12 @@ std::optional<boost::json::object> etcd::client::call(
 	{
 		size_t member = (current + i) % endpoints.size();
 
-		http::request request {
-			"POST",
-			endpoints[member] + "/v3/" + method,
-			document,
-			{ "Content-Type: application/json" }
-		};
+		http::request request { "POST",
+								endpoints[member] + "/v3/" + method,
+								document,
+								{ "Content-Type: application/json" } };
 
-		http::response response = http_client.send(request);
+		http::response response = http_client.send(request, timeout_seconds);
 
 		if (!response.is_valid)
 		{

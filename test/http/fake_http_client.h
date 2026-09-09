@@ -25,6 +25,8 @@ namespace http
 
 		response send(const request &request) const override;
 
+		response send(const request &request, long timeout_override) const override;
+
 		std::vector<response> send_all(const std::vector<request> &request_list) const override;
 
 		std::vector<request> sent() const;

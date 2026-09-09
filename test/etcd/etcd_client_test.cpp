@@ -24,7 +24,9 @@ TEST(etcd_client_test, grant_a_lease)
 {
 	http::fake_client http;
 
-	http.answer("/v3/lease/grant", http::answer(200, "application/json", "{\"ID\":\"7587840301820862481\",\"TTL\":\"10\"}"));
+	http.answer(
+		"/v3/lease/grant",
+		http::answer(200, "application/json", "{\"ID\":\"7587840301820862481\",\"TTL\":\"10\"}"));
 
 	etcd::client client(http, { "http://etcd:2379" });
 	std::optional<int64_t> lease = client.grant_lease(10);
@@ -79,7 +81,9 @@ TEST(etcd_client_test, fail_to_keep_a_lease_that_has_expired)
 {
 	http::fake_client http;
 
-	http.answer("/v3/lease/keepalive", http::answer(200, "application/json", "{\"result\":{\"ID\":\"12\",\"TTL\":\"0\"}}"));
+	http.answer(
+		"/v3/lease/keepalive",
+		http::answer(200, "application/json", "{\"result\":{\"ID\":\"12\",\"TTL\":\"0\"}}"));
 
 	etcd::client client(http, { "http://etcd:2379" });
 
@@ -106,15 +110,11 @@ TEST(etcd_client_test, put_a_key)
 TEST(etcd_client_test, read_a_range_of_keys)
 {
 	http::fake_client http;
-	boost::json::object one {
-		{ "key", base64::encode("/asyncdb/node/http://one:8080") },
-		{ "value", base64::encode("http://one:8080") }
-	};
+	boost::json::object one { { "key", base64::encode("/asyncdb/node/http://one:8080") },
+							  { "value", base64::encode("http://one:8080") } };
 
-	boost::json::object two {
-		{ "key", base64::encode("/asyncdb/node/http://two:8080") },
-		{ "value", base64::encode("http://two:8080") }
-	};
+	boost::json::object two { { "key", base64::encode("/asyncdb/node/http://two:8080") },
+							  { "value", base64::encode("http://two:8080") } };
 
 	boost::json::object answer { { "kvs", boost::json::array { one, two } } };
 
@@ -359,8 +359,7 @@ TEST(etcd_client_test, create_a_key_nothing_holds)
 	EXPECT_EQ(compared.at("target").as_string(), "CREATE");
 	EXPECT_EQ(compared.at("create_revision").as_string(), "0");
 
-	const boost::json::object &put =
-		sent.at("success").as_array()[0].as_object().at("requestPut").as_object();
+	const boost::json::object &put = sent.at("success").as_array()[0].as_object().at("requestPut").as_object();
 	std::string value = base64::decode(std::string(put.at("value").as_string())).value_or("");
 
 	EXPECT_EQ(value, "http://asyncdb-1:8080");
@@ -374,15 +373,14 @@ TEST(etcd_client_test, name_the_holder_of_a_key_that_is_already_there)
 	boost::json::object answered {
 		{ "header", boost::json::object { { "revision", "60" } } },
 		{ "succeeded", false },
-		{ "responses", boost::json::array { boost::json::object {
-			{ "responseRange", boost::json::object {
-				{ "kvs", boost::json::array { boost::json::object {
-					{ "key", base64::encode("/asyncdb/leader/7") },
-					{ "value", base64::encode("http://asyncdb-2:8080") },
-					{ "create_revision", "41" }
-				} } }
-			} }
-		} } }
+		{ "responses",
+		  boost::json::array { boost::json::object {
+			  { "responseRange",
+				boost::json::object {
+					{ "kvs",
+					  boost::json::array { boost::json::object { { "key", base64::encode("/asyncdb/leader/7") },
+																 { "value", base64::encode("http://asyncdb-2:8080") },
+																 { "create_revision", "41" } } } } } } } } }
 	};
 
 	http.answer("/v3/kv/txn", http::answer(200, "application/json", boost::json::serialize(answered)));
