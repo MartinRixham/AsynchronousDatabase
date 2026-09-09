@@ -49,8 +49,11 @@ mkdir -p /var/lib/asyncdb
 REGION=eu-west-2
 # The subnet has no IPv4 route out, so every call to AWS goes over IPv6 to a dual stack endpoint.
 export AWS_USE_DUALSTACK_ENDPOINT=true
-[ -f /etc/amazon/ssm/amazon-ssm-agent.json ] || cp /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json
-python3 -c "import json; f = '/etc/amazon/ssm/amazon-ssm-agent.json'; c = json.load(open(f)); c.setdefault('Agent', {}).update({'Region': '$REGION', 'UseDualStackEndpoint': True}); json.dump(c, open(f, 'w'), indent = 2)"
+[ -f /etc/amazon/ssm/amazon-ssm-agent.json ] ||
+  cp /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json
+python3 -c "import json; f = '/etc/amazon/ssm/amazon-ssm-agent.json'; c = json.load(open(f)); \
+  c.setdefault('Agent', {}).update({'Region': '$REGION', 'UseDualStackEndpoint': True}); \
+  json.dump(c, open(f, 'w'), indent = 2)"
 systemctl restart amazon-ssm-agent
 REGISTRY_URL=332187735950.dkr-ecr.eu-west-2.on.aws
 VERSION=0.0.3          # ${Version}, resolved from SSM at deploy time
@@ -59,7 +62,8 @@ aws ecr get-login-password --region $REGION | docker login --username AWS --pass
 docker pull $IMAGE
 TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
 PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
-ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/placement/availability-zone)
 VPC=vpc-0123456789abcdef0                  # ${VPC}
 for attempt in $(seq 12); do
   ASYNCDB_ETCD=$(aws ec2 describe-instances --region $REGION \

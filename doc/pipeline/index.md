@@ -591,8 +591,9 @@ next push runs it all again.
   stack somebody stood up by hand as `asyncdb` does not collide with any of them.
   It does count against the same limits: **four stacks at once is four VPCs,
   four load balancers and thirty-six `t3.micro`**, and the default quota is
-  five VPCs to a region, which leaves room for the default VPC and nothing else. A run that cannot create its VPC fails at `create-stack`
-  and tears nothing down, because it created nothing.
+  five VPCs to a region, which leaves room for the default VPC and nothing else.
+  A run that cannot create its VPC fails at `create-stack` and tears nothing
+  down, because it created nothing.
 - **A share left standing fails the next run's share.** The teardown only deletes
   a stack that share created, and the stack names are fixed per share, so a
   `create-stack` that finds `asyncdb-two` already there fails outright and

@@ -2,7 +2,8 @@
 hero:
   name: asyncdb
   text: A database for asynchronous data processing
-  tagline: A C++20 HTTP/JSON server over RocksDB, with a single-page UI that draws your tables and their dependencies as a DAG.
+  tagline: >-
+    A C++20 HTTP/JSON server over RocksDB, with a single-page UI that draws your tables and their dependencies as a DAG.
   actions:
     - theme: brand
       text: Overview
@@ -13,11 +14,17 @@ hero:
 
 features:
   - title: HTTP and JSON
-    details: Boost.Beast serves an asynchronous, keep-alive HTTP API on a thread pool sized to the machine. Every request and response is plain JSON.
+    details: >-
+      Boost.Beast serves an asynchronous, keep-alive HTTP API on a thread
+      pool sized to the machine. Every request and response is plain JSON.
   - title: Durable storage
-    details: Tables are persisted in RocksDB behind a small repository seam, so the storage engine can be swapped without touching the routing or domain layers.
+    details: >-
+      Tables are persisted in RocksDB behind a small repository seam, so the
+      storage engine can be swapped without touching the routing or domain layers.
   - title: A visible dependency graph
-    details: The vanilla-JS UI lays the tables out in rows — dependency-free tables first — and renders the edges between them as an SVG graph.
+    details: >-
+      The vanilla-JS UI lays the tables out in rows — dependency-free
+      tables first — and renders the edges between them as an SVG graph.
 ---
 
 ## Overview
