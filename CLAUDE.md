@@ -34,6 +34,7 @@ cmk run             # build then run build/bin/asyncdb
 All test sources link into the single gtest binary `build/test/test_main`, so a single test or suite is
 run directly after `cmk test`:
 
+```bash
 build/test/test_main --gtest_filter='table_test.fail_to_deserialise_table_with_no_name'
 ```
 
@@ -55,9 +56,20 @@ Notes:
   matching its directory.
 - **One class to a file**, and the file is named after it — `curl_client` in `src/http/curl_client.h`,
   its definitions in `curl_client.cpp`. A helper only one `.cpp` reaches is still a file of its own.
+  A class whose name would only repeat its namespace carries the namespace in the file name
+  instead — `http::client` is `http/http_client.h`, `etcd::client` is `etcd/etcd_client.h`, and
+  `http::fake_client` is `test/http/fake_http_client.h`.
   A struct that is only data sits beside whatever it belongs to (`http::request` in `http_client.h`,
   `cluster::placement` in `cluster.h`), and a test fixture belongs in the test file it is the fixture
   for; nothing else shares.
+- **What a call has to say is its return type, never an out parameter.** A compound answer is a
+  struct — `scan::page` is the records and whether there are more, `cluster::placement` is whether
+  this node holds a copy and which other nodes do — and an answer that may be missing is a
+  `std::optional`, as `read_record` and `base64::decode` are. A pointer parameter the callee writes
+  through puts half the answer in the return and half in the arguments, and leaves the caller holding
+  an object that means nothing until the call has been made. What is not an out parameter is a sink
+  the caller already owns: libcurl writes a body into the `http::response` it carries, and `merge`
+  sorts the records it is given.
 - **A field of an abstract type is handed in, never chosen inside the class.** A class holding a
   `cluster::cluster &`, an `http::client &` or a `repository::repository &` takes it as a parameter of
   its one public constructor, and every caller — `main.cpp` and every test — supplies one. No second
@@ -277,7 +289,15 @@ commas, tried in turn and sticky on whichever answered), `ASYNCDB_NODE` (this no
 reach it, the API port and not the nginx in front of it) and `ASYNCDB_ZONE` (the availability zone
 this node is in). **Set none and nothing changes**: no thread is started, nothing is registered, and
 the instance owns the whole keyspace, which is what every test that is not `cluster_test` runs as.
-Set the first two and the instance joins.
+Set the first two and the instance joins. The three are read in one place,
+`cluster::from_environment()` in `cluster/etcd_cluster.h`, which fills a `cluster::config`: the
+endpoints, this node and its zone, and beside them the tunables nothing sets from outside — a ten
+second membership lease, the `/asyncdb/node/` and `/asyncdb/leader/` prefixes,
+`claims_per_refresh`, and three timeouts (two seconds to connect at all, thirty to finish, and five
+for etcd, which is on a shorter leash because a node that cannot reach it carries on serving what
+it holds). `config::is_clustered()` — endpoints and a node name, both set — is that rule as the
+code puts it, and `main.cpp` builds the config, constructs the `etcd_cluster` from it and hands
+that to the server.
 
 `ASYNCDB_ZONE` is what turns partitioning into replication, and it is the only knob there is:
 **a key belongs to one of 256 partitions, the membership is grouped by zone, and the partition is
@@ -356,7 +376,8 @@ Request flow, one layer per directory under `src/`:
 `main.cpp` → `server::server` → `server::session` → `router::router` → `repository::repository` →
 `table::table` / `record::record` / `scan::range`
 
-and, off the router, `cluster::cluster` → `http::client` → the other nodes and etcd.
+and, off the router, `cluster::cluster` → `http::client` → the other nodes, and
+`cluster::etcd_cluster` → `etcd::client` → `http::client` → etcd.
 
 Beside that, two passes that move records between nodes rather than serving anybody:
 `rebuild::rebuild` fills an empty store before the node joins, and `reconcile::reconcile` moves the
@@ -399,14 +420,17 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   content type, and either a `boost::json::object` or the raw text of a value). `router/api_error.cpp`
   is the one place a documented error code is mapped to a status.
 - **`http::client`** is the seam over libcurl, and `curl_client` keeps **one handle per thread**,
-  reset before each request. The handle is what holds open connections, so a node that forwards to
-  the same few neighbours stops paying for a handshake each time — and `curl_easy_reset` is what
-  keeps the last request's body, or a HEAD's "no body", out of the next one. `send_all` is the same
-  thing for a **fan out** — the copies of a record, or every node of a table create — run in one
-  `curl_multi` handle per thread, so the thread waits for the slowest of them rather than for the
-  sum of them, and the multi handle holds that fan out's connections the way the single handle
-  holds its own. **A fan out does not copy the bodies it is given**, so the requests have to
-  outlive the call, and a fan out of one runs on the single handle instead.
+  reset before each request — `http::handle` is that one easy handle and `http::group` the multi
+  handle and the easy handles a fan out runs on, both `thread_local` in `curl_client.cpp`, and a
+  group keeps as many handles as the widest fan out that thread has run. The handle is what holds
+  open connections, so a node that forwards to the same few neighbours stops paying for a handshake
+  each time — and `curl_easy_reset` is what keeps the last request's body, or a HEAD's "no body",
+  out of the next one. `send_all` is the same thing for a **fan out** — the copies of a record, or
+  every node of a table create — run in one `curl_multi` handle per thread, so the thread waits for
+  the slowest of them rather than for the sum of them, and the multi handle holds that fan out's
+  connections the way the single handle holds its own. **A fan out does not copy the bodies it is
+  given**, so the requests have to outlive the call, and a fan out of one runs on the single handle
+  instead.
 - **`cluster::cluster`** is the second pure-virtual seam the router routes against, over "which
   nodes hold this key" and "ask that node". `cluster::replicas` answers a `cluster::placement` —
   whether this node holds a copy, and the other nodes that do, this node's own zone first.
@@ -416,9 +440,15 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   address is still read, as a node in no zone), renews it on a thread of its own, and reads the
   membership back — and **a membership of fewer than two nodes is this node holding every key**,
   which is the cluster an instance told nothing runs as, so there is no second implementation of
-  the seam for standing alone. `cluster::owner_of` is rendezvous
-  hashing over a set of nodes, `cluster::owners_of` runs it once per zone, `cluster::zones_of` is the
-  grouping behind `zones()`, and `cluster::forward` is how a request travels.
+  the seam for standing alone. The seam itself is `cluster/cluster.h`, and the rest of the
+  directory is what stands behind it: `partition.h` is the hashing — `partition_of` is the 256
+  partitions, `owner_of` is rendezvous hashing over a set of nodes, `owners_of` runs it once per
+  zone and `zones_of` is the grouping behind `zones()`; `forwarder.h` is how a request travels,
+  `forward` and `forward_all` over an `http::client`; `member.h` is `member` and `membership`,
+  the whole list held as a `shared_ptr<const vector<member>>` and swapped rather than edited, so a
+  reader loads it without excluding the thread that replaces it; and `placements.h` answers
+  `replicas` once a partition rather than once a key, which is what a pass walking a million keys
+  asks through.
 - **`repository::repository`** is the pure-virtual seam, over tables, records, scans and range deletes.
   `rocksdb_repository` makes each table a **column family** and keeps its document in the default one
   under `"TABLE_<name>"`; dropping a table drops the column family, so the data goes with it. The
@@ -467,22 +497,23 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   `X-Asyncdb-Forwarded` and is served where it lands, which is what stops two nodes bouncing it.
   `doc/database/cluster.md` is the spec, including what this deliberately does not do (no read
   repair, no replication log, and a write that needs both a leader and every copy).
-- **Records move when ownership moves, and only then.** A membership change redraws the split
-  inside a zone without moving a record, so `reconcile::reconcile` does: it **fetches** what this
-  node now owns and holds nothing for, from every other node, and **clears down** what it no longer
-  owns. `server::server` runs it on a thread of its own, one tick *after* the membership it saw
-  changed — a membership is a moment, and a store that matches the one it was left with is never
-  walked, which is why a test naming its own static cluster never runs a pass at all.
-  **What makes the delete safe is that it asks first**: a copy is given up only when the node that
-  owns that key *in this node's own zone* answers a HEAD saying it holds it. Not any copy — the
-  record here is this zone's copy, so deleting it because another zone has one is a zone left
-  holding nothing — and a node acting on a view that is a moment out of date is told no, keeps the
-  record, and asks again next pass. The count of those is `deferred`, and a pass with any is not
-  settled, so it runs again. **Neither half is safe alone**: clearing down without fetching is a
-  shrink that loses records rather than staling them; fetching without clearing down is a store
-  that only grows and a stale value waiting for the membership to swing back. Both are best effort
-  and caught like the rebuild, because a store that refuses a write must not take the process down
-  from a thread of its own. `doc/runbook/rebuild.md` is the page.
+- **Records move when ownership moves, and only then.** A membership change redraws the split inside
+  a zone without moving a record, so `reconcile::reconcile` does: it **fetches** what this node now
+  owns and holds nothing for, from every other node, and **clears down** what it no longer owns.
+  `server::server` runs it on a thread of its own, one tick — `server::reconcile_interval()`, three
+  seconds — *after* the membership it saw changed, and one change buys `server::reconcile_attempts`
+  (12) passes: a membership is a moment, and a store that matches the one it was left with is never
+  walked, which is why a test naming its own static cluster never runs a pass at all. **What makes
+  the delete safe is that it asks first**: a copy is given up only when the node that owns that key
+  *in this node's own zone* answers a HEAD saying it holds it. Not any copy — the record here is
+  this zone's copy, so deleting it because another zone has one is a zone left holding nothing — and
+  a node acting on a view that is a moment out of date is told no, keeps the record, and asks again
+  next pass. The count of those is `deferred`, and a pass with any is not settled, so it runs again.
+  **Neither half is safe alone**: clearing down without fetching is a shrink that loses records
+  rather than staling them; fetching without clearing down is a store that only grows and a stale
+  value waiting for the membership to swing back. Both are best effort and caught like the rebuild,
+  because a store that refuses a write must not take the process down from a thread of its own.
+  `doc/runbook/rebuild.md` is the page.
 - **A leader is claimed in etcd, not elected by votes.** `/asyncdb/leader/{partition}` is written
   with a transaction that only succeeds if nothing created the key, on the node's own membership
   lease — so a node that stops renewing stops leading. A node claims
@@ -502,8 +533,13 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 RocksDB implementation, `cluster::fake_cluster` for the cluster and `http::fake_client` for the
 network. `server_test` is an integration test: it starts a real server on port 0 in a thread and
 drives it with libcurl. `test/server/cluster_test.cpp` is the same thing twice over: two real servers
-on two ports, each given a `cluster::cluster` naming the other, so forwarding, table fan-out and
-merged scans are exercised over real sockets. Both have to stop the servers they start.
+on two ports, each given a `cluster::test_cluster` naming the other — the production routing with the
+membership and the leader told to it rather than read from etcd, and a `send_all` that is a real fan
+out — so forwarding, table fan-out and merged scans are exercised over real sockets. Both have to stop
+the servers they start, and both wait on `server::wait_until_listening` (`test/server/listening.h`)
+first: a server binds in its constructor, which is what settles the port a test asks it for, and
+listens only in `serve()`, once the store is filled and the node has joined — so a test that started
+`serve()` on a thread of its own is racing it.
 
 **Behaviour the server never runs belongs in `test/`, not in `src/`.** A base class body every
 implementation in `src/` overrides is production code the suite proves and the binary never
@@ -552,7 +588,9 @@ Built on [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum), not a m
 
 ## Release
 
-Pushing to `master` builds the Docker image and uploads it as a workflow artifact. That first job,
+Pushing to `master` builds the Docker image and uploads it as a workflow artifact. The workflow is
+`.github/workflows/build.yaml`; `github/` at the root holds a byte-identical copy of it and of
+`pull-request.yaml` that nothing runs, so a change to one leaves the other stale. That first job,
 `build`, has no condition on any step and asks AWS nothing: it builds, reads `version`, answers the
 gate and hands the image on.
 
@@ -594,6 +632,7 @@ carries no `if:` of its own — the same mechanism one level up: a job with no c
 when every job it needs succeeded, as a step with no condition runs only when every step before it
 did. The `if:`s that do appear on steps are about something else — `matrix.suites` picks the share
 that runs the API, browser and load suites, and `always()` marks the teardowns — and none of them
+is the gate.
 So a version that fails is published and retried on every push until it passes, and a version that
 has passed is neither republished nor stood up again — which is what keeps thirty-six instances
 and four load balancers off a push that only touched a comment. **A version tag means

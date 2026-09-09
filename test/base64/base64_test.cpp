@@ -1,3 +1,4 @@
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -28,40 +29,30 @@ TEST(base64_test, encode_a_zero_byte)
 
 TEST(base64_test, decode_text)
 {
-	std::string decoded;
+	std::optional<std::string> decoded = base64::decode("YXN5bmNkYg==");
 
-	EXPECT_TRUE(base64::decode("YXN5bmNkYg==", &decoded));
-	EXPECT_EQ(decoded, "asyncdb");
+	ASSERT_TRUE(decoded);
+	EXPECT_EQ(*decoded, "asyncdb");
 }
 
 TEST(base64_test, decode_a_zero_byte)
 {
-	std::string decoded;
+	std::optional<std::string> decoded = base64::decode("YQBi");
 
-	EXPECT_TRUE(base64::decode("YQBi", &decoded));
-	EXPECT_EQ(decoded, std::string("a\0b", 3));
+	ASSERT_TRUE(decoded);
+	EXPECT_EQ(*decoded, std::string("a\0b", 3));
 }
 
 TEST(base64_test, decode_what_it_encoded)
 {
 	std::string text = "/asyncdb/node/http://asyncdb-1:8080";
-	std::string decoded;
+	std::optional<std::string> decoded = base64::decode(base64::encode(text));
 
-	EXPECT_TRUE(base64::decode(base64::encode(text), &decoded));
-	EXPECT_EQ(decoded, text);
+	ASSERT_TRUE(decoded);
+	EXPECT_EQ(*decoded, text);
 }
 
 TEST(base64_test, fail_to_decode_text_that_is_not_base64)
 {
-	std::string decoded;
-
-	EXPECT_FALSE(base64::decode("not base 64", &decoded));
-}
-
-TEST(base64_test, decode_over_what_was_there_before)
-{
-	std::string decoded = "already here";
-
-	EXPECT_TRUE(base64::decode("YWJj", &decoded));
-	EXPECT_EQ(decoded, "abc");
+	EXPECT_FALSE(base64::decode("not base 64").has_value());
 }

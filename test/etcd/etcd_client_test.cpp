@@ -16,11 +16,7 @@ namespace
 
 	std::string decoded(const boost::json::object &json, const std::string &field)
 	{
-		std::string text;
-
-		base64::decode(std::string(json.at(field).as_string()), &text);
-
-		return text;
+		return base64::decode(std::string(json.at(field).as_string())).value_or("");
 	}
 }
 
@@ -356,9 +352,7 @@ TEST(etcd_client_test, create_a_key_nothing_holds)
 
 	boost::json::object sent = boost::json::parse(http.sent_to("/v3/kv/txn")[0].body).as_object();
 	const boost::json::object &compared = sent.at("compare").as_array()[0].as_object();
-	std::string key;
-
-	base64::decode(std::string(compared.at("key").as_string()), &key);
+	std::string key = base64::decode(std::string(compared.at("key").as_string())).value_or("");
 
 	// "Only if nothing has created this key", which is what makes two claimants one leader.
 	EXPECT_EQ(key, "/asyncdb/leader/7");
@@ -367,9 +361,7 @@ TEST(etcd_client_test, create_a_key_nothing_holds)
 
 	const boost::json::object &put =
 		sent.at("success").as_array()[0].as_object().at("requestPut").as_object();
-	std::string value;
-
-	base64::decode(std::string(put.at("value").as_string()), &value);
+	std::string value = base64::decode(std::string(put.at("value").as_string())).value_or("");
 
 	EXPECT_EQ(value, "http://asyncdb-1:8080");
 	EXPECT_EQ(put.at("lease").as_string(), "12");

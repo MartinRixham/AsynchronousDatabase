@@ -28,12 +28,11 @@ std::string base64::encode(const std::string &text)
 	return encoded;
 }
 
-bool base64::decode(const std::string &encoded, std::string *text)
+std::optional<std::string> base64::decode(const std::string &encoded)
 {
 	unsigned int group = 0;
 	int bits = 0;
-
-	text->clear();
+	std::string text;
 
 	for (size_t i = 0; i < encoded.size(); i++)
 	{
@@ -46,7 +45,7 @@ bool base64::decode(const std::string &encoded, std::string *text)
 
 		if (found == NULL || encoded[i] == '\0')
 		{
-			return false;
+			return std::nullopt;
 		}
 
 		group = (group << 6) | static_cast<unsigned int>(found - alphabet);
@@ -55,9 +54,9 @@ bool base64::decode(const std::string &encoded, std::string *text)
 		if (bits >= 8)
 		{
 			bits -= 8;
-			*text += static_cast<char>((group >> bits) & 0xff);
+			text += static_cast<char>((group >> bits) & 0xff);
 		}
 	}
 
-	return true;
+	return text;
 }

@@ -1,5 +1,5 @@
-#include <algorithm>
 #include <chrono>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -55,17 +55,25 @@ namespace
 		return std::string(object.at(name).as_string());
 	}
 
-	bool read_tables(
+	// What a rebuild took from one node or from one zone: whether the whole of it was read, and how
+	// many of its records this node now holds.
+	struct restored
+	{
+		bool whole = false;
+
+		size_t records = 0;
+	};
+
+	std::optional<std::vector<table::table>> read_tables(
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
-		const std::chrono::steady_clock::time_point &deadline,
-		std::vector<table::table> *tables)
+		const std::chrono::steady_clock::time_point &deadline)
 	{
 		for (size_t i = 0; i < zone.size(); i++)
 		{
 			if (out_of_time(deadline))
 			{
-				return false;
+				return std::nullopt;
 			}
 
 			router::response answer = nodes.send(zone[i], table_request());
@@ -79,6 +87,7 @@ namespace
 			}
 
 			const boost::json::array &listed = answer.json.at("tables").as_array();
+			std::vector<table::table> tables;
 
 			for (size_t j = 0; j < listed.size(); j++)
 			{
@@ -87,24 +96,24 @@ namespace
 					continue;
 				}
 
-				tables->push_back(table::to_table(boost::json::serialize(listed[j])));
+				tables.push_back(table::to_table(boost::json::serialize(listed[j])));
 			}
 
-			return true;
+			return tables;
 		}
 
-		return false;
+		return std::nullopt;
 	}
 
-	bool copy_table(
+	restored copy_table(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::string &node,
 		const std::string &name,
 		size_t page,
-		const std::chrono::steady_clock::time_point &deadline,
-		size_t *restored)
+		const std::chrono::steady_clock::time_point &deadline)
 	{
+		restored taken;
 		std::string from;
 		bool has_from = false;
 
@@ -120,7 +129,7 @@ namespace
 			{
 				DEBUG("A scan of \"" + name + "\" on " + node + " ran out of time for a rebuild.");
 
-				return false;
+				return taken;
 			}
 
 			router::response answer = nodes.send(node, scan_request(name, from, has_from, page));
@@ -130,7 +139,7 @@ namespace
 			{
 				DEBUG("Node " + node + " did not answer a scan of \"" + name + "\" for a rebuild.");
 
-				return false;
+				return taken;
 			}
 
 			const boost::json::array &records = answer.json.at("records").as_array();
@@ -163,20 +172,22 @@ namespace
 				{
 					repository.write_record(name, record::valid_record(key, field(object, "value")));
 
-					(*restored)++;
+					taken.records++;
 				}
 			}
 
 			if (!answer.json.contains("next"))
 			{
-				return true;
+				taken.whole = true;
+
+				return taken;
 			}
 
 			if (!has_last || !read_any)
 			{
 				DEBUG("A scan of \"" + name + "\" on " + node + " made no progress, so the rebuild stops.");
 
-				return false;
+				return taken;
 			}
 
 			from = last;
@@ -184,45 +195,46 @@ namespace
 		}
 	}
 
-	bool from_zone(
+	restored from_zone(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
 		size_t page,
-		const std::chrono::steady_clock::time_point &deadline,
-		size_t *restored)
+		const std::chrono::steady_clock::time_point &deadline)
 	{
-		std::vector<table::table> tables;
+		restored taken;
+		std::optional<std::vector<table::table>> tables = read_tables(nodes, zone, deadline);
 
-		if (!read_tables(nodes, zone, deadline, &tables))
+		if (!tables)
 		{
-			return false;
+			return taken;
 		}
 
-		for (size_t i = 0; i < tables.size(); i++)
+		for (size_t i = 0; i < tables->size(); i++)
 		{
-			repository.create_table(tables[i]);
+			repository.create_table((*tables)[i]);
 		}
 
-		for (size_t i = 0; i < tables.size(); i++)
+		for (size_t i = 0; i < tables->size(); i++)
 		{
-			const std::string &name = tables[i].name;
+			const std::string &name = (*tables)[i].name;
 
-			bool whole = std::all_of(
-				zone.begin(),
-				zone.end(),
-				[&](const std::string &node)
-				{
-					return copy_table(repository, nodes, node, name, page, deadline, restored);
-				});
-
-			if (!whole)
+			for (size_t j = 0; j < zone.size(); j++)
 			{
-				return false;
+				restored copied = copy_table(repository, nodes, zone[j], name, page, deadline);
+
+				taken.records += copied.records;
+
+				if (!copied.whole)
+				{
+					return taken;
+				}
 			}
 		}
 
-		return true;
+		taken.whole = true;
+
+		return taken;
 	}
 }
 
@@ -261,13 +273,13 @@ size_t rebuild::rebuild(
 			return 0;
 		}
 
-		size_t restored = 0;
+		restored taken = from_zone(repository, nodes, zones[i], page, deadline);
 
-		if (from_zone(repository, nodes, zones[i], page, deadline, &restored))
+		if (taken.whole)
 		{
-			DEBUG("Rebuilt " + std::to_string(restored) + " records before joining.");
+			DEBUG("Rebuilt " + std::to_string(taken.records) + " records before joining.");
 
-			return restored;
+			return taken.records;
 		}
 
 		DEBUG("A node of a zone did not answer, so the rebuild asks the next zone.");

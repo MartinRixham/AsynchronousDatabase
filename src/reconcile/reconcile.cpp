@@ -68,15 +68,15 @@ namespace
 
 	// Paging is by bound and not by cursor: a cursor names the instance that issued it, where a
 	// key is a position any node will take.
-	bool fetch_from(
+	reconcile::outcome fetch_from(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::string &node,
 		const std::string &name,
 		size_t page,
-		const std::chrono::steady_clock::time_point &deadline,
-		size_t *fetched)
+		const std::chrono::steady_clock::time_point &deadline)
 	{
+		reconcile::outcome taken;
 		std::string from;
 		bool has_from = false;
 
@@ -93,7 +93,9 @@ namespace
 			{
 				DEBUG("Node " + node + " did not answer a scan of \"" + name + "\" for a reconcile.");
 
-				return true;
+				taken.finished = true;
+
+				return taken;
 			}
 
 			const boost::json::array &records = answer.json.at("records").as_array();
@@ -138,7 +140,7 @@ namespace
 					{
 						repository.write_record(name, record::valid_record(key, value.text));
 
-						(*fetched)++;
+						taken.fetched++;
 					}
 				}
 			}
@@ -146,7 +148,9 @@ namespace
 			// No cursor is a range that is exhausted.
 			if (!answer.json.contains("next"))
 			{
-				return true;
+				taken.finished = true;
+
+				return taken;
 			}
 
 			// A page that carried nothing to resume from, or nothing but the key it resumed at, is
@@ -155,14 +159,16 @@ namespace
 			{
 				DEBUG("A scan of \"" + name + "\" on " + node + " made no progress, so the fetch stops.");
 
-				return true;
+				taken.finished = true;
+
+				return taken;
 			}
 
 			from = last;
 			has_from = true;
 		}
 
-		return false;
+		return taken;
 	}
 
 	bool owner_holds(
@@ -176,14 +182,14 @@ namespace
 		return answer.status == boost::beast::http::status::ok;
 	}
 
-	bool clear_table(
+	reconcile::outcome clear_table(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::string &name,
 		size_t page,
-		const std::chrono::steady_clock::time_point &deadline,
-		reconcile::outcome *done)
+		const std::chrono::steady_clock::time_point &deadline)
 	{
+		reconcile::outcome given;
 		scan::range range;
 
 		range.is_valid = true;
@@ -225,7 +231,7 @@ namespace
 
 				if (where.nodes.empty())
 				{
-					done->deferred++;
+					given.deferred++;
 
 					continue;
 				}
@@ -236,24 +242,26 @@ namespace
 				{
 					repository.delete_record(name, key);
 
-					done->cleared++;
+					given.cleared++;
 				}
 				else
 				{
-					done->deferred++;
+					given.deferred++;
 				}
 			}
 
 			if (!walked.has_more || !has_last || !read_any)
 			{
-				return true;
+				given.finished = true;
+
+				return given;
 			}
 
 			range.from = last;
 			range.has_from = true;
 		}
 
-		return false;
+		return given;
 	}
 }
 
@@ -295,7 +303,11 @@ reconcile::outcome reconcile::reconcile(
 		{
 			for (size_t node = 0; node < zones[zone].size(); node++)
 			{
-				if (!fetch_from(repository, nodes, zones[zone][node], it->name, page, fetching, &done.fetched))
+				outcome taken = fetch_from(repository, nodes, zones[zone][node], it->name, page, fetching);
+
+				done.fetched += taken.fetched;
+
+				if (!taken.finished)
 				{
 					finished = false;
 				}
@@ -307,7 +319,12 @@ reconcile::outcome reconcile::reconcile(
 
 	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
 	{
-		if (!clear_table(repository, nodes, it->name, page, clearing, &done))
+		outcome given = clear_table(repository, nodes, it->name, page, clearing);
+
+		done.cleared += given.cleared;
+		done.deferred += given.deferred;
+
+		if (!given.finished)
 		{
 			finished = false;
 		}

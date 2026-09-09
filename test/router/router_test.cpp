@@ -728,9 +728,7 @@ namespace
 
 	std::string cursor_key(const router::response &response)
 	{
-		std::string decoded;
-
-		base64::decode(std::string(response.json.at("next").as_string()), &decoded);
+		std::string decoded = base64::decode(std::string(response.json.at("next").as_string())).value_or("");
 
 		return std::string(boost::json::parse(decoded).as_object().at("k").as_string());
 	}

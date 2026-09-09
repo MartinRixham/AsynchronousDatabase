@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <optional>
 
 #include <boost/json.hpp>
 #include <boost/lexical_cast/try_lexical_convert.hpp>
@@ -9,23 +10,23 @@
 
 namespace
 {
-	bool prefix_end(const std::string &prefix, std::string *end)
+	std::optional<std::string> prefix_end(const std::string &prefix)
 	{
-		*end = prefix;
+		std::string end = prefix;
 
-		while (!end->empty() && static_cast<unsigned char>(end->back()) == 0xff)
+		while (!end.empty() && static_cast<unsigned char>(end.back()) == 0xff)
 		{
-			end->pop_back();
+			end.pop_back();
 		}
 
-		if (end->empty())
+		if (end.empty())
 		{
-			return false;
+			return std::nullopt;
 		}
 
-		end->back()++;
+		end.back()++;
 
-		return true;
+		return end;
 	}
 
 	size_t read_limit(const std::string &query)
@@ -40,21 +41,21 @@ namespace
 		return std::min(std::max(limit, static_cast<size_t>(1)), scan::max_limit);
 	}
 
-	bool read_cursor(const std::string &cursor, const std::string &instance, std::string *key)
+	std::optional<std::string> read_cursor(const std::string &cursor, const std::string &instance)
 	{
-		std::string decoded;
+		std::optional<std::string> decoded = base64::decode(cursor);
 
-		if (!base64::decode(cursor, &decoded))
+		if (!decoded)
 		{
-			return false;
+			return std::nullopt;
 		}
 
 		boost::system::error_code error;
-		boost::json::value value = boost::json::parse(decoded, error);
+		boost::json::value value = boost::json::parse(*decoded, error);
 
 		if (error || !value.is_object())
 		{
-			return false;
+			return std::nullopt;
 		}
 
 		boost::json::object object = value.as_object();
@@ -63,12 +64,10 @@ namespace
 			!object.contains("s") || !object["s"].is_string() ||
 			object["s"].as_string() != instance)
 		{
-			return false;
+			return std::nullopt;
 		}
 
-		*key = std::string(object["k"].as_string());
-
-		return true;
+		return std::string(object["k"].as_string());
 	}
 }
 
@@ -81,9 +80,16 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 
 	if (!prefix.empty())
 	{
+		std::optional<std::string> end = prefix_end(prefix);
+
 		range.from = prefix;
 		range.has_from = true;
-		range.has_to = prefix_end(prefix, &range.to);
+
+		if (end)
+		{
+			range.to = *end;
+			range.has_to = true;
+		}
 	}
 
 	if (!from.empty())
@@ -112,21 +118,21 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 
 	if (!cursor.empty())
 	{
-		std::string key;
+		std::optional<std::string> key = read_cursor(cursor, instance);
 
-		if (!read_cursor(cursor, instance, &key))
+		if (!key)
 		{
 			return invalid_range("invalid_cursor", "Cursor was not issued by this instance.");
 		}
 
 		if (range.reverse)
 		{
-			range.to = key;
+			range.to = *key;
 			range.has_to = true;
 		}
 		else
 		{
-			range.from = key + std::string(1, '\0');
+			range.from = *key + std::string(1, '\0');
 			range.has_from = true;
 		}
 	}

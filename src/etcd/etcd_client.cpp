@@ -85,17 +85,22 @@ namespace
 
 		const boost::json::object &pair = ranged.at("kvs").as_array()[0].as_object();
 		std::optional<int64_t> revision = read_number(pair, "create_revision");
-		std::string holder;
 
-		if (!revision || !pair.contains("value") || !pair.at("value").is_string() ||
-			!base64::decode(std::string(pair.at("value").as_string()), &holder))
+		if (!revision || !pair.contains("value") || !pair.at("value").is_string())
+		{
+			return std::nullopt;
+		}
+
+		std::optional<std::string> holder = base64::decode(std::string(pair.at("value").as_string()));
+
+		if (!holder)
 		{
 			return std::nullopt;
 		}
 
 		etcd::claim claimed;
 
-		claimed.holder = holder;
+		claimed.holder = *holder;
 		claimed.revision = *revision;
 
 		return claimed;
@@ -225,15 +230,19 @@ std::map<std::string, std::string> etcd::client::range(const std::string &prefix
 		}
 
 		const boost::json::object &pair = pairs[i].as_object();
-		std::string key;
-		std::string value;
 
-		if (pair.contains("key") && pair.at("key").is_string() &&
-			pair.contains("value") && pair.at("value").is_string() &&
-			base64::decode(std::string(pair.at("key").as_string()), &key) &&
-			base64::decode(std::string(pair.at("value").as_string()), &value))
+		if (!pair.contains("key") || !pair.at("key").is_string() ||
+			!pair.contains("value") || !pair.at("value").is_string())
 		{
-			values[key] = value;
+			continue;
+		}
+
+		std::optional<std::string> key = base64::decode(std::string(pair.at("key").as_string()));
+		std::optional<std::string> value = base64::decode(std::string(pair.at("value").as_string()));
+
+		if (key && value)
+		{
+			values[*key] = *value;
 		}
 	}
 

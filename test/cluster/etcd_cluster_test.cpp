@@ -45,12 +45,10 @@ namespace
 		for (size_t i = 0; i < sent.size(); i++)
 		{
 			boost::json::object body = boost::json::parse(sent[i].body).as_object();
-			std::string key;
 
-			base64::decode(
-				std::string(body.at("compare").as_array()[0].as_object().at("key").as_string()), &key);
-
-			keys.insert(key);
+			keys.insert(
+				base64::decode(std::string(body.at("compare").as_array()[0].as_object().at("key").as_string()))
+					.value_or(""));
 		}
 
 		return keys;
@@ -186,9 +184,7 @@ TEST(etcd_cluster_test, register_the_node_and_read_the_membership)
 	ASSERT_EQ(http.sent_to("/v3/kv/put").size(), 1u);
 
 	boost::json::object put = boost::json::parse(http.sent_to("/v3/kv/put")[0].body).as_object();
-	std::string key;
-
-	base64::decode(std::string(put.at("key").as_string()), &key);
+	std::string key = base64::decode(std::string(put.at("key").as_string())).value_or("");
 
 	EXPECT_EQ(key, "/asyncdb/node/" + one);
 	EXPECT_EQ(put.at("lease").as_string(), "12");
@@ -286,9 +282,7 @@ TEST(etcd_cluster_test, register_the_zone_the_node_is_in)
 	ASSERT_EQ(http.sent_to("/v3/kv/put").size(), 1u);
 
 	boost::json::object put = boost::json::parse(http.sent_to("/v3/kv/put")[0].body).as_object();
-	std::string value;
-
-	base64::decode(std::string(put.at("value").as_string()), &value);
+	std::string value = base64::decode(std::string(put.at("value").as_string())).value_or("");
 
 	boost::json::object registered = boost::json::parse(value).as_object();
 

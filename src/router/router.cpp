@@ -87,11 +87,13 @@ namespace
 		return { request.method, request.path, range_query(range), request.body, request.forwarded };
 	}
 
-	bool read_page(const router::response &response, std::vector<record::record> *records)
+	scan::page read_page(const router::response &response)
 	{
+		scan::page page;
+
 		if (!response.json.contains("records") || !response.json.at("records").is_array())
 		{
-			return false;
+			return page;
 		}
 
 		const boost::json::array &answered = response.json.at("records").as_array();
@@ -116,10 +118,12 @@ namespace
 				value = std::string(json.at("value").as_string());
 			}
 
-			records->push_back(record::valid_record(std::string(json.at("key").as_string()), value));
+			page.records.push_back(record::valid_record(std::string(json.at("key").as_string()), value));
 		}
 
-		return response.json.contains("next");
+		page.has_more = response.json.contains("next");
+
+		return page;
 	}
 
 	bool trim_to_budget(std::vector<record::record> *records)
@@ -540,10 +544,9 @@ router::response router::router::scan_records(const request &request, const std:
 
 	for (size_t i = 0; i < zones.size(); i++)
 	{
-		std::vector<record::record> answered = page.records;
-		bool more = page.has_more;
+		zone_answer answered = scan_zone(request, range, zones[i]);
 
-		failure = scan_zone(request, range, zones[i], &answered, &more);
+		failure = answered.failure;
 
 		if (failure && failure->status < boost::beast::http::status::internal_server_error)
 		{
@@ -552,8 +555,11 @@ router::response router::router::scan_records(const request &request, const std:
 
 		if (!failure)
 		{
-			records = answered;
-			has_more = more;
+			records = page.records;
+
+			records.insert(records.end(), answered.page.records.begin(), answered.page.records.end());
+
+			has_more = page.has_more || answered.page.has_more;
 
 			merge(&records, range.reverse);
 
@@ -595,26 +601,31 @@ router::response router::router::scan_records(const request &request, const std:
 	return json_response(boost::beast::http::status::ok, body);
 }
 
-std::optional<router::response> router::router::scan_zone(
+router::router::zone_answer router::router::scan_zone(
 	const request &request,
 	const scan::range &range,
-	const std::vector<std::string> &zone,
-	std::vector<record::record> *records,
-	bool *has_more)
+	const std::vector<std::string> &zone)
 {
+	zone_answer answered;
+
 	for (size_t i = 0; i < zone.size(); i++)
 	{
 		response answer = nodes.send(zone[i], forwarded_range(request, range));
 
 		if (answer.status != boost::beast::http::status::ok)
 		{
-			return answer;
+			answered.failure = answer;
+
+			return answered;
 		}
 
-		*has_more = read_page(answer, records) || *has_more;
+		scan::page read = read_page(answer);
+
+		answered.page.records.insert(answered.page.records.end(), read.records.begin(), read.records.end());
+		answered.page.has_more = read.has_more || answered.page.has_more;
 	}
 
-	return std::nullopt;
+	return answered;
 }
 
 router::response router::router::delete_records(const request &request, const std::string &name)
