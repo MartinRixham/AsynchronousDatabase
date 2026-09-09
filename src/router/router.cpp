@@ -350,6 +350,10 @@ router::response router::router::route_file(const request &request, const std::s
 
 	wanted.partitions = *partitions;
 
+	// The keys alone, for a node deciding what it may give up rather than taking records over. It
+	// is the same parameter a scan takes and defaults the same way.
+	wanted.values = url::read_parameter(request.query, "values") != "false";
+
 	std::string cursor = url::read_parameter(request.query, "from");
 
 	if (!cursor.empty())

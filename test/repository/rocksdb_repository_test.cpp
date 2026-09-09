@@ -592,3 +592,63 @@ TEST_F(repository_test, a_transfer_the_process_before_it_left_behind_goes_when_t
 	EXPECT_FALSE(std::filesystem::exists(left));
 	EXPECT_EQ(repository->read_record("a_table", "a key"), "a value");
 }
+
+// What a clear down asks the node that owns a share: which of these keys have you got. The answer
+// is a file, so it is one question for a share rather than one for every record in it.
+TEST_F(repository_test, a_file_of_keys_is_what_a_store_gives_records_up_on)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	repository->write_record("a_table", record::valid_record("1", "one"));
+	repository->write_record("a_table", record::valid_record("2", "two"));
+
+	// The node giving records up holds one the owner has and one it has not.
+	other_repository->write_record("a_table", record::valid_record("1", "mine"));
+	other_repository->write_record("a_table", record::valid_record("3", "mine"));
+
+	repository::share wanted = every_partition();
+
+	wanted.values = false;
+
+	repository::extract taken = repository->export_records("a_table", wanted);
+
+	EXPECT_EQ(2u, taken.records);
+	EXPECT_EQ(1u, other_repository->clear_records("a_table", taken.file));
+
+	// The one the owner has is gone, and the one it has never held is kept — and a key that was
+	// never here is not a tombstone either.
+	EXPECT_FALSE(other_repository->read_record("a_table", "1").has_value());
+	EXPECT_TRUE(other_repository->read_record("a_table", "3").has_value());
+	EXPECT_EQ(
+		keys(other_repository->scan_records("a_table", whole_table())),
+		(std::vector<std::string> { "3" }));
+}
+
+// The budget is what the walk read, so a walk that is not reading values covers far more of a table
+// for the same one. That is what makes clearing down a share one question and not thousands.
+TEST_F(repository_test, a_walk_of_keys_alone_covers_more_of_a_table_than_a_walk_of_records)
+{
+	create_table("a_table");
+
+	repository->write_record("a_table", record::valid_record("1", std::string(4096, 'x')));
+	repository->write_record("a_table", record::valid_record("2", std::string(4096, 'x')));
+	repository->write_record("a_table", record::valid_record("3", std::string(4096, 'x')));
+
+	repository::share wanted = every_partition();
+
+	// A budget a single value spends and a great many keys do not.
+	wanted.bytes = 2048;
+
+	repository::extract records = repository->export_records("a_table", wanted);
+
+	wanted.values = false;
+
+	repository::extract just_keys = repository->export_records("a_table", wanted);
+
+	EXPECT_EQ(1u, records.records);
+	EXPECT_TRUE(records.has_more);
+
+	EXPECT_EQ(3u, just_keys.records);
+	EXPECT_FALSE(just_keys.has_more);
+}

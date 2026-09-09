@@ -1,6 +1,7 @@
 #ifndef RECONCILE_RECONCILE_H
 #define RECONCILE_RECONCILE_H
 
+#include <atomic>
 #include <cstddef>
 
 #include "cluster/cluster.h"
@@ -12,10 +13,13 @@ namespace reconcile
 	// gives records up. The half that takes them asks for a file and not for a page.
 	constexpr size_t default_page = 100;
 
-	// How long one pass is given, half of it to each half of the pass. It is short because a node
-	// being shut down waits for the pass in flight before it goes, and because what a pass does not
-	// finish the pass after it starts again on: there is nothing a long pass does that two short
-	// ones do not.
+	// How long each half of a pass goes on getting nowhere before it stops. **It is not a bound on
+	// the whole of a pass**: a pass that ends while records are still moving is one the pass after
+	// it starts over from the beginning, so a share that takes ten passes is nine of them re-reading
+	// what the ones before them already took. What ends a pass is having run out of things to move.
+	//
+	// A node being shut down still waits for the pass in flight, so a pass takes the flag that says
+	// whether it should still be running rather than being kept short enough not to matter.
 	constexpr long default_seconds = 20;
 
 	// What a pass did, and whether anything is waiting on another node.
@@ -30,6 +34,9 @@ namespace reconcile
 		bool finished = false;
 
 		bool settled() const;
+
+		// Whether the pass moved anything, which is what says it is worth running another.
+		bool moved() const;
 	};
 
 	// **Neither half is safe without the other.** Clearing down alone is a shrink that loses
@@ -48,6 +55,7 @@ namespace reconcile
 	outcome reconcile(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
+		const std::atomic<bool> &running,
 		size_t page = default_page,
 		long seconds = default_seconds);
 }

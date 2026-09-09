@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -249,4 +250,34 @@ TEST_F(curl_client_test, answer_a_fan_out_of_one_on_the_handle_of_the_thread)
 TEST_F(curl_client_test, answer_a_fan_out_of_nothing)
 {
 	EXPECT_TRUE(client.send_all({}, 30).empty());
+}
+
+// A thread holds a connection to every node it forwards to, and libcurl's own default cache was
+// smaller than the neighbour count of a cluster of more than six nodes: the sixth destination a
+// thread used evicted the first, and every forward after that paid for a handshake again. Every
+// address in 127.0.0.0/8 is this machine, so eight of them are eight connections to one server.
+TEST_F(curl_client_test, keeps_a_connection_to_more_nodes_than_a_cluster_has)
+{
+	std::vector<http::request> nodes;
+
+	for (size_t i = 1; i <= 8; i++)
+	{
+		http::request asked = get("/health");
+
+		asked.url =
+			"http://127.0.0." + std::to_string(i) + ":" + std::to_string(database_server->port()) + "/health";
+
+		nodes.push_back(asked);
+	}
+
+	for (size_t i = 0; i < nodes.size(); i++)
+	{
+		EXPECT_FALSE(client.send(nodes[i], 30).reused) << nodes[i].url;
+	}
+
+	// Every one of them again, and not one was dropped to make room for the others.
+	for (size_t i = 0; i < nodes.size(); i++)
+	{
+		EXPECT_TRUE(client.send(nodes[i], 30).reused) << nodes[i].url;
+	}
 }

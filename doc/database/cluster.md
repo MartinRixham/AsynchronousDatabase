@@ -316,7 +316,7 @@ moved. Both want the same thing of another node — *the part of a table that
 belongs to me* — and both ask for it the same way.
 
 ```
-GET /table/{table}/file?partitions={set}[&from={cursor}]
+GET /table/{table}/file?partitions={set}[&from={cursor}][&values=false]
 ```
 
 `partitions` is the set of the 256 partitions the node asking for the file holds,
@@ -335,6 +335,12 @@ which is a function of the key and nothing else. So two nodes a moment apart in
 what they think the cluster is still agree on what was sent, and a wrong set is a
 wrong file rather than a disagreement.
 
+`values=false` is the same walk carrying the keys and nothing else, which is what
+a node clearing down asks for: it is deciding where records belong, not moving
+them. The budget below counts what the walk *read*, so a walk that is not reading
+values covers far more of a table for the same one — which is what turns giving up
+a share into one question rather than one for every key in it.
+
 **One file is a walk of 64 MiB of the table, not 64 MiB of records.** The budget
 is what the walk *read*, so a node that holds a sixth of a zone reads its way
 through that table once over the whole transfer rather than once for every file
@@ -347,8 +353,9 @@ node holding hundreds of gigabytes would need millions of round trips to be
 filled, which is not a thing that finishes. A file is one round trip for as much
 of the table as the budget covers.
 
-**A file never overwrites.** The store it is taken into keeps whatever it already
-holds for a key the file also carries — see
+**A file never overwrites, and it never deletes what it does not name.** The store
+a file is taken into keeps whatever it already holds for a key the file also
+carries, and a store giving records up deletes only the keys the file names — see
 [what makes a fetch safe](/runbook/rebuild#when-ownership-moves).
 
 ## Scans across a cluster

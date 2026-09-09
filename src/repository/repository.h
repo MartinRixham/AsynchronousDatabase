@@ -35,6 +35,11 @@ namespace repository
 
 		bool has_from = false;
 
+		// The keys alone, for a caller deciding where records belong rather than moving them. A
+		// walk that is not carrying values covers far more of a table for the same budget, which
+		// is what makes clearing down a share one question instead of one for every key.
+		bool values = true;
+
 		// How much of the table one file walks. It is the caller's because the caller is what
 		// knows how much it can hold: everything the server asks for asks for the whole budget,
 		// and a test asks for a file it can write by hand.
@@ -85,6 +90,13 @@ namespace repository
 		// already holds is kept**: the file was written by a node that used to own the key, and
 		// every write since the ownership moved came here, so what is here is the newer of the two.
 		virtual size_t import_records(const std::string &table_name, const std::string &file) = 0;
+
+		// Deletes the records of this table that the file also carries, and answers how many went.
+		// The file is written by the node that owns those keys now, so a key in both stores is a
+		// copy this one may give up — which is the whole of what makes clearing down safe. A key
+		// the file carries and this store has nothing for is left alone rather than deleted, or a
+		// pass would write a tombstone for every record it never held.
+		virtual size_t clear_records(const std::string &table_name, const std::string &file) = 0;
 
 		virtual void delete_records(const std::string &table_name, const scan::range &range) = 0;
 

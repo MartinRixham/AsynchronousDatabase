@@ -39,9 +39,10 @@ namespace server
 	// one tick behind for that reason.
 	std::chrono::seconds reconcile_interval();
 
-	// How many passes a membership change buys. A pass that finds records waiting on another node
-	// runs again, because that node's own pass is what unblocks it, and this is the bound on
-	// waiting for a node whose pass is never coming — the copy it was waiting on is simply kept.
+	// How many passes of getting nowhere a membership change buys. **A pass that moved records buys
+	// them all back**, because what ends the moving is the store matching the membership and how
+	// long that takes is how much there is to move. What this bounds is waiting on a node whose own
+	// pass is never coming — the copy it was waiting on is simply kept.
 	constexpr int reconcile_attempts = 12;
 
 	class session;
@@ -78,7 +79,10 @@ namespace server
 
 		std::condition_variable reconcile_wake;
 
-		bool reconciling = false;
+		// Read by the pass in flight as well as by the thread waiting to run the next one: a node
+		// being shut down waits for a pass, and a pass moving a share of a terabyte is not one to
+		// wait out.
+		std::atomic<bool> reconciling = false;
 
 	public:
 		// The cluster is handed in and never made here: this server joins and leaves whichever one

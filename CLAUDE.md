@@ -424,9 +424,13 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   reset before each request — `http::handle` is that one easy handle and `http::group` the multi
   handle and the easy handles a fan out runs on, both `thread_local` in `curl_client.cpp`, and a
   group keeps as many handles as the widest fan out that thread has run. The handle is what holds
-  open connections, so a node that forwards to the same few neighbours stops paying for a handshake
-  each time — and `curl_easy_reset` is what keeps the last request's body, or a HEAD's "no body",
-  out of the next one. `send_all` is the same thing for a **fan out** — the copies of a record, or
+  open connections, and the cache is sized to more nodes than a cluster has, because libcurl's own
+  default is a handful — smaller than the neighbour count of anything past six nodes, which put a
+  handshake back on every forward past the fifth destination a thread had used. It is a ceiling and
+  not a reservation: a thread holds one connection to each node it has actually forwarded to. A fan
+  out runs in the multi handle, whose cache is sized from the transfers added to it, so it is the
+  single handle that needs telling — and `curl_easy_reset` is what keeps the last request's body, or
+  a HEAD's "no body", out of the next one. `send_all` is the same thing for a **fan out** — the copies of a record, or
   every node of a table create — run in one `curl_multi` handle per thread, so the thread waits for
   the slowest of them rather than for the sum of them, and the multi handle holds that fan out's
   connections the way the single handle holds its own. **A fan out does not copy the bodies it is
@@ -510,7 +514,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   `doc/database/cluster.md` is the spec, including what this deliberately does not do (no read
   repair, no replication log, and a write that needs both a leader and every copy).
 - **A share of a table moves as a file, never a record at a time.** `GET /table/{table}/file?partitions=`
-  is what a rebuild and a reconcile's fetch half both ask for: the partitions are the *asking* node's,
+  is what a rebuild and both halves of a reconcile ask for: the partitions are the *asking* node's,
   so the node answering filters by `partition_of` and asks its own membership nothing, and two nodes a
   moment apart still agree on what was sent. The budget — `repository::max_file_bytes`, 64 MiB — is
   what the walk **read** rather than what it wrote, so a node holding a sixth of a zone reads through
@@ -518,28 +522,47 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   `X-Asyncdb-Records` and `X-Asyncdb-Next` are what the bytes cannot say: how many records, and base64
   of the key to resume at, absent at the end of the table. Paging a hundred records at a time over HTTP
   is a round trip per hundred, which is not a thing a node holding hundreds of gigabytes finishes.
+  **`values=false` is the same walk carrying keys and nothing else**, and the budget counts what it
+  read, so a walk that is not reading values covers far more of a table for the same one. That is
+  what makes a clear down one question of the node that owns a share rather than one for every key
+  in it.
 - **A file never overwrites.** `import_records` keeps whatever the store already holds for a key the
   file also carries, which is what makes the fetch half safe: this node owns the key now, so every
   write since the ownership moved landed here and the file was written by the node that had it before.
   It is the store that decides and not the caller — the RocksDB one walks the incoming file once to see
   whether anything is held at all, and ingests the file as it stands when nothing is.
+  `clear_records` is the other half of the same idea: it deletes the records a file names and leaves
+  a key it has nothing for alone, so a pass does not write a tombstone for every record it never held.
 - **Records move when ownership moves, and only then.** A membership change redraws the split inside
   a zone without moving a record, so `reconcile::reconcile` does: it **fetches** what this node now
   owns and holds nothing for, from every other node, and **clears down** what it no longer owns.
   `server::server` runs it on a thread of its own, one tick — `server::reconcile_interval()`, three
   seconds — *after* the membership it saw changed, and one change buys `server::reconcile_attempts`
-  (12) passes: a membership is a moment, and a store that matches the one it was left with is never
-  walked, which is why a test naming its own static cluster never runs a pass at all. **What makes
-  the delete safe is that it asks first**: a copy is given up only when the node that owns that key
-  *in this node's own zone* answers a HEAD saying it holds it. Not any copy — the record here is
-  this zone's copy, so deleting it because another zone has one is a zone left holding nothing — and
-  a node acting on a view that is a moment out of date is told no, keeps the record, and asks again
-  next pass. The count of those is `deferred`, and a pass with any is not settled, so it runs again.
+  (12) passes **of getting nowhere**: a pass that moved records buys them all back, because how many
+  passes a share takes is how large the share is and never a count of tries. A membership is a
+  moment, and a store that matches the one it was left with is never walked, which is why a test
+  naming its own static cluster never runs a pass at all. **What makes the delete safe is that it
+  asks first**: a copy is given up only when the node that owns that key *in this node's own zone*
+  answers with that key in a file of its own. Not any copy — the record here is this zone's copy, so
+  deleting it because another zone has one is a zone left holding nothing — and a node acting on a
+  view that is a moment out of date is answered a file without the key in it, keeps the record, and
+  asks again next pass. **The clear down is two walks**: the first is local and finds which
+  partitions this node holds records it no longer owns in, grouped by the node of its own zone that
+  owns them; the second asks each of those nodes for a file of the keys it holds in them. The count
+  of what is left when they are done is `deferred`, and a pass with any is not settled.
   **Neither half is safe alone**: clearing down without fetching is a shrink that loses records
   rather than staling them; fetching without clearing down is a store that only grows and a stale
   value waiting for the membership to swing back. Both are best effort and caught like the rebuild,
   because a store that refuses a write must not take the process down from a thread of its own.
   `doc/runbook/rebuild.md` is the page.
+- **A pass that moves records is bounded by progress and not by a clock.** `progress::patience` is a
+  deadline pushed forward whenever something arrives, and it is what `rebuild::default_seconds` and
+  `reconcile::default_seconds` now name: seconds of being answered nothing, not seconds of running.
+  A store of a terabyte and a store of a megabyte are the same code, so no wall clock is right for
+  both — and a reconcile pass cut off part way is one the pass after it **starts again from the
+  beginning**, which is why a short pass is not the cheap way to bound one. What bounds a pass
+  instead is the flag `server::server` hands it: a node being shut down waits for the pass in flight,
+  so the pass is told to stop rather than kept short enough not to matter.
 - **A leader is claimed in etcd, not elected by votes.** `/asyncdb/leader/{partition}` is written
   with a transaction that only succeeds if nothing created the key, on the node's own membership
   lease — so a node that stops renewing stops leading. A node claims

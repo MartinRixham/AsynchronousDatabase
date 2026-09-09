@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -26,6 +27,9 @@ namespace
 
 	const std::string other = "http://four:8080";
 
+	// A pass that has not been told to stop, which is every pass but the one being shut down.
+	const std::atomic<bool> running(true);
+
 	// Two nodes in this node's zone, and one in each of two more.
 	std::vector<cluster::member> three_zones()
 	{
@@ -40,7 +44,7 @@ namespace
 	// A file as the node being read from would have answered with, which is that node's own store
 	// exporting it. Both ends of a transfer are a repository, so the file a test hands back is one
 	// a repository wrote rather than bytes made up here.
-	router::response file(const std::vector<std::string> &keys, const std::string &next = "")
+	router::response file(const std::vector<std::string> &keys, bool values, const std::string &next)
 	{
 		repository::fake_repository source;
 
@@ -54,22 +58,24 @@ namespace
 		repository::share whole;
 
 		whole.partitions.set();
+		whole.values = values;
 
 		repository::extract taken = source.export_records("account", whole);
 
 		return router::file_response(taken.file, taken.records, next.empty() ? "" : base64::encode(next));
 	}
 
-	// A node that holds the key it is asked for, and an answer a scan of it reads nothing out of:
-	// what is being told apart is a HEAD of one record, not a page.
-	router::response holds()
+	// A file of records, which is what a node answers a fetch with.
+	router::response records(const std::vector<std::string> &keys, const std::string &next = "")
 	{
-		return router::empty_response(boost::beast::http::status::ok);
+		return file(keys, true, next);
 	}
 
-	router::response holds_nothing()
+	// A file of the keys alone, which is what the node that owns them answers a clear down with:
+	// what is being asked is which of them it has, not what is in them.
+	router::response holds(const std::vector<std::string> &keys, const std::string &next = "")
 	{
-		return router::empty_response(boost::beast::http::status::not_found);
+		return file(keys, false, next);
 	}
 
 	repository::fake_repository store(const std::vector<std::string> &keys)
@@ -86,8 +92,20 @@ namespace
 		return repository;
 	}
 
-	// The partitions the first file asked of a node named, which is the whole of what decides what
-	// that node sends back.
+	bool is_file(const router::request &request, bool values)
+	{
+		return request.path.size() == 3 && request.path[2] == "file" &&
+			url::read_parameter(request.query, "values") == (values ? "true" : "false");
+	}
+
+	cluster::partition_set partitions_of(const router::request &request)
+	{
+		return cluster::decode_partitions(url::read_parameter(request.query, "partitions"))
+			.value_or(cluster::partition_set());
+	}
+
+	// The partitions the first file of records asked of a node named, which is the whole of what
+	// decides what that node sends back.
 	cluster::partition_set asked_for(const cluster::fake_cluster &nodes, const std::string &node)
 	{
 		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
@@ -97,20 +115,14 @@ namespace
 			sent.end(),
 			[&node](const std::pair<std::string, router::request> &request)
 			{
-				return request.first == node &&
-					request.second.path.size() == 3 && request.second.path[2] == "file";
+				return request.first == node && is_file(request.second, true);
 			});
 
-		if (asked == sent.end())
-		{
-			return cluster::partition_set();
-		}
-
-		return cluster::decode_partitions(url::read_parameter(asked->second.query, "partitions"))
-			.value_or(cluster::partition_set());
+		return asked == sent.end() ? cluster::partition_set() : partitions_of(asked->second);
 	}
 
-	// Where a HEAD of this key went, which is the whole of what makes clearing down safe.
+	// Where the question that lets this key go was put, which is the whole of what makes clearing
+	// down safe.
 	std::string asked_about(const cluster::fake_cluster &nodes, const std::string &key)
 	{
 		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
@@ -120,11 +132,24 @@ namespace
 			sent.end(),
 			[&key](const std::pair<std::string, router::request> &request)
 			{
-				return request.second.method == boost::beast::http::verb::head &&
-					request.second.path.size() == 4 && request.second.path[3] == key;
+				return is_file(request.second, false) &&
+					partitions_of(request.second).test(cluster::partition_of(key));
 			});
 
 		return asked == sent.end() ? "" : asked->first;
+	}
+
+	size_t files_asked_of(const cluster::fake_cluster &nodes, const std::string &node, bool values)
+	{
+		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+
+		return static_cast<size_t>(std::count_if(
+			sent.begin(),
+			sent.end(),
+			[&node, values](const std::pair<std::string, router::request> &request)
+			{
+				return request.first == node && is_file(request.second, values);
+			}));
 	}
 }
 
@@ -133,16 +158,36 @@ TEST(reconcile_test, moves_nothing_for_an_instance_standing_alone)
 	repository::fake_repository repository = store({ "a" });
 	cluster::fake_cluster nodes(self, std::vector<cluster::member>());
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	EXPECT_EQ(0u, done.fetched);
 	EXPECT_EQ(0u, done.cleared);
 	EXPECT_EQ(0u, done.deferred);
 	EXPECT_TRUE(done.settled());
+	EXPECT_FALSE(done.moved());
 
 	// Nobody was asked anything, and the record it owns on its own is still there.
 	EXPECT_TRUE(nodes.sent().empty());
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
+}
+
+// A pass moving a share of a terabyte is not one a node being shut down waits out, so it is told
+// to stop rather than kept short enough not to matter.
+TEST(reconcile_test, a_pass_that_is_no_longer_running_asks_nobody_anything)
+{
+	repository::fake_repository repository = store({ "gone" });
+	cluster::fake_cluster nodes(self, three_zones());
+	const std::atomic<bool> stopped(false);
+
+	nodes.copies("gone", { mate, peer, other });
+	nodes.answer(mate, holds({ "gone" }));
+
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, stopped);
+
+	EXPECT_EQ(0u, done.cleared);
+	EXPECT_FALSE(done.settled());
+	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(repository.read_record("account", "gone").has_value());
 }
 
 TEST(reconcile_test, fetches_a_record_this_node_owns_and_holds_nothing_for)
@@ -151,11 +196,12 @@ TEST(reconcile_test, fetches_a_record_this_node_owns_and_holds_nothing_for)
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(mate, file({ "a" }));
+	nodes.answer(mate, records({ "a" }));
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	EXPECT_EQ(1u, done.fetched);
+	EXPECT_TRUE(done.moved());
 	EXPECT_EQ("value of a", repository.read_record("account", "a").value_or(""));
 }
 
@@ -165,9 +211,9 @@ TEST(reconcile_test, does_not_overwrite_a_record_it_holds_already)
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(mate, file({ "a" }));
+	nodes.answer(mate, records({ "a" }));
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	// A local record is this node's own copy and the newer of the two: every write since the
 	// ownership moved came here, and what the file carries was written before it did.
@@ -181,9 +227,9 @@ TEST(reconcile_test, does_not_fetch_a_record_it_does_not_own)
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer(mate, file({}));
+	nodes.answer(mate, records({}));
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	EXPECT_EQ(0u, done.fetched);
 	EXPECT_FALSE(asked_for(nodes, mate).test(cluster::partition_of("a")));
@@ -199,11 +245,11 @@ TEST(reconcile_test, fetches_from_a_further_zone_when_the_nearer_ones_hold_nothi
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(mate, file({}));
-	nodes.answer(peer, file({}));
-	nodes.answer(other, file({ "a" }));
+	nodes.answer(mate, records({}));
+	nodes.answer(peer, records({}));
+	nodes.answer(other, records({ "a" }));
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	EXPECT_EQ(1u, done.fetched);
 	EXPECT_EQ("value of a", repository.read_record("account", "a").value_or(""));
@@ -217,9 +263,9 @@ TEST(reconcile_test, clears_down_a_record_the_owner_in_its_own_zone_holds)
 	// The copy in this node's own zone is the first this node would ask, which is how replicas
 	// orders them.
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer(mate, holds());
+	nodes.answer_in_turn(mate, { records({}), holds({ "a" }) });
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	EXPECT_EQ(1u, done.cleared);
 	EXPECT_EQ(0u, done.deferred);
@@ -233,9 +279,9 @@ TEST(reconcile_test, keeps_a_record_the_owner_in_its_own_zone_has_not_taken_over
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer(mate, holds_nothing());
+	nodes.answer(mate, holds({}));
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	// The copy is never the last one: a node that has not fetched what it now owns is a node this
 	// one waits for, and a pass that is waiting is not settled.
@@ -253,15 +299,51 @@ TEST(reconcile_test, asks_the_owner_in_its_own_zone_and_never_another_zone)
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer(mate, holds_nothing());
-	nodes.answer(peer, holds());
-	nodes.answer(other, holds());
+	nodes.answer(mate, holds({}));
+	nodes.answer(peer, holds({ "a" }));
+	nodes.answer(other, holds({ "a" }));
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	EXPECT_EQ(mate, asked_about(nodes, "a"));
 	EXPECT_EQ(0u, done.cleared);
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
+}
+
+// The whole point of asking with a file. A share is given up on one answer from the node that owns
+// it, where a question for every key is a round trip for every record a membership change moved.
+TEST(reconcile_test, asks_the_owner_once_for_a_share_rather_than_once_for_every_record)
+{
+	repository::fake_repository repository = store({ "a", "b", "c", "d", "e" });
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { mate, peer, other });
+	nodes.copies("b", { mate, peer, other });
+	nodes.copies("c", { mate, peer, other });
+	nodes.copies("d", { mate, peer, other });
+	nodes.copies("e", { mate, peer, other });
+
+	nodes.answer_in_turn(mate, { records({}), holds({ "a", "b", "c", "d", "e" }) });
+
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
+
+	EXPECT_EQ(5u, done.cleared);
+	EXPECT_EQ(1u, files_asked_of(nodes, mate, false));
+}
+
+// And the answer carries keys and no values, because what is being decided is where a record
+// belongs and not what is in it.
+TEST(reconcile_test, asks_the_owner_for_keys_and_never_for_values)
+{
+	repository::fake_repository repository = store({ "a" });
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { mate, peer, other });
+	nodes.answer(mate, holds({ "a" }));
+
+	reconcile::reconcile(repository, nodes, running);
+
+	EXPECT_EQ(1u, files_asked_of(nodes, mate, false));
 }
 
 TEST(reconcile_test, keeps_a_record_there_is_nobody_to_ask_about)
@@ -272,7 +354,7 @@ TEST(reconcile_test, keeps_a_record_there_is_nobody_to_ask_about)
 	// A key this node holds no copy of and owns no copy of is one nothing can be asked about.
 	nodes.copies("a", std::vector<std::string>());
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	EXPECT_EQ(0u, done.cleared);
 	EXPECT_EQ(1u, done.deferred);
@@ -289,9 +371,9 @@ TEST(reconcile_test, fetches_what_it_gained_and_clears_down_what_it_lost)
 	nodes.copies("gained", { self, peer, other });
 	nodes.copies("gone", { mate, peer, other });
 
-	nodes.answer_in_turn(mate, { file({ "gained" }), holds() });
+	nodes.answer_in_turn(mate, { records({ "gained" }), holds({ "gone" }) });
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	EXPECT_EQ(1u, done.fetched);
 	EXPECT_EQ(1u, done.cleared);
@@ -301,18 +383,18 @@ TEST(reconcile_test, fetches_what_it_gained_and_clears_down_what_it_lost)
 	EXPECT_FALSE(repository.read_record("account", "gone").has_value());
 }
 
-// A pass its own clock ended has done none of what it did not reach, and a half it never walked
-// defers nothing to say so — so the counts of a truncated pass are the counts of a settled one,
-// and the difference between them is the only thing that makes the pass after it run.
-TEST(reconcile_test, a_pass_its_own_clock_ended_is_not_settled)
+// A pass that ran out of patience has done none of what it did not reach, and a half it never
+// walked defers nothing to say so — so the counts of a truncated pass are the counts of a settled
+// one, and the difference between them is the only thing that makes the pass after it run.
+TEST(reconcile_test, a_pass_that_ran_out_of_patience_is_not_settled)
 {
 	repository::fake_repository repository = store({ "gone" });
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer(mate, holds());
+	nodes.answer(mate, holds({ "gone" }));
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes, reconcile::default_page, 0);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running, reconcile::default_page, 0);
 
 	EXPECT_EQ(0u, done.cleared);
 	EXPECT_EQ(0u, done.deferred);
@@ -320,22 +402,43 @@ TEST(reconcile_test, a_pass_its_own_clock_ended_is_not_settled)
 	EXPECT_TRUE(repository.read_record("account", "gone").has_value());
 }
 
-// The clear down has a budget of its own, and it is what a tier that has just grown needs: the
-// fetch walks every node of every zone, and a store of large values is one it never gets to the
-// end of. A pass that spent longer than the whole of itself fetching still clears down.
-TEST(reconcile_test, clears_down_what_it_lost_when_the_fetch_ran_out_of_time)
+// Patience is not a deadline: a half still being answered goes on being answered, which is what
+// lets one pass move a share rather than the pass after it starting the same share again.
+TEST(reconcile_test, keeps_going_while_the_files_keep_arriving)
+{
+	repository::fake_repository repository = store({});
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { self, peer, other });
+	nodes.copies("b", { self, peer, other });
+
+	// Two files, each of them longer than the whole patience of the half that asks for them.
+	nodes.answer_in_turn(mate, { records({ "a" }, "a"), records({ "b" }) });
+	nodes.slow(mate, std::chrono::milliseconds(700));
+
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running, reconcile::default_page, 1);
+
+	EXPECT_EQ(2u, done.fetched);
+	EXPECT_TRUE(repository.read_record("account", "a").has_value());
+	EXPECT_TRUE(repository.read_record("account", "b").has_value());
+}
+
+// The clear down has patience of its own, and it is what a tier that has just grown needs: the
+// fetch walks every node of every zone, and a store of large values is one it spends a long time
+// in. A pass that spent longer than its own patience fetching still clears down.
+TEST(reconcile_test, clears_down_what_it_lost_after_a_fetch_that_took_a_long_time)
 {
 	repository::fake_repository repository = store({ "gone" });
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer(mate, holds());
+	nodes.answer_in_turn(mate, { records({}), holds({ "gone" }) });
 
-	// Longer than the whole pass, so a deadline the two halves shared would be spent before the
-	// clear down began.
+	// Longer than the patience of either half, so a clock the two halves shared would be spent
+	// before the clear down began.
 	nodes.slow(peer, std::chrono::milliseconds(1100));
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes, reconcile::default_page, 1);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running, reconcile::default_page, 1);
 
 	EXPECT_EQ(1u, done.cleared);
 	EXPECT_FALSE(repository.read_record("account", "gone").has_value());
@@ -351,9 +454,9 @@ TEST(reconcile_test, asks_for_the_partitions_it_gained_and_for_no_others)
 	nodes.copies("gained", { self, peer, other });
 	nodes.copies("theirs", { mate, peer, other });
 
-	nodes.answer(mate, file({ "gained" }));
+	nodes.answer(mate, records({ "gained" }));
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	cluster::partition_set wanted = asked_for(nodes, mate);
 
@@ -375,9 +478,9 @@ TEST(reconcile_test, asks_for_the_next_file_from_the_key_the_one_before_it_reach
 	nodes.copies("a", { self, peer, other });
 	nodes.copies("b", { self, peer, other });
 
-	nodes.answer_in_turn(mate, { file({ "a" }, "a"), file({ "b" }) });
+	nodes.answer_in_turn(mate, { records({ "a" }, "a"), records({ "b" }) });
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running);
 
 	EXPECT_EQ(2u, done.fetched);
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
@@ -397,9 +500,9 @@ TEST(reconcile_test, walks_a_store_larger_than_one_page)
 	nodes.copies("a", { mate, peer, other });
 	nodes.copies("b", { mate, peer, other });
 	nodes.copies("c", { mate, peer, other });
-	nodes.answer(mate, holds());
+	nodes.answer_in_turn(mate, { records({}), holds({ "a", "b", "c" }) });
 
-	reconcile::outcome done = reconcile::reconcile(repository, nodes, 1);
+	reconcile::outcome done = reconcile::reconcile(repository, nodes, running, 1);
 
 	EXPECT_EQ(3u, done.cleared);
 	EXPECT_FALSE(repository.read_record("account", "a").has_value());

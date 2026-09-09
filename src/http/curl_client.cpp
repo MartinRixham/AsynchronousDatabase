@@ -11,6 +11,12 @@
 
 namespace
 {
+	// Connections kept open per handle, and a handle belongs to one thread. libcurl's own default is
+	// a handful, which was under the neighbour count as soon as a cluster grew past six nodes: every
+	// forward past the fifth destination a thread had used cost a handshake again. It is a ceiling
+	// and not a reservation — a thread holds one to each node it has actually forwarded to.
+	constexpr long connection_cache = 64;
+
 	size_t write_body(void *contents, size_t size, size_t count, void *body)
 	{
 		static_cast<std::string *>(body)->append(static_cast<const char *>(contents), size * count);
@@ -110,6 +116,10 @@ namespace
 		curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
 		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connect_timeout);
 		curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+		// A fan out runs in a multi handle, whose own cache is sized from how many transfers were
+		// added to it, so it is the handle a request runs on its own that needs telling.
+		curl_easy_setopt(curl, CURLOPT_MAXCONNECTS, connection_cache);
 
 		if (request.method == "HEAD")
 		{

@@ -1,4 +1,4 @@
-#include <chrono>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -6,6 +6,7 @@
 #include "log.h"
 #include "cluster/partition.h"
 #include "cluster/placements.h"
+#include "progress/patience.h"
 #include "scan/scan.h"
 #include "table/table.h"
 #include "url/url.h"
@@ -17,15 +18,17 @@ namespace
 	// whose owner moved travels: a key at a time is a round trip for every record of a share.
 	router::request file_request(
 		const std::string &table,
-		const std::string &partitions,
+		const cluster::partition_set &partitions,
 		const std::string &from,
-		bool has_from)
+		bool has_from,
+		bool values)
 	{
 		router::request request;
 
 		request.method = boost::beast::http::verb::get;
 		request.path = std::vector<std::string> { "table", table, "file" };
-		request.query = "partitions=" + partitions;
+		request.query = "partitions=" + cluster::encode_partitions(partitions);
+		request.query += std::string("&values=") + (values ? "true" : "false");
 
 		if (has_from)
 		{
@@ -35,108 +38,122 @@ namespace
 		return request;
 	}
 
-	router::request holds_request(const std::string &table, const std::string &key)
-	{
-		router::request request;
-
-		request.method = boost::beast::http::verb::head;
-		request.path = std::vector<std::string> { "table", table, "key", key };
-
-		return request;
-	}
-
-	bool out_of_time(const std::chrono::steady_clock::time_point &deadline)
-	{
-		return std::chrono::steady_clock::now() >= deadline;
-	}
-
-	// What this node now owns and holds nothing for, taken from the node that held it. A file it
-	// already has a key of is a file that key is left out of, which is decided by the store and
-	// not here: what is here was written before the ownership moved, and what is there was written
-	// after it.
-	reconcile::outcome fetch_from(
-		repository::repository &repository,
+	// Walks one node's file of a table, handing each file to whatever the caller does with it, and
+	// answers whether it reached the end. Both halves of a pass move a share this way: the fetch
+	// takes records out of the files it is sent, and the clear down deletes the records they name.
+	template <typename taking>
+	bool walk_files(
 		const cluster::cluster &nodes,
 		const std::string &node,
 		const std::string &name,
-		const std::string &partitions,
-		const std::chrono::steady_clock::time_point &deadline)
+		const cluster::partition_set &partitions,
+		bool values,
+		const std::atomic<bool> &running,
+		progress::patience &waiting,
+		taking take)
 	{
-		reconcile::outcome taken;
 		std::string from;
 		bool has_from = false;
 
-		while (!out_of_time(deadline))
+		while (running && !waiting.spent())
 		{
-			router::response answer = nodes.send(node, file_request(name, partitions, from, has_from));
+			router::response answer = nodes.send(node, file_request(name, partitions, from, has_from, values));
 
 			if (answer.status != boost::beast::http::status::ok)
 			{
 				DEBUG("Node " + node + " did not answer for a file of \"" + name + "\" for a reconcile.");
 
-				taken.finished = true;
-
-				return taken;
+				return true;
 			}
 
-			taken.fetched += repository.import_records(name, answer.text);
+			take(answer.text);
+
+			// A file that arrived is a pass getting somewhere, whatever was in it.
+			waiting.renew();
 
 			// Nowhere to resume is a walk that reached the end of the table.
 			if (answer.file.next.empty())
 			{
-				taken.finished = true;
-
-				return taken;
+				return true;
 			}
 
-			// A file that resumes where the one before it did is a walk that would ask for ever.
+			// A file that ends where the one before it did is a walk that would ask for ever.
 			if (has_from && answer.file.next == from)
 			{
-				DEBUG("A file of \"" + name + "\" on " + node + " made no progress, so the fetch stops.");
+				DEBUG("A file of \"" + name + "\" on " + node + " made no progress, so the walk stops.");
 
-				taken.finished = true;
-
-				return taken;
+				return true;
 			}
 
 			from = answer.file.next;
 			has_from = true;
 		}
 
+		return false;
+	}
+
+	// What this node now owns and holds nothing for, taken from the node that held it. A key this
+	// store already has is a key the file is not applied for, which is decided by the store and not
+	// here: what is here was written after the ownership moved, and what is there was written
+	// before it.
+	reconcile::outcome fetch_from(
+		repository::repository &repository,
+		const cluster::cluster &nodes,
+		const std::string &node,
+		const std::string &name,
+		const cluster::partition_set &partitions,
+		const std::atomic<bool> &running,
+		progress::patience &waiting)
+	{
+		reconcile::outcome taken;
+
+		taken.finished = walk_files(
+			nodes,
+			node,
+			name,
+			partitions,
+			true,
+			running,
+			waiting,
+			[&](const std::string &file) { taken.fetched += repository.import_records(name, file); });
+
 		return taken;
 	}
 
-	bool owner_holds(
-		const cluster::cluster &nodes,
-		const std::string &name,
-		const std::string &key,
-		const std::vector<std::string> &owners)
+	// What a walk of this node's own store found that does not belong here: how many records, and
+	// which partitions each node of this node's own zone would have to be asked about for them.
+	struct misplaced
 	{
-		router::response answer = nodes.send(owners.front(), holds_request(name, key));
+		size_t records = 0;
 
-		return answer.status == boost::beast::http::status::ok;
-	}
+		// Records this node holds that no node owns, which is nothing a pass can act on.
+		size_t orphaned = 0;
 
-	reconcile::outcome clear_table(
-		repository::repository &repository,
+		bool finished = false;
+
+		std::map<std::string, cluster::partition_set> elsewhere;
+	};
+
+	// The keys alone. What is being decided is where a record belongs and not what is in it, and a
+	// page of values is sixteen megabytes a record of answer to that.
+	misplaced walk_table(
+		const repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::string &name,
 		size_t page,
-		const std::chrono::steady_clock::time_point &deadline)
+		const std::atomic<bool> &running,
+		progress::patience &waiting)
 	{
-		reconcile::outcome given;
+		misplaced found;
 		scan::range range;
 
 		range.is_valid = true;
 		range.limit = page;
-
-		// The keys alone. What is being decided is where a record belongs and not what is in it,
-		// and a page of values is sixteen megabytes a record of answer to that.
 		range.values = false;
 
 		cluster::placements placed(nodes);
 
-		while (!out_of_time(deadline))
+		while (running && !waiting.spent())
 		{
 			scan::page walked = repository.scan_records(name, range);
 			std::string last;
@@ -166,35 +183,74 @@ namespace
 
 				if (where.nodes.empty())
 				{
-					given.deferred++;
+					found.orphaned++;
 
 					continue;
 				}
 
-				// Whether the record may go is asked of the owner every time, and never cached:
-				// what is remembered here is where the key belongs, not who holds it now.
-				if (owner_holds(nodes, name, key, where.nodes))
-				{
-					repository.delete_record(name, key);
-
-					given.cleared++;
-				}
-				else
-				{
-					given.deferred++;
-				}
+				// The copy in this node's own zone is the first replicas() names, and it is the
+				// only one worth asking: the record here is this zone's copy of the key, so
+				// another zone still having one says nothing about whether this may go.
+				found.elsewhere[where.nodes.front()].set(cluster::partition_of(key));
+				found.records++;
 			}
 
 			if (!walked.has_more || !has_last || !read_any)
 			{
-				given.finished = true;
+				found.finished = true;
 
-				return given;
+				return found;
 			}
 
 			range.from = last;
 			range.has_from = true;
+
+			waiting.renew();
 		}
+
+		return found;
+	}
+
+	// **What makes the delete safe is that the owner said what it holds.** A key is given up only
+	// when the node that owns it in this node's own zone answers with that key in a file of its
+	// own, which is the same promise a record at a time made and one question for a share of them.
+	reconcile::outcome clear_table(
+		repository::repository &repository,
+		const cluster::cluster &nodes,
+		const std::string &name,
+		size_t page,
+		const std::atomic<bool> &running,
+		progress::patience &waiting)
+	{
+		misplaced found = walk_table(repository, nodes, name, page, running, waiting);
+		reconcile::outcome given;
+
+		given.finished = found.finished;
+
+		for (std::map<std::string, cluster::partition_set>::const_iterator it = found.elsewhere.begin();
+			it != found.elsewhere.end();
+			++it)
+		{
+			// The keys alone: what is being asked is which of them the owner has, and the values
+			// are already there.
+			if (!walk_files(
+				nodes,
+				it->first,
+				name,
+				it->second,
+				false,
+				running,
+				waiting,
+				[&](const std::string &file) { given.cleared += repository.clear_records(name, file); }))
+			{
+				given.finished = false;
+			}
+		}
+
+		// What is left is what the owner has not taken over yet, which is a copy this node keeps
+		// and asks about again. A write that landed here between the walk and the file is why this
+		// cannot simply be subtracted the other way round.
+		given.deferred = found.orphaned + (found.records > given.cleared ? found.records - given.cleared : 0);
 
 		return given;
 	}
@@ -205,9 +261,15 @@ bool reconcile::outcome::settled() const
 	return finished && deferred == 0;
 }
 
+bool reconcile::outcome::moved() const
+{
+	return fetched > 0 || cleared > 0;
+}
+
 reconcile::outcome reconcile::reconcile(
 	repository::repository &repository,
 	const cluster::cluster &nodes,
+	const std::atomic<bool> &running,
 	size_t page,
 	long seconds)
 {
@@ -222,19 +284,20 @@ reconcile::outcome reconcile::reconcile(
 		return done;
 	}
 
-	std::chrono::milliseconds half(seconds * 1000 / 2);
-
-	std::chrono::steady_clock::time_point fetching = std::chrono::steady_clock::now() + half;
-
 	std::set<table::table> tables = repository.list_tables();
 
 	// Read once, because every file of every table of every node is asked for against it and the
 	// membership this pass is acting on is one moment of it.
-	std::string partitions = cluster::encode_partitions(nodes.holdings());
+	cluster::partition_set partitions = nodes.holdings();
 
-	// A half that has run out of its own time is what a walk it is given answers, so the loops
-	// carry no clock of their own: what is left of them is asked and does nothing.
+	// A half that has run out of patience is what a walk it is given answers, so the loops carry no
+	// clock of their own: what is left of them is asked and does nothing.
 	bool finished = true;
+
+	// A half apiece, and each of them is patience rather than a deadline: a half still being sent
+	// records is a half to leave alone, because the pass after this one would start it again from
+	// the beginning.
+	progress::patience fetching(seconds);
 
 	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
 	{
@@ -242,7 +305,8 @@ reconcile::outcome reconcile::reconcile(
 		{
 			for (size_t node = 0; node < zones[zone].size(); node++)
 			{
-				outcome taken = fetch_from(repository, nodes, zones[zone][node], it->name, partitions, fetching);
+				outcome taken =
+					fetch_from(repository, nodes, zones[zone][node], it->name, partitions, running, fetching);
 
 				done.fetched += taken.fetched;
 
@@ -254,11 +318,11 @@ reconcile::outcome reconcile::reconcile(
 		}
 	}
 
-	std::chrono::steady_clock::time_point clearing = std::chrono::steady_clock::now() + half;
+	progress::patience clearing(seconds);
 
 	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
 	{
-		outcome given = clear_table(repository, nodes, it->name, page, clearing);
+		outcome given = clear_table(repository, nodes, it->name, page, running, clearing);
 
 		done.cleared += given.cleared;
 		done.deferred += given.deferred;

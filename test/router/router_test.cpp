@@ -1916,3 +1916,30 @@ TEST(router_test, a_file_is_read_and_never_written)
 
 	EXPECT_EQ(error_code(response), "method_not_allowed");
 }
+
+// What a node clearing down asks the node that owns its share: which of these keys have you got.
+// The answer carries no values, because what is being decided is where a record belongs.
+TEST(router_test, answers_a_file_of_keys_alone_when_the_values_are_not_wanted)
+{
+	repository::fake_repository repository;
+	repository::fake_repository giving;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	write_record(router, "account", "1", "one");
+
+	giving.create_table(table::valid_table("account", std::vector<std::string>()));
+	giving.write_record("account", record::valid_record("1", "mine"));
+	giving.write_record("account", record::valid_record("2", "mine"));
+
+	router::response response =
+		router.route(get("/table/account/file?values=false&partitions=" + every_partition()));
+
+	EXPECT_EQ(1u, response.file.records);
+
+	// The key the owner answered with is the copy this store may give up, and no other.
+	EXPECT_EQ(1u, giving.clear_records("account", response.text));
+	EXPECT_FALSE(giving.read_record("account", "1").has_value());
+	EXPECT_TRUE(giving.read_record("account", "2").has_value());
+}

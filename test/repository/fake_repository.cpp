@@ -209,14 +209,14 @@ repository::extract repository::fake_repository::export_records(
 		if (wanted.partitions.test(cluster::partition_of(it->first)))
 		{
 			append(taken.file, it->first);
-			append(taken.file, it->second);
+			append(taken.file, wanted.values ? it->second : "");
 
 			taken.records++;
 		}
 
 		// The budget of the real store, ended the way the real store ends it: what the walk read
 		// and not what it wrote.
-		bytes += it->first.size() + it->second.size();
+		bytes += it->first.size() + (wanted.values ? it->second.size() : 0);
 
 		if (bytes >= wanted.bytes)
 		{
@@ -269,6 +269,35 @@ size_t repository::fake_repository::import_records(const std::string &table_name
 	}
 
 	return taken;
+}
+
+size_t repository::fake_repository::clear_records(const std::string &table_name, const std::string &file)
+{
+	if (!has_table(table_name))
+	{
+		return 0;
+	}
+
+	std::map<std::string, std::string> &table_records = records[table_name];
+	size_t position = 0;
+	size_t cleared = 0;
+
+	while (position < file.size())
+	{
+		std::optional<std::string> key = take(file, position);
+		std::optional<std::string> value = take(file, position);
+
+		if (!key || !value)
+		{
+			return cleared;
+		}
+
+		// A key the file carries and this store has nothing for is a record this node never held,
+		// which is nothing to give up.
+		cleared += table_records.erase(*key);
+	}
+
+	return cleared;
 }
 
 void repository::fake_repository::delete_records(const std::string &table_name, const scan::range &range)

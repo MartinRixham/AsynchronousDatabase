@@ -1,3 +1,4 @@
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -294,10 +295,10 @@ TEST(rebuild_test, resumes_from_a_key_that_has_to_be_encoded)
 		sent[2].second.query.find("from=" + url::encode(base64::encode("a b/c"))));
 }
 
-// A node is out of the membership until its rebuild is done, so a rebuild that does not end is a
-// copy the cluster waits for and never gets. The bound is on all of the round trips together,
-// because each of them is bounded already and it is how many there are that is not.
-TEST(rebuild_test, gives_up_when_it_runs_out_of_time)
+// A node is out of the membership until its rebuild is done, so a rebuild being answered nothing
+// is a copy the cluster waits for and never gets. Each round trip is bounded already; this is the
+// bound on a node that has stopped answering between them.
+TEST(rebuild_test, gives_up_when_it_is_answered_nothing)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
@@ -309,4 +310,22 @@ TEST(rebuild_test, gives_up_when_it_runs_out_of_time)
 	// Nothing was asked of the zone, rather than asked and thrown away.
 	EXPECT_TRUE(nodes.sent().empty());
 	EXPECT_FALSE(repository.has_table("account"));
+}
+
+// Patience is not a deadline: a rebuild still being sent files goes on being sent them, because
+// how long one takes is how much there is to read and no wall clock is right for every store.
+TEST(rebuild_test, keeps_going_while_the_files_keep_arriving)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes(self, two_zones());
+
+	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }, "a"), file({ "b" }) });
+
+	// Three answers, each of them longer than the whole of the patience.
+	nodes.slow(peer, std::chrono::milliseconds(700));
+
+	EXPECT_EQ(2u, rebuild::rebuild(repository, nodes, 1));
+
+	EXPECT_TRUE(repository.read_record("account", "a").has_value());
+	EXPECT_TRUE(repository.read_record("account", "b").has_value());
 }

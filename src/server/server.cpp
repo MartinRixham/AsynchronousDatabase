@@ -310,12 +310,21 @@ void server::server::reconcile()
 			// is a pass that did some of it, and the attempts left are what runs the rest.
 			try
 			{
+				reconcile::outcome done = reconcile::reconcile(repository, nodes, reconciling);
+
 				// A pass that is waiting on nothing has done everything this membership asks
 				// for. One that is waiting keeps its remaining attempts, because what unblocks
 				// it is another node's own pass rather than anything this one can do again.
-				if (reconcile::reconcile(repository, nodes).settled())
+				if (done.settled())
 				{
 					attempts = 0;
+				}
+				else if (done.moved())
+				{
+					// And a pass that moved records has earned every attempt back. How many
+					// passes a share takes is how large the share is, which is a count of
+					// records and never a count of tries.
+					attempts = reconcile_attempts;
 				}
 			}
 			catch (const std::exception &caught)

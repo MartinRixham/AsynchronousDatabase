@@ -16,7 +16,7 @@ Every endpoint, status code, error code and limit in one place.
 | `DELETE` | `/table/{table}/key/{key}` | [Delete a record](/database/records#delete-a-record) |
 | `GET` | `/table/{table}/key` | [Scan a range](/database/scans) |
 | `DELETE` | `/table/{table}/key` | [Delete a range](/database/tables#delete-a-range) |
-| `GET` | `/table/{table}/file` | One node asking another for [its share of a table](/database/cluster#moving-a-share-of-a-table). Between nodes, not for clients |
+| `GET` | `/table/{table}/file` | One node asking another for [its share of a table](/database/cluster#moving-a-share-of-a-table), as records or as `values=false` keys. Between nodes, not for clients |
 | `GET` | `/health` | Liveness, whether writes are stalled, [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) and how many partitions this node leads |
 
 ## Errors
@@ -64,7 +64,7 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 | Value | 16 MiB | A value is read whole into memory to be served |
 | Scan `limit` | 1000, default 100 | One page is one response, held in memory |
 | Scan page | 8 MiB | The same reason counted in bytes, because a limit cannot see the size of what it lets through: a page ends early and carries a cursor rather than building a response the node cannot hold |
-| File | 64 MiB walked | What one [transfer between nodes](/database/cluster#moving-a-share-of-a-table) reads of a table. Far larger than a page, because past this a transfer waits on the bandwidth between two nodes rather than on the time to ask for it |
+| File | 64 MiB walked | What one [transfer between nodes](/database/cluster#moving-a-share-of-a-table) reads of a table. Far larger than a page, because past this a transfer waits on the bandwidth between two nodes rather than on the time to ask for it. A walk of keys alone reads no values, so it covers far more of a table for the same budget |
 | Table name | 64 characters | |
 | Tables | dozens | [Each is a memtable](/database/#tables-are-column-families) |
 

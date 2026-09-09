@@ -1,4 +1,3 @@
-#include <chrono>
 #include <optional>
 #include <string>
 #include <vector>
@@ -7,6 +6,7 @@
 
 #include "log.h"
 #include "cluster/partition.h"
+#include "progress/patience.h"
 #include "table/table.h"
 #include "url/url.h"
 #include "rebuild.h"
@@ -34,11 +34,6 @@ namespace
 		}
 
 		return request;
-	}
-
-	bool out_of_time(const std::chrono::steady_clock::time_point &deadline)
-	{
-		return std::chrono::steady_clock::now() >= deadline;
 	}
 
 	router::request table_request()
@@ -73,11 +68,11 @@ namespace
 	std::optional<std::vector<table::table>> read_tables(
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
-		const std::chrono::steady_clock::time_point &deadline)
+		progress::patience &waiting)
 	{
 		for (size_t i = 0; i < zone.size(); i++)
 		{
-			if (out_of_time(deadline))
+			if (waiting.spent())
 			{
 				return std::nullopt;
 			}
@@ -105,6 +100,8 @@ namespace
 				tables.push_back(table::to_table(boost::json::serialize(listed[j])));
 			}
 
+			waiting.renew();
+
 			return tables;
 		}
 
@@ -117,7 +114,7 @@ namespace
 		const std::string &node,
 		const std::string &name,
 		const std::string &partitions,
-		const std::chrono::steady_clock::time_point &deadline)
+		progress::patience &waiting)
 	{
 		restored taken;
 		std::string from;
@@ -127,7 +124,7 @@ namespace
 		{
 			// The file boundary is the only place a rebuild can be given up: what is written
 			// already is this node's own, and the file not asked for is all that is lost.
-			if (out_of_time(deadline))
+			if (waiting.spent())
 			{
 				DEBUG("A file of \"" + name + "\" from " + node + " ran out of time for a rebuild.");
 
@@ -144,6 +141,10 @@ namespace
 			}
 
 			taken.records += repository.import_records(name, answer.text);
+
+			// A file that arrived is a rebuild getting somewhere, whatever was in it: an empty one
+			// still moved the walk past the keys that are not this node's.
+			waiting.renew();
 
 			// Nowhere to resume is a walk that reached the end of the table.
 			if (answer.file.next.empty())
@@ -171,10 +172,10 @@ namespace
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
 		const std::string &partitions,
-		const std::chrono::steady_clock::time_point &deadline)
+		progress::patience &waiting)
 	{
 		restored taken;
-		std::optional<std::vector<table::table>> tables = read_tables(nodes, zone, deadline);
+		std::optional<std::vector<table::table>> tables = read_tables(nodes, zone, waiting);
 
 		if (!tables)
 		{
@@ -192,7 +193,7 @@ namespace
 
 			for (size_t j = 0; j < zone.size(); j++)
 			{
-				restored copied = copy_table(repository, nodes, zone[j], name, partitions, deadline);
+				restored copied = copy_table(repository, nodes, zone[j], name, partitions, waiting);
 
 				taken.records += copied.records;
 
@@ -226,8 +227,7 @@ size_t rebuild::rebuild(
 		return 0;
 	}
 
-	std::chrono::steady_clock::time_point deadline =
-		std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+	progress::patience waiting(seconds);
 
 	// Read once, because it is what every file of every table of every zone is asked for and the
 	// membership this node is rebuilding against is one moment of it.
@@ -240,14 +240,14 @@ size_t rebuild::rebuild(
 			continue;
 		}
 
-		if (out_of_time(deadline))
+		if (waiting.spent())
 		{
-			DEBUG("A rebuild ran out of time, so this node starts with what it has.");
+			DEBUG("A rebuild was answered nothing for long enough to stop, so this node starts with what it has.");
 
 			return 0;
 		}
 
-		restored taken = from_zone(repository, nodes, zones[i], partitions, deadline);
+		restored taken = from_zone(repository, nodes, zones[i], partitions, waiting);
 
 		if (taken.whole)
 		{

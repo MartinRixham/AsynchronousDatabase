@@ -9,6 +9,7 @@
 #include <rocksdb/sst_file_reader.h>
 #include <rocksdb/sst_file_writer.h>
 #include <rocksdb/table.h>
+#include <rocksdb/write_batch.h>
 
 #include "error.h"
 #include "scratch_file.h"
@@ -413,15 +414,15 @@ repository::extract repository::rocksdb_repository::export_records(
 
 		if (wanted.partitions.test(cluster::partition_of(key)))
 		{
-			check(writer.Put(it->key(), it->value()), what);
+			check(writer.Put(it->key(), wanted.values ? it->value() : rocksdb::Slice()), what);
 
 			taken.records++;
 		}
 
 		// The budget is what the walk read and not what it wrote, so a node holding a share of a
 		// zone reads its way through the table once over the whole transfer rather than once for
-		// every file of it.
-		bytes += it->key().size() + it->value().size();
+		// every file of it. A walk that is not carrying values has not read them either.
+		bytes += it->key().size() + (wanted.values ? it->value().size() : 0);
 
 		if (bytes >= wanted.bytes)
 		{
@@ -552,6 +553,58 @@ size_t repository::rocksdb_repository::import_records(const std::string &table_n
 	written(database->IngestExternalFile(handle, { kept.path() }, ingest), what);
 
 	return records;
+}
+
+size_t repository::rocksdb_repository::clear_records(const std::string &table_name, const std::string &file)
+{
+	if (file.empty())
+	{
+		return 0;
+	}
+
+	std::shared_lock<std::shared_mutex> lock(handle_mutex);
+	std::string what = "Clearing records of \"" + table_name + "\"";
+	rocksdb::ColumnFamilyHandle *handle = table_handle(table_name);
+	scratch_file given(transfer_directory, transfer_name());
+
+	if (!given.write(file))
+	{
+		throw storage_error("storage_error", what + " failed: the file could not be written.");
+	}
+
+	rocksdb::SstFileReader reader(file_options());
+
+	check(reader.Open(given.path()), what);
+
+	std::unique_ptr<rocksdb::Iterator> it(reader.NewIterator(rocksdb::ReadOptions()));
+	rocksdb::WriteBatch batch;
+	rocksdb::PinnableSlice value;
+	size_t cleared = 0;
+
+	for (it->SeekToFirst(); it->Valid(); it->Next())
+	{
+		value.Reset();
+
+		// Most of what the file carries was never here: it is everything the node that owns these
+		// partitions holds, and what this node is giving up is the fraction that just moved.
+		if (!database->Get(rocksdb::ReadOptions(), handle, it->key(), &value).ok())
+		{
+			continue;
+		}
+
+		batch.Delete(handle, it->key());
+
+		cleared++;
+	}
+
+	check(it->status(), what);
+
+	if (cleared > 0)
+	{
+		written(database->Write(rocksdb::WriteOptions(), &batch), what);
+	}
+
+	return cleared;
 }
 
 void repository::rocksdb_repository::delete_records(const std::string &table_name, const scan::range &range)

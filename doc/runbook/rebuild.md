@@ -115,20 +115,19 @@ what it holds, so the **next zone is asked for the whole thing again** — the s
 fallback a scan already makes. If no zone answers, the node starts with what it
 has, which is what it would have had anyway.
 
-The whole of it is bounded by a clock as well, at five minutes. Every round trip
-inside has a timeout of its own, but how many of them there are is a count of
-tables, files and nodes — so the arithmetic that says "four timeouts is two
-minutes" is only ever wrong in one direction. A rebuild that runs out of time
-stops where it is and the node starts thin, which is a copy the cluster has
-rather than one it is still waiting for. It will not try again: an empty store is
-the only trigger, and the store is no longer empty.
+**It is bounded by progress, not by a clock.** A rebuild goes on for as long as
+files keep arriving; what gives up is ten minutes of being answered *nothing*.
+A wall clock over the whole of it is a clock that a large enough store always runs
+out — how long a rebuild takes is how much there is to read, and a share of a
+terabyte and a share of a megabyte are the same code. The node is not in the
+membership while this runs, so a slow one costs a slow start and nothing else.
 
-**That clock is what a store too large to move runs into.** A rebuild is bounded
-by bandwidth now rather than by round trips, so what five minutes buys is a
-figure an operator can work out: it is the link between two nodes times five
-minutes, and a share larger than that is a node that starts thin every time. A
-file boundary is the only place it stops, so what is lost is the file it did not
-ask for and never a file half taken.
+Every round trip inside has a timeout of its own; this is the bound on a node that
+has stopped answering between them. A rebuild that gives up stops at a file
+boundary and the node starts thin, which is a copy the cluster has rather than one
+it is still waiting for — so what is lost is the file it did not ask for and never
+a file half taken. It will not try again: an empty store is the only trigger, and
+the store is no longer empty.
 
 Nothing the rebuild does is worth dying over either. A store that refuses a
 write, or a neighbour that answers something unreadable, is logged and the node
@@ -208,24 +207,31 @@ Clearing down alone is a shrink that loses records rather than staling them.
 Fetching alone is a store that only grows and a stale value waiting for the next
 membership change.
 
-**The two halves ask for different things.** The fetch asks each node for
+**Both halves ask for a file, and neither asks about a record at a time.** The
+fetch asks each node for
 [a file of the partitions this node now holds](/database/cluster#moving-a-share-of-a-table),
-so the only records that cross the network are the ones being taken over, and
-they cross in one transfer rather than one round trip apiece. The clear down
-walks this node's own store carrying keys and no values, because what is being
-decided there is where a record belongs and not what is in it.
+so the only records that cross the network are the ones being taken over.
+
+The clear down is two walks. The first is **local**: it reads this node's own keys
+and works out which partitions it is holding records it no longer owns in, grouped
+by the node of its own zone that owns them. The second asks each of those nodes
+for a `values=false` file of the keys it holds in exactly those partitions, and
+every key in both stores is a copy this node may give up. One question a share,
+where asking about a record at a time was a round trip for every record a
+membership change moved.
 
 ### What makes deleting safe
 
 A copy is given up only when **the node that owns the key in this node's own zone
-answers that it holds it**. Not any copy: the record here is this zone's copy of
-it, so deleting it because another zone still has one is a zone left holding
-nothing.
+answers with that key**. Not any copy: the record here is this zone's copy of it,
+so deleting it because another zone still has one is a zone left holding nothing.
 
-That check is also what makes a wrong membership harmless. A node acting on a
-view that is a moment out of date asks a node that has not fetched anything, is
-told no, and deletes nothing — it keeps the record and asks again on the next
-pass.
+Asking about a share rather than a record does not weaken that. The file names
+keys, and a key it does not name is a key that is kept — so a node that has not
+fetched anything yet answers a file without those keys in it, and nothing is
+deleted. That is also what makes a wrong membership harmless: a node acting on a
+view that is a moment out of date keeps the record and asks again on the next
+pass. What is left over when a pass is done is its `deferred` count.
 
 ### What it does not do
 
@@ -241,6 +247,12 @@ pass.
   change never runs a pass at all.
 - **It is one tick behind, deliberately.** The membership is a moment; a pass runs
   on the tick after the change, not on the reading of it.
+- **It is not bounded by a count of tries.** A membership change buys twelve passes
+  of getting nowhere, and a pass that moved records buys all twelve back: how many
+  passes a share takes is how large the share is. Each half of a pass runs while
+  files keep arriving and stops when they stop, because a pass cut off part way is
+  one the pass after it starts again from the beginning. A node being shut down
+  tells the pass in flight to stop rather than waiting it out.
 
 ### Watching it
 
