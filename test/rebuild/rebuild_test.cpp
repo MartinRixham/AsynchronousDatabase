@@ -38,7 +38,7 @@ namespace
 
 		for (size_t i = 0; i < names.size(); i++)
 		{
-			listed.push_back(table::valid_table(names[i], std::vector<std::string>()).json);
+			listed.push_back(table::valid_table(names[i], std::vector<std::string>(), false).json);
 		}
 
 		return router::json_response(
@@ -52,7 +52,7 @@ namespace
 	{
 		repository::fake_repository source;
 
-		source.create_table(table::valid_table("account", std::vector<std::string>()));
+		source.create_table(table::valid_table("account", std::vector<std::string>(), false));
 
 		for (size_t i = 0; i < keys.size(); i++)
 		{
@@ -91,7 +91,7 @@ TEST(rebuild_test, rebuilds_nothing_when_the_store_already_holds_a_table)
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	repository.create_table(table::valid_table("account", std::vector<std::string>(), false));
 
 	nodes.answer(peer, tables({ "account" }));
 

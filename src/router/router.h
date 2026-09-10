@@ -68,6 +68,14 @@ namespace router
 		// leader of a forwarded write is the one caller that has to ask.
 		cluster::placement replicas_of(const request &request, const cluster::placement &known, const std::string &key);
 
+		// Whether an immutable table already holds this key, and so may not be written again. It is
+		// the node ordering the write that asks: a copy asking again would refuse half of a write
+		// its leader had already made.
+		std::optional<response> refuse_overwrite(
+			const request &request,
+			const std::string &name,
+			const std::string &key);
+
 		response write_record(
 			const request &request,
 			const std::string &name,

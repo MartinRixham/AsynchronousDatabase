@@ -38,8 +38,10 @@ status — is what a client should branch on.
 | --- | --- | --- |
 | `table_not_found` | 404 | No table of that name |
 | `table_exists` | 409 | The table exists with different options |
+| `record_exists` | 409 | The key has been written and its table is [immutable](/database/tables#immutable-tables) |
+| `table_immutable` | 409 | A record or a range of an [immutable](/database/tables#immutable-tables) table cannot be deleted |
 | `invalid_table_name` | 400 | Not 1–64 characters of `[A-Za-z0-9_ -]`, or `default` |
-| `invalid_body` | 400 | The body of a [table](/database/tables#create-a-table) is not a JSON object |
+| `invalid_body` | 400 | The body of a [table](/database/tables#create-a-table) is not a JSON object, or an option in it is not of the type that option takes |
 | `dependency_not_found` | 400 | A name in [`dependencies`](/database/tables#dependencies) is not a table |
 | `invalid_key_encoding` | 400 | A key in the path does not percent-decode to valid UTF-8 |
 | `key_too_large` | 413 | Over 4 KiB |

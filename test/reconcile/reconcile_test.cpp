@@ -48,7 +48,7 @@ namespace
 	{
 		repository::fake_repository source;
 
-		source.create_table(table::valid_table("account", std::vector<std::string>()));
+		source.create_table(table::valid_table("account", std::vector<std::string>(), false));
 
 		for (size_t i = 0; i < keys.size(); i++)
 		{
@@ -82,7 +82,7 @@ namespace
 	{
 		repository::fake_repository repository;
 
-		repository.create_table(table::valid_table("account", std::vector<std::string>()));
+		repository.create_table(table::valid_table("account", std::vector<std::string>(), false));
 
 		for (size_t i = 0; i < keys.size(); i++)
 		{

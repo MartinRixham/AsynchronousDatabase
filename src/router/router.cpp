@@ -30,6 +30,12 @@ namespace
 		return router::error_response("table_not_found", "No table named \"" + name + "\".");
 	}
 
+	router::response immutable_table(const std::string &name)
+	{
+		return router::error_response(
+			"table_immutable", "Table \"" + name + "\" is immutable, and nothing it holds is deleted.");
+	}
+
 	router::response method_not_allowed(const boost::beast::http::verb &method)
 	{
 		return router::error_response(
@@ -462,6 +468,13 @@ router::response router::router::route_record(
 
 	if (request.method == boost::beast::http::verb::put || request.method == boost::beast::http::verb::delete_)
 	{
+		// Whichever node the delete lands on refuses it. Every node holds the table document, so
+		// none of them needs the key, a copy of it or a hop to a leader to answer.
+		if (request.method == boost::beast::http::verb::delete_ && repository.read_table(name).immutable)
+		{
+			return immutable_table(name);
+		}
+
 		if (request.term != 0)
 		{
 			if (!nodes.accept(record.key, request.term))
@@ -477,7 +490,9 @@ router::response router::router::route_record(
 
 		if (!lead)
 		{
-			return write_record(request, name, record, where);
+			std::optional<response> refused = refuse_overwrite(request, name, record.key);
+
+			return refused ? *refused : write_record(request, name, record, where);
 		}
 
 		if (!lead->known)
@@ -500,6 +515,13 @@ router::response router::router::route_record(
 		ordered.term = lead->term;
 
 		std::lock_guard<std::mutex> ordering(write_lock(record.key));
+
+		std::optional<response> refused = refuse_overwrite(request, name, record.key);
+
+		if (refused)
+		{
+			return *refused;
+		}
 
 		return write_record(ordered, name, record, replicas_of(request, where, record.key));
 	}
@@ -540,6 +562,24 @@ cluster::placement router::router::replicas_of(
 	const std::string &key)
 {
 	return request.forwarded ? nodes.replicas(key) : known;
+}
+
+std::optional<router::response> router::router::refuse_overwrite(
+	const request &request,
+	const std::string &name,
+	const std::string &key)
+{
+	if (request.method != boost::beast::http::verb::put || !repository.read_table(name).immutable)
+	{
+		return std::nullopt;
+	}
+
+	if (!repository.read_record(name, key))
+	{
+		return std::nullopt;
+	}
+
+	return error_response("record_exists", "Table \"" + name + "\" is immutable and already holds this key.");
 }
 
 router::response router::router::write_record(
@@ -757,6 +797,11 @@ router::response router::router::delete_records(const request &request, const st
 	if (!repository.has_table(name))
 	{
 		return table_not_found(name);
+	}
+
+	if (repository.read_table(name).immutable)
+	{
+		return immutable_table(name);
 	}
 
 	scan::range range = scan::parse_range(request.query, repository.instance());

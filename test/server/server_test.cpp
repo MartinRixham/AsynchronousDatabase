@@ -151,9 +151,10 @@ TEST_F(server_test, put_request)
 
 	EXPECT_EQ(response.status, CURLE_OK);
 	EXPECT_EQ(response.code, 201);
-	EXPECT_EQ(response.body, "{\"name\":\"account\",\"dependencies\":[]}");
+	EXPECT_EQ(response.body, "{\"name\":\"account\",\"dependencies\":[],\"immutable\":false}");
 
-	EXPECT_EQ(get("/table").body, "{\"tables\":[{\"name\":\"account\",\"dependencies\":[]}]}");
+	EXPECT_EQ(
+		get("/table").body, "{\"tables\":[{\"name\":\"account\",\"dependencies\":[],\"immutable\":false}]}");
 }
 
 TEST_F(server_test, put_request_with_an_invalid_name)
@@ -188,6 +189,39 @@ TEST_F(server_test, write_then_read_a_record)
 	EXPECT_EQ(response.code, 200);
 	EXPECT_EQ(response.content_type, "text/plain; charset=utf-8");
 	EXPECT_EQ(response.body, "Eleanor Whitmore");
+}
+
+TEST_F(server_test, refuse_to_overwrite_a_record_of_an_immutable_table)
+{
+	request("PUT", "/table/account", "{\"immutable\":true}");
+
+	EXPECT_EQ(request("PUT", "/table/account/key/4821", "Eleanor Whitmore").code, 204);
+
+	result response = request("PUT", "/table/account/key/4821", "Eleanor Ashby");
+
+	EXPECT_EQ(response.code, 409);
+	EXPECT_EQ(error_code(response), "record_exists");
+	EXPECT_EQ(get("/table/account/key/4821").body, "Eleanor Whitmore");
+}
+
+TEST_F(server_test, refuse_to_delete_a_record_of_an_immutable_table)
+{
+	request("PUT", "/table/account", "{\"immutable\":true}");
+	request("PUT", "/table/account/key/4821", "Eleanor Whitmore");
+
+	result response = request("DELETE", "/table/account/key/4821", "");
+
+	EXPECT_EQ(response.code, 409);
+	EXPECT_EQ(error_code(response), "table_immutable");
+
+	result range = request("DELETE", "/table/account/key?prefix=48", "");
+
+	EXPECT_EQ(range.code, 409);
+	EXPECT_EQ(error_code(range), "table_immutable");
+	EXPECT_EQ(get("/table/account/key/4821").body, "Eleanor Whitmore");
+
+	// The table itself is dropped like any other, and its records go with the column family.
+	EXPECT_EQ(request("DELETE", "/table/account", "").code, 204);
 }
 
 // The documented limit is a value of 16 MiB and Beast's own default is a request body of one, so

@@ -66,6 +66,10 @@ Eleanor Whitmore
 The body is the value. The `Content-Type` is the client's business — it is not
 stored, and it does not change how the value is treated.
 
+`204 No Content`, and a key that was already there is overwritten — unless its
+table is [immutable](/database/tables#immutable-tables), where a key that has
+been written is `409 record_exists` and keeps the value it has.
+
 There is no `POST` to a table and no server-generated key. Keys carry meaning in
 an ordered store — they decide what a scan can answer — so the API will not
 invent one.
@@ -75,3 +79,7 @@ invent one.
 ```http
 DELETE /table/account/key/4821
 ```
+
+`204 No Content`, whether or not the key was there — a key that is gone is a key
+that is gone. An [immutable](/database/tables#immutable-tables) table is the one
+exception, and refuses the request with `409 table_immutable`.

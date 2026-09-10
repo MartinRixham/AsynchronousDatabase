@@ -189,6 +189,47 @@ TEST(router_test, fail_to_create_a_table_that_exists_with_different_options)
 	EXPECT_EQ(error_code(response), "table_exists");
 }
 
+TEST(router_test, create_a_table_whose_keys_may_be_written_once)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router::response response = router.route(put("/table/account", "{\"immutable\":true}"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::created);
+	EXPECT_EQ(response.json.at("immutable"), true);
+	EXPECT_EQ(router.route(get("/table/account")).json.at("immutable"), true);
+}
+
+// Whether a table is immutable is an option like any other, so it cannot be turned on or off by
+// declaring the table again.
+TEST(router_test, fail_to_create_a_table_that_exists_with_a_different_immutability)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+
+	router::response response = router.route(put("/table/account", "{}"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::conflict);
+	EXPECT_EQ(error_code(response), "table_exists");
+}
+
+TEST(router_test, fail_to_create_a_table_whose_immutable_option_is_not_a_boolean)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router::response response = router.route(put("/table/account", "{\"immutable\":\"yes\"}"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
+	EXPECT_EQ(error_code(response), "invalid_body");
+}
+
 TEST(router_test, fail_to_create_a_table_with_an_invalid_name)
 {
 	repository::fake_repository repository;
@@ -394,6 +435,130 @@ TEST(router_test, deleting_a_record_that_is_not_there_is_a_no_op)
 	create_table(router, "account");
 
 	EXPECT_EQ(router.route(del("/table/account/key/4821")).status, boost::beast::http::status::no_content);
+}
+
+// The whole of what an immutable table promises: a key it holds is a key nothing writes again.
+TEST(router_test, refuse_to_overwrite_a_record_of_an_immutable_table)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+
+	EXPECT_EQ(
+		router.route(put("/table/account/key/4821", "Eleanor Whitmore")).status,
+		boost::beast::http::status::no_content);
+
+	router::response response = router.route(put("/table/account/key/4821", "Eleanor Ashby"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::conflict);
+	EXPECT_EQ(error_code(response), "record_exists");
+	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "Eleanor Whitmore");
+}
+
+// The empty value is a value, so the key is written and the table holds it.
+TEST(router_test, refuse_to_overwrite_an_empty_value_of_an_immutable_table)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+	write_record(router, "account", "4821", "");
+
+	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "Eleanor Whitmore"))), "record_exists");
+}
+
+// A key that could be deleted could be written again, so what an immutable table holds it keeps.
+TEST(router_test, refuse_to_delete_a_record_of_an_immutable_table)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+	write_record(router, "account", "4821", "Eleanor Whitmore");
+
+	router::response response = router.route(del("/table/account/key/4821"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::conflict);
+	EXPECT_EQ(error_code(response), "table_immutable");
+	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "Eleanor Whitmore");
+}
+
+// A key the table has nothing for is refused too. Deleting a record that is not there is a no-op
+// everywhere else, but the answer here is about the table and not about the key.
+TEST(router_test, refuse_to_delete_a_key_an_immutable_table_never_held)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+
+	EXPECT_EQ(error_code(router.route(del("/table/account/key/4821"))), "table_immutable");
+}
+
+TEST(router_test, refuse_to_delete_a_range_of_an_immutable_table)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+	write_record(router, "account", "user%3A1", "one");
+
+	router::response response = router.route(del("/table/account/key?prefix=user%3A"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::conflict);
+	EXPECT_EQ(error_code(response), "table_immutable");
+	EXPECT_EQ(router.route(get("/table/account/key/user%3A1")).text, "one");
+}
+
+// The records are what an immutable table keeps. The table itself is dropped like any other, and
+// its records go with the column family.
+TEST(router_test, drop_an_immutable_table_and_its_data)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+	write_record(router, "account", "4821", "Eleanor Whitmore");
+
+	EXPECT_EQ(router.route(del("/table/account")).status, boost::beast::http::status::no_content);
+	EXPECT_FALSE(repository.has_table("account"));
+}
+
+TEST(router_test, overwrite_a_record_of_a_table_that_is_not_immutable)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	write_record(router, "account", "4821", "Eleanor Whitmore");
+	write_record(router, "account", "4821", "Eleanor Ashby");
+
+	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "Eleanor Ashby");
+}
+
+// Each table says for itself, so a key one of them holds says nothing about the same key of
+// another.
+TEST(router_test, refuse_an_overwrite_of_the_table_that_is_immutable_and_no_other)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+	create_table(router, "transaction");
+	write_record(router, "account", "4821", "Eleanor Whitmore");
+	write_record(router, "transaction", "4821", "10.00");
+
+	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "Eleanor Ashby"))), "record_exists");
+	EXPECT_EQ(router.route(put("/table/transaction/key/4821", "12.00")).status, boost::beast::http::status::no_content);
 }
 
 TEST(router_test, fail_to_read_a_record_of_a_table_that_is_not_there)
@@ -1205,6 +1370,112 @@ TEST(router_cluster_test, apply_a_forwarded_write_ordered_in_the_term_that_stand
 	EXPECT_TRUE(nodes.sent().empty());
 }
 
+// The leader of the partition is a copy of the key, so it is the one node that can answer
+// whether the table already holds it — and it answers before a single copy has been written.
+TEST(router_cluster_test, refuse_an_overwrite_of_an_immutable_table_at_the_leader)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+	nodes.forget();
+	nodes.copies("4821", { here, partner });
+	nodes.led_by("4821", here, 41);
+
+	EXPECT_EQ(router.route(put("/table/account/key/4821", "a value")).status, boost::beast::http::status::no_content);
+
+	nodes.forget();
+
+	router::response response = router.route(put("/table/account/key/4821", "another value"));
+
+	EXPECT_EQ(error_code(response), "record_exists");
+	EXPECT_EQ(response.status, boost::beast::http::status::conflict);
+	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+}
+
+// No hop and no leader: the table document is on every node, so the node the delete landed on is
+// the node that answers it, whether or not it holds a copy of the key and whoever leads it.
+TEST(router_cluster_test, refuse_a_delete_of_an_immutable_table_without_asking_anybody)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+	repository.write_record("account", record::valid_record("4821", "a value"));
+	nodes.forget();
+	nodes.copies("4821", { here, partner });
+	nodes.led_by("4821", there, 41);
+
+	router::response response = router.route(del("/table/account/key/4821"));
+
+	EXPECT_EQ(error_code(response), "table_immutable");
+	EXPECT_EQ(response.status, boost::beast::http::status::conflict);
+	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+}
+
+// A copy is asked to delete by the leader that ordered it, and refuses on the same grounds. There
+// is no order to carry out: the leader refused before it wrote anything.
+TEST(router_cluster_test, refuse_a_forwarded_delete_of_an_immutable_table)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+	repository.write_record("account", record::valid_record("4821", "a value"));
+	nodes.forget();
+	nodes.applied("4821", 60);
+
+	router::request forwarded = del("/table/account/key/4821");
+
+	forwarded.forwarded = true;
+	forwarded.term = 60;
+
+	EXPECT_EQ(error_code(router.route(forwarded)), "table_immutable");
+	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+}
+
+// A range delete is a delete like any other, and it is refused before a node of the cluster has
+// been asked to carry it out.
+TEST(router_cluster_test, refuse_a_range_delete_of_an_immutable_table)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+	nodes.forget();
+
+	EXPECT_EQ(error_code(router.route(del("/table/account/key?prefix=user%3A"))), "table_immutable");
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
+// A copy applies what its leader ordered rather than asking again. The leader refuses the
+// overwrite, so a copy that refused one too would only ever refuse half of a write already made.
+TEST(router_cluster_test, apply_a_forwarded_write_to_a_key_an_immutable_table_holds)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	router.route(put("/table/account", "{\"immutable\":true}"));
+	nodes.forget();
+	nodes.applied("4821", 60);
+	repository.write_record("account", record::valid_record("4821", "a value"));
+
+	router::request forwarded = put("/table/account/key/4821", "another value");
+
+	forwarded.forwarded = true;
+	forwarded.term = 60;
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(repository.read_record("account", "4821"), "another value");
+}
+
 // A delete is a write like any other, and it is ordered by the same node.
 TEST(router_cluster_test, order_a_delete_through_the_leader)
 {
@@ -1850,7 +2121,7 @@ TEST(router_test, answers_a_file_of_the_records_of_the_partitions_asked_for)
 	write_record(router, "account", "1", "one");
 	write_record(router, "account", "2", "two");
 
-	taking.create_table(table::valid_table("account", std::vector<std::string>()));
+	taking.create_table(table::valid_table("account", std::vector<std::string>(), false));
 
 	router::response response = router.route(get("/table/account/file?partitions=" + only("1")));
 
@@ -1929,7 +2200,7 @@ TEST(router_test, answers_a_file_of_keys_alone_when_the_values_are_not_wanted)
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
 
-	giving.create_table(table::valid_table("account", std::vector<std::string>()));
+	giving.create_table(table::valid_table("account", std::vector<std::string>(), false));
 	giving.write_record("account", record::valid_record("1", "mine"));
 	giving.write_record("account", record::valid_record("2", "mine"));
 
@@ -2022,7 +2293,7 @@ TEST(router_test, answers_a_file_that_ends_where_it_was_told_to)
 	write_record(router, "account", "2", "two");
 	write_record(router, "account", "3", "three");
 
-	taking.create_table(table::valid_table("account", std::vector<std::string>()));
+	taking.create_table(table::valid_table("account", std::vector<std::string>(), false));
 
 	router::response response = router.route(
 		get("/table/account/file?partitions=" + every_partition() + "&to=" + url::encode(base64::encode("2"))));

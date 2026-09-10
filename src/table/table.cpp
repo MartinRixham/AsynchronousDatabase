@@ -26,10 +26,17 @@ table::table table::parse_table(
 				" characters of [A-Za-z0-9_ -], or is reserved.");
 	}
 
+	if (json.contains("immutable") && !json.at("immutable").is_bool())
+	{
+		return invalid_table("invalid_body", "The immutable option of a table is true or false.");
+	}
+
+	bool immutable = json.contains("immutable") && json.at("immutable").as_bool();
+
 	// A dependency is a name and nothing else: the API records the edge, it does not run the work.
 	if (!json.contains("dependencies"))
 	{
-		return valid_table(name, std::vector<std::string>());
+		return valid_table(name, std::vector<std::string>(), immutable);
 	}
 
 	if (!json.at("dependencies").is_array())
@@ -57,10 +64,13 @@ table::table table::parse_table(
 		dependencies.push_back(dependency);
 	}
 
-	return valid_table(name, dependencies);
+	return valid_table(name, dependencies, immutable);
 }
 
-table::table table::valid_table(const std::string &name, const std::vector<std::string> &dependencies)
+table::table table::valid_table(
+	const std::string &name,
+	const std::vector<std::string> &dependencies,
+	bool immutable)
 {
 	boost::json::array dependency_array;
 
@@ -69,9 +79,12 @@ table::table table::valid_table(const std::string &name, const std::vector<std::
 		dependency_array.push_back(boost::json::string(dependencies[i]));
 	}
 
-	boost::json::object json { { "name", boost::json::string(name) }, { "dependencies", dependency_array } };
+	boost::json::object json {
+		{ "name", boost::json::string(name) },
+		{ "dependencies", dependency_array },
+		{ "immutable", immutable } };
 
-	return { true, name, json, "", "" };
+	return { true, name, json, immutable, "", "" };
 }
 
 table::table table::invalid_table(const std::string &code, const std::string &message)
@@ -79,15 +92,18 @@ table::table table::invalid_table(const std::string &code, const std::string &me
 	boost::json::object error { { "code", code }, { "message", message } };
 	boost::json::object json { { "error", error } };
 
-	return { false, "", json, code, message };
+	return { false, "", json, false, code, message };
 }
 
 table::table table::to_table(const std::string &json)
 {
 	boost::json::object table_object = boost::json::parse(json).as_object();
 	std::string name = std::string(table_object["name"].as_string());
+	bool immutable = table_object.contains("immutable") && table_object.at("immutable").as_bool();
 
-	return { true, name, table_object, "", "" };
+	table_object["immutable"] = immutable;
+
+	return { true, name, table_object, immutable, "", "" };
 }
 
 bool table::is_valid_name(const std::string &name)

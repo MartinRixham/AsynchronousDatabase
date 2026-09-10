@@ -581,6 +581,25 @@ TEST_F(cluster_test, a_write_ordered_in_a_term_that_has_passed_is_refused)
 	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
 }
 
+// The refusal is the leader's, over a real socket: the node the client wrote to has no copy of
+// the key to decide on, and hands back what the node that ordered the write said.
+TEST_F(cluster_test, an_overwrite_of_an_immutable_table_is_refused_by_the_leader)
+{
+	zone_the_cluster();
+	led_by(second, 7);
+
+	request(first, "PUT", "/table/account", "{\"immutable\":true}");
+
+	EXPECT_EQ(request(first, "PUT", "/table/account/key/4821", "a value").code, 204);
+
+	answer refused = request(first, "PUT", "/table/account/key/4821", "another value");
+
+	EXPECT_EQ(refused.code, 409);
+	EXPECT_NE(refused.body.find("record_exists"), std::string::npos);
+	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
+	EXPECT_EQ(request(second, "GET", "/table/account/key/4821", "", true).body, "a value");
+}
+
 // A cluster with no leadership at all — no zones, or no etcd to elect through — writes from
 // wherever the write landed to every copy.
 TEST_F(cluster_test, a_write_is_unordered_when_no_node_leads_anything)
