@@ -910,6 +910,11 @@ namespace
 		return boost::json::object { { "key", key }, { "value", value } };
 	}
 
+	boost::json::object record_json(const std::string &key, const std::string &sort, const std::string &value)
+	{
+		return boost::json::object { { "key", key }, { "sort", sort }, { "value", value } };
+	}
+
 	std::string cursor_key(const router::response &response)
 	{
 		std::string decoded = base64::decode(std::string(response.json.at("next").as_string())).value_or("");
@@ -1760,6 +1765,29 @@ TEST(router_cluster_test, answer_the_values_of_every_node)
 
 	ASSERT_EQ(records.size(), 2u);
 	EXPECT_EQ(records[1].as_object().at("value").as_string(), "2");
+}
+
+// A record of two parts travels as its halves, so the merge is of the key they compose and not of
+// the partition half it arrived under: a key put back short sorts where its partition key does and
+// answers as the record sitting there.
+TEST(router_cluster_test, a_record_of_two_parts_is_merged_by_the_key_its_halves_compose)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	router.route(put("/table/account/key/4821", "the account"));
+	router.route(put("/table/account/key/48210", "another account"));
+	nodes.answer(there, page(boost::json::array { record_json("4821", "2019", "a year of it") }, false));
+
+	boost::json::array records = router.route(get("/table/account/key")).json.at("records").as_array();
+
+	ASSERT_EQ(records.size(), 3u);
+	EXPECT_EQ(records[1].as_object().at("key").as_string(), "4821");
+	EXPECT_EQ(records[1].as_object().at("sort").as_string(), "2019");
+	EXPECT_EQ(records[1].as_object().at("value").as_string(), "a year of it");
+	EXPECT_EQ(records[2].as_object().at("value").as_string(), "another account");
 }
 
 TEST(router_cluster_test, hold_the_merged_page_to_the_limit)
