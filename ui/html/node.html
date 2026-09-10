@@ -1,1 +1,37 @@
 <h2>Node</h2>
+<div class="node-detail">
+	<div class="field">
+		<span class="label">Status</span>
+		<span class="value" data-bind="status"></span>
+	</div>
+	<div data-bind="answered">
+		<div class="field">
+			<span class="label">Writes</span>
+			<span class="value" data-bind="writes"></span>
+		</div>
+		<div class="field">
+			<span class="label">Store</span>
+			<span class="value" data-bind="store"></span>
+		</div>
+		<div data-bind="clustered">
+			<div class="field">
+				<span class="label">Nodes</span>
+				<span class="value" data-bind="nodes"></span>
+			</div>
+			<div class="field">
+				<span class="label">Leads</span>
+				<span class="value" data-bind="leads"></span>
+			</div>
+		</div>
+		<div data-bind="alone" class="alone">Not clustered</div>
+		<div data-bind="zoned">
+			<h3>Zones</h3>
+			<div data-bind="zones">
+				<div class="field">
+					<span class="label" data-bind="title"></span>
+					<span class="value" data-bind="count"></span>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>

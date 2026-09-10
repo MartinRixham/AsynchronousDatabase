@@ -65,6 +65,7 @@ errors among them are the ones a user is meant to see.
 | --- | --- |
 | `browseTablesTest.js` | Opening the page on a database that is already there: the graph drawn with a table under the one it depends on, the tables that depend on nothing side by side, and the side bar a table opens and closes |
 | `createTableTest.js` | Adding a table: naming it, giving it a dependency, watching it join the graph under that dependency, and finding it in the database and the side bar — and the error a name that is already taken is answered with |
+| `nodeHealthTest.js` | The node panel in the left side bar, drawn from what the instance serving the page answered `/health` with. It seeds nothing and drops nothing, and it is the only test anywhere that the names the markup binds are the names the component exposes |
 
 A row of the graph is 180 apart from the next one, so `row(page, name)` in `app.js` turns the `y` a
 box is drawn at into the row it is in, and a test asserts that one table sits under another rather

@@ -686,8 +686,13 @@ Built on [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum), not a m
   DOM-mutation-only binding. An array field repeats its template element per item.
 - HTML fragments are imported with `?url` and injected at runtime by `fetchPage(element, html)` inside
   `onBind(element)` — the markup is fetched, not bundled, so `ui/html/**` ships as separate files.
-- `App` wires a `NavPiece` (routes `tables` / `newTable`) and a side bar that `Tables` opens with a
-  `TableDetail`. `fetchPage` and `DatabaseClient` are injected, so tests pass `() => {}` and
+- `App` wires a `NavPiece` (routes `tables` / `newTable`) and **two side bars**: the left one is
+  always there and is `Node`, the health of the instance serving the page — status, whether writes
+  are stalled, whether the store is short of what the node owns, the membership it can see and the
+  partitions it leads, with a `Zone` a copy; the right one is opened by `Tables` with a
+  `TableDetail`. `Node` reads `getHealth()` once when it binds and never polls.
+  **What it holds the answer in is a public field**, because a private one is not one datum
+  watches: the panel is drawn before the node has answered, and the assignment is what redraws it. `fetchPage` and `DatabaseClient` are injected, so tests pass `() => {}` and
   `FakeDatabaseClient` and then reach into `app.currentPage.datumPiecesCurrentPage` to assert.
 - `Tables.#buildGraph` / `#buildRow` do the layered DAG layout: dependency-free tables form row 0, then
   each row takes tables whose dependencies are all already placed (max 6 per row), sorted to sit near

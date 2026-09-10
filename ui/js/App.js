@@ -50,7 +50,7 @@ export default class App {
 				}
 			]);
 
-		this.nodeDetails = new Node(this.#fetchPage);
+		this.nodeDetails = new Node(this.#fetchPage, this.#client);
 	}
 
 	#setSideBar(component) {

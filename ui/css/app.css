@@ -229,3 +229,43 @@ button
     padding-top: 2%;
 	display: flex;
 }
+
+.node-detail
+{
+	font-family: var(--mono);
+	font-size: 12px;
+}
+
+.node-detail .field
+{
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 5px 0;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.node-detail .label
+{
+	color: var(--muted);
+}
+
+.node-detail .value
+{
+	color: #fff;
+	text-align: right;
+	word-break: break-word;
+}
+
+.node-detail .alone
+{
+	color: var(--muted);
+	padding: 8px 0;
+}
+
+.app .side-bar h3
+{
+	color: var(--chrome-ink);
+	margin-top: 18px;
+	margin-bottom: 4px;
+}

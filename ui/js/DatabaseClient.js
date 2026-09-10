@@ -30,4 +30,13 @@ export default class DatabaseClient {
 		return fetch("asyncdb/table")
 			.then(response => response.json())
 	}
+
+	// The health of whichever instance served the page, which behind nginx is the one it is
+	// proxying to. Every field of it is that node's own view: the membership is what it can see,
+	// and write_stalled and incomplete are true of it and of no other node.
+	async getHealth() {
+
+		return fetch("asyncdb/health")
+			.then(response => response.json())
+	}
 }
