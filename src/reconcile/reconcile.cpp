@@ -53,9 +53,10 @@ namespace
 		// them happens to have written.
 		std::atomic<size_t> fetched = 0;
 
-		// A node that stopped answering is nothing more this pass can do about that node — it is
-		// asked again on the next one — where a walk its own patience ended is a pass with more of
-		// this share still to read.
+		// A node that stopped answering is nothing more this pass can do about that node, so the
+		// walk of it is finished — and what it holds of this share is still unknown, which is what
+		// `refused` carries to the pass that asks it again. A walk its own patience ended is
+		// neither: it is a pass with more of this share still to read.
 		transfer::outcome done = transfer::walk(
 			nodes,
 			share_of(node, name, partitions, true, workers),
@@ -64,6 +65,7 @@ namespace
 			[&](const std::string &file) { fetched += repository.import_records(name, file); });
 
 		taken.finished = done.whole || done.refused;
+		taken.refused = done.refused;
 		taken.fetched = fetched;
 
 		return taken;
@@ -210,7 +212,7 @@ namespace
 
 bool reconcile::outcome::settled() const
 {
-	return finished && deferred == 0;
+	return finished && !refused && deferred == 0;
 }
 
 bool reconcile::outcome::moved() const
@@ -247,6 +249,10 @@ reconcile::outcome reconcile::reconcile(
 	// clock of their own: what is left of them is asked and does nothing.
 	bool finished = true;
 
+	// A share this pass was refused is one it knows nothing about, where a share it walked and
+	// deferred is one it knows the owner has not taken over yet. Both leave the pass unsettled.
+	bool refused = false;
+
 	// A half apiece, and each of them is patience rather than a deadline: a half still being sent
 	// records is a half to leave alone, because the pass after this one would start it again from
 	// the beginning.
@@ -266,6 +272,11 @@ reconcile::outcome reconcile::reconcile(
 				if (!taken.finished)
 				{
 					finished = false;
+				}
+
+				if (taken.refused)
+				{
+					refused = true;
 				}
 			}
 		}
@@ -287,6 +298,7 @@ reconcile::outcome reconcile::reconcile(
 	}
 
 	done.finished = finished;
+	done.refused = refused;
 
 	if (done.fetched > 0 || done.cleared > 0 || done.deferred > 0)
 	{

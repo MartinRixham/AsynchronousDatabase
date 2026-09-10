@@ -277,6 +277,11 @@ TEST(reconcile_test, clears_down_a_record_the_owner_in_its_own_zone_holds)
 	nodes.copies("a", { mate, peer, other });
 	nodes.answer_in_turn(mate, { records({}), holds({ "a" }) });
 
+	// The fetch half asks every node of every zone, and a pass any of them would not answer is a
+	// pass that is not settled whatever the clear down did.
+	nodes.answer(peer, records({}));
+	nodes.answer(other, records({}));
+
 	reconcile::outcome done = reconciled(repository, nodes, running);
 
 	EXPECT_EQ(1u, done.cleared);
@@ -384,6 +389,8 @@ TEST(reconcile_test, fetches_what_it_gained_and_clears_down_what_it_lost)
 	nodes.copies("gone", { mate, peer, other });
 
 	nodes.answer_in_turn(mate, { records({ "gained" }), holds({ "gone" }) });
+	nodes.answer(peer, records({}));
+	nodes.answer(other, records({}));
 
 	reconcile::outcome done = reconciled(repository, nodes, running);
 
@@ -412,6 +419,46 @@ TEST(reconcile_test, a_pass_that_ran_out_of_patience_is_not_settled)
 	EXPECT_EQ(0u, done.deferred);
 	EXPECT_FALSE(done.settled());
 	EXPECT_TRUE(repository.read_record("account", "gone").has_value());
+}
+
+// A node deaf to its peers and still renewing its lease is in the membership and answers nothing,
+// so a share it holds is a share this pass did not take. Saying so is what makes the pass after
+// this one run: the membership has not moved, and nothing else buys the attempts to ask again.
+TEST(reconcile_test, a_share_the_node_holding_it_would_not_answer_for_is_not_settled)
+{
+	repository::fake_repository repository = store({});
+	cluster::fake_cluster nodes(self, three_zones());
+
+	// This node owns the key and holds nothing for it, and no node is told what to answer, so
+	// every node it asks refuses the file.
+	nodes.copies("a", { self, peer, other });
+
+	reconcile::outcome done = reconciled(repository, nodes, running);
+
+	EXPECT_EQ(0u, done.fetched);
+	EXPECT_TRUE(done.refused);
+	EXPECT_FALSE(done.settled());
+	EXPECT_FALSE(repository.read_record("account", "a").has_value());
+}
+
+// The halves are not each other's precondition, so a node that would not answer costs the pass
+// what that node holds and nothing else: what the owner in this zone did answer for is still safe
+// to give up.
+TEST(reconcile_test, a_refused_fetch_does_not_stop_the_clear_down)
+{
+	repository::fake_repository repository = store({ "gone" });
+	cluster::fake_cluster nodes(self, three_zones());
+
+	// The owner in this node's own zone answers, and the two further zones answer nothing.
+	nodes.copies("gone", { mate, peer, other });
+	nodes.answer_in_turn(mate, { records({}), holds({ "gone" }) });
+
+	reconcile::outcome done = reconciled(repository, nodes, running);
+
+	EXPECT_EQ(1u, done.cleared);
+	EXPECT_TRUE(done.refused);
+	EXPECT_FALSE(done.settled());
+	EXPECT_FALSE(repository.read_record("account", "gone").has_value());
 }
 
 // Patience is not a deadline: a half still being answered goes on being answered, which is what

@@ -34,6 +34,11 @@ namespace reconcile
 
 		bool finished = false;
 
+		// Whether a node this pass asked for a share would not answer. What that node holds for
+		// this node is unknown rather than absent, so the membership this pass ran against has
+		// not been applied — and a membership that does not move again buys no pass to apply it.
+		bool refused = false;
+
 		bool settled() const;
 
 		// Whether the pass moved anything, which is what says it is worth running another.
