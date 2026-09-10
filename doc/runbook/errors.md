@@ -41,13 +41,19 @@ write can be given.
 Two different things say this, and the message tells them apart.
 
 > `No node is leading this key's partition yet.`
+>
+> `No node is leading the tables yet.`
 
-Nothing has claimed the key's partition. Either the cluster is cold and has not
+Nothing has claimed the key's partition, or the partition that
+[leads the tables](/database/cluster#the-tables-are-led-too), which is what a
+table create or delete is ordered by. Either the cluster is cold and has not
 finished claiming all 256 partitions, or the leader's node went away and its
 lease has not run out yet. **Wait a second or two and write again.** Reads are
 unaffected throughout — they never wait for a leader.
 
 > `This node does not lead this key's partition.`
+>
+> `This node does not lead the tables.`
 
 A write arrived forwarded at a node that does not lead the partition, which is
 two nodes disagreeing about who leads it. It is refused rather than passed on

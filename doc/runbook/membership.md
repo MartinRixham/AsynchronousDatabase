@@ -204,8 +204,8 @@ failed at boot. Replacing the instance is the fix, and it is
 
 ## No partition has a leader
 
-**Looks like:** every write answers `503 no_leader`; reads are perfectly fine;
-`leads` is `0` on every node.
+**Looks like:** every write answers `503 no_leader`, a table create or delete
+included; reads are perfectly fine; `leads` is `0` on every node.
 
 Reads never wait for a leader, which is why this presents as a write-only outage.
 

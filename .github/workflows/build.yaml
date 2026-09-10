@@ -195,12 +195,53 @@ jobs:
           nodes=$(curl -fsS --max-time 10 "$URL/asyncdb/health" | jq '.nodes | length') || nodes=0
           if [ "${nodes:-0}" = "6" ]; then
             echo "Six nodes answering after $attempt attempts."
-            exit 0
+            break
           fi
           echo "Attempt $attempt: ${nodes:-0} of 6 nodes."
           sleep 10
         done
-        echo "The cluster did not reach six nodes."
+
+        if [ "${nodes:-0}" != "6" ]; then
+          echo "The cluster did not reach six nodes."
+          exit 1
+        fi
+
+        ids=$(aws ec2 describe-instances \
+          --filters "Name=tag:aws:cloudformation:stack-name,Values=$STACK" \
+                    "Name=tag:Name,Values=asyncdb" \
+                    "Name=instance-state-name,Values=running" \
+          --query 'Reservations[].Instances[].InstanceId' --output text)
+
+        for attempt in $(seq 1 30); do
+          command=$(aws ssm send-command \
+            --instance-ids $ids \
+            --document-name AWS-RunShellScript \
+            --parameters 'commands=["curl -s --max-time 5 http://localhost:8080/health"]' \
+            --query 'Command.CommandId' --output text) || command=
+
+          leads=0
+
+          for id in $ids; do
+            [ -n "$command" ] || continue
+
+            aws ssm wait command-executed --command-id "$command" --instance-id "$id" 2> /dev/null || true
+
+            led=$(aws ssm get-command-invocation --command-id "$command" --instance-id "$id" \
+              --query 'StandardOutputContent' --output text | jq '.leads // 0' 2> /dev/null) || led=0
+
+            leads=$((leads + ${led:-0}))
+          done
+
+          if [ "$leads" = "256" ]; then
+            echo "Every partition is led after $attempt attempts."
+            exit 0
+          fi
+
+          echo "Attempt $attempt: $leads of 256 partitions led."
+          sleep 10
+        done
+
+        echo "The cluster did not claim every partition: $leads of 256."
         exit 1
 
     - name: Install newman

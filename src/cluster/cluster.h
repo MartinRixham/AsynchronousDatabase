@@ -17,6 +17,13 @@ namespace cluster
 
 	constexpr char term_header[] = "X-Asyncdb-Term";
 
+	// The key the tables are led by. A table is held by every node rather than by the copies of a
+	// partition, so it has no key of its own to hash: one constant is what gives every create and
+	// delete of a table the same leader, and one leader is what orders two creates of one name
+	// against each other and a create against the drop of a table it depends on. Ordering them is
+	// all it does — the operation still goes to every node, because every node holds every table.
+	constexpr char table_key[] = "/table";
+
 	// A request and the node it is for, so that several different ones can be asked at once.
 	struct enquiry
 	{

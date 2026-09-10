@@ -31,6 +31,17 @@ namespace
 		return router::error_response("table_not_found", "No table named \"" + name + "\".");
 	}
 
+	// The request as the node that ordered it sends it on, which is the term it ordered it in and
+	// nothing else changed.
+	router::request carried(const router::request &request, int64_t term)
+	{
+		router::request ordered = request;
+
+		ordered.term = term;
+
+		return ordered;
+	}
+
 	router::response node_incomplete()
 	{
 		return router::error_response(
@@ -539,13 +550,9 @@ router::response router::router::route_record(
 			return nodes.send(lead->node, request);
 		}
 
-		::router::request ordered = request;
-
-		ordered.term = lead->term;
-
 		std::lock_guard<std::mutex> ordering(write_lock(record.key));
 
-		return write_record(ordered, name, record, replicas_of(request, where, record.key));
+		return write_record(carried(request, lead->term), name, record, replicas_of(request, where, record.key));
 	}
 
 	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
@@ -628,6 +635,51 @@ router::response router::router::read_record(const request &request, const std::
 	return answer;
 }
 
+router::router::ordering router::router::order_schema(const request &request)
+{
+	// A term is a leader having ordered this already, so the node it was sent to carries it out
+	// and no further.
+	if (request.term != 0)
+	{
+		if (!nodes.accept(cluster::table_key, request.term))
+		{
+			return ordering {
+				error_response("stale_leader", "The tables are led in a later term than the one that ordered this."),
+				{},
+				0
+			};
+		}
+
+		return ordering();
+	}
+
+	std::optional<cluster::leadership> lead = nodes.leader(cluster::table_key);
+
+	// No leadership at all is an instance that owns the whole keyspace, and it carries its own
+	// tables the way it always has.
+	if (!lead)
+	{
+		return ordering { std::nullopt, request.forwarded ? std::vector<std::string>() : nodes.peers(), 0 };
+	}
+
+	if (!lead->known)
+	{
+		return ordering { error_response("no_leader", "No node is leading the tables yet."), {}, 0 };
+	}
+
+	if (!lead->local)
+	{
+		if (request.forwarded)
+		{
+			return ordering { error_response("no_leader", "This node does not lead the tables."), {}, 0 };
+		}
+
+		return ordering { nodes.send(lead->node, request), {}, 0 };
+	}
+
+	return ordering { std::nullopt, nodes.peers(), lead->term };
+}
+
 router::response router::router::create_table(const request &request, const std::string &name)
 {
 	std::optional<boost::json::object> body = parse_body(request.body);
@@ -636,6 +688,18 @@ router::response router::router::create_table(const request &request, const std:
 	{
 		return error_response("invalid_body", "The body of a table is a JSON object.");
 	}
+
+	ordering order = order_schema(request);
+
+	if (order.answer)
+	{
+		return *order.answer;
+	}
+
+	// The tables are read, compared and written under the one lock every schema operation takes,
+	// so what this create is valid against is what the cluster held when it was carried out and
+	// not what it held when it arrived.
+	std::lock_guard<std::mutex> ordered(write_lock(cluster::table_key));
 
 	table::table table = table::parse_table(name, *body, table_names());
 
@@ -663,13 +727,22 @@ router::response router::router::create_table(const request &request, const std:
 		created = json_response(boost::beast::http::status::created, table.json);
 	}
 
-	std::optional<response> failure = broadcast(request);
+	std::optional<response> failure = nodes.send_all(order.peers, carried(request, order.term));
 
 	return failure ? *failure : created;
 }
 
 router::response router::router::delete_table(const request &request, const std::string &name)
 {
+	ordering order = order_schema(request);
+
+	if (order.answer)
+	{
+		return *order.answer;
+	}
+
+	std::lock_guard<std::mutex> ordered(write_lock(cluster::table_key));
+
 	if (!repository.has_table(name))
 	{
 		if (request.forwarded)
@@ -682,7 +755,7 @@ router::response router::router::delete_table(const request &request, const std:
 
 	repository.delete_table(name);
 
-	std::optional<response> failure = broadcast(request);
+	std::optional<response> failure = nodes.send_all(order.peers, carried(request, order.term));
 
 	return failure ? *failure : empty_response(boost::beast::http::status::no_content);
 }

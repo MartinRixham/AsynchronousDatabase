@@ -235,6 +235,27 @@ and a copy that has applied a write of one term refuses anything older:
 That is what stops a leader which lost its lease, but not its network, from
 writing behind the leader that replaced it.
 
+### The tables are led too
+
+A table is held by **every** node rather than by the copies of a partition, so
+it has no key of its own to hash. One constant stands in for it, and the leader
+of that constant's partition orders every create and every delete of a table:
+the same two hops a record write takes, the same term in `X-Asyncdb-Term`, and
+the same refusal from a node that has moved past it.
+
+Ordering is all it changes. The operation still goes to every node, because a
+record can only be written where its table is, and it is still idempotent, so
+running it again is still the remedy for a node that refused.
+
+**One key for all of them, rather than one per table name**, because what a
+create is valid against is every *other* table: `parse_table` refuses a
+dependency that names no table, and two nodes creating tables at once are two
+nodes deciding that against different graphs. One leader means a create is
+weighed against what the cluster held when it was carried out — and it is what
+stops two different creates of one name from being applied on two nodes at once,
+each refusing the other's and neither backing down. Table operations are rare
+and tables are dozens, so there is nothing to gain by spreading them.
+
 ## What a write and a read do
 
 A write travels in two hops, and the term is what tells them apart — a write
@@ -319,7 +340,7 @@ stays missing until the record is written again.
 | --- | --- |
 | `PUT`/`DELETE` `/table/{table}/key/{key}` | Ordered by the node **leading the key's partition**, which writes the copy in every zone. Every copy has to take it |
 | `GET`/`HEAD` `/table/{table}/key/{key}` | Answered by one copy: this node when it holds one, else the nearest that answers. A key this node holds nothing for is asked of the other copies |
-| `PUT`/`DELETE` `/table/{table}` | Carried out on **every** node: a record can only be written where its table is |
+| `PUT`/`DELETE` `/table/{table}` | Ordered by the node **leading the tables**, and carried out on **every** node from there: a record can only be written where its table is |
 | `GET` `/table`, `GET /table/{table}` | Answered where they are asked. Every node holds every table |
 | `GET` `/table/{table}/key` | Asked of **one zone** — this node's own — and the pages merged back into key order |
 | `DELETE` `/table/{table}/key` | Carried out on every node, because every node holds a share of the range |

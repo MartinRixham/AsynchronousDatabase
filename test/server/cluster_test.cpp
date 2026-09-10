@@ -578,6 +578,24 @@ TEST_F(cluster_test, a_write_is_ordered_by_the_node_that_leads_the_partition)
 	EXPECT_EQ(request(second, "GET", "/table/account/key/4821", "", true).body, "a value");
 }
 
+// A table is held by every node and led like a key, so a create that lands on a node which does
+// not lead the tables travels to the one that does, and every node has it from there.
+TEST_F(cluster_test, a_table_is_created_by_the_node_that_leads_the_tables)
+{
+	zone_the_cluster();
+	led_by(second, 7);
+
+	EXPECT_EQ(request(first, "PUT", "/table/account", "{}").code, 201);
+
+	EXPECT_EQ(get(first, "/table/account").code, 200);
+	EXPECT_EQ(get(second, "/table/account").code, 200);
+
+	EXPECT_EQ(request(first, "DELETE", "/table/account", "").code, 204);
+
+	EXPECT_EQ(get(first, "/table/account").code, 404);
+	EXPECT_EQ(get(second, "/table/account").code, 404);
+}
+
 // The fence, over a real socket: the term travels in a header, and a write ordered in a term the
 // node has moved past is refused rather than applied behind the leader that replaced it.
 TEST_F(cluster_test, a_write_ordered_in_a_term_that_has_passed_is_refused)

@@ -8,6 +8,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "api_error.h"
 #include "record/record.h"
@@ -93,6 +94,26 @@ namespace router
 			const cluster::placement &where);
 
 		response read_record(const request &request, const std::vector<std::string> &replicas);
+
+		// Whether this node carries a schema operation out, and what it does with it once it has.
+		// A table is not a record of any partition, so what orders one is the leader of
+		// cluster::table_key: the same two hops a record write takes, and the same term fencing
+		// the copies apply.
+		struct ordering
+		{
+			// Engaged when the answer is settled without this node carrying anything out: the
+			// leader's answer to a request forwarded to it, or the refusal of one that cannot be
+			// ordered anywhere.
+			std::optional<response> answer;
+
+			// The nodes the operation is carried on to. Every other node when this node is the
+			// one ordering it, and none when the node that ordered it sent it here.
+			std::vector<std::string> peers;
+
+			int64_t term = 0;
+		};
+
+		ordering order_schema(const request &request);
 
 		response create_table(const request &request, const std::string &name);
 

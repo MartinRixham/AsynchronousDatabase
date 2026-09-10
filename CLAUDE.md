@@ -301,12 +301,13 @@ this node is in). **Set none and nothing changes**: no thread is started, nothin
 the instance owns the whole keyspace, which is what every test that is not `cluster_test` runs as.
 Set the first two and the instance joins. **`ASYNCDB_UNLED_WRITES` is the fourth**, and the only one
 of them that is not about joining: false is a node taking a write only where a leader claimed in etcd
-ordered it, so a membership too small to claim anything — no etcd reached, or this node alone
-registered in it — answers `no_leader` rather than writing what nobody ordered. It defaults to true,
-which is the lone instance every test and `cmk run` serve, and the `Dockerfile` sets it false, because
-a container is a node of a cluster and one on its own there has lost the others. The four are read in
-one place, `cluster::from_environment()` in `cluster/etcd_cluster.h`, which fills a `cluster::config`:
-the endpoints, this node and its zone, that flag, and beside them the tunables nothing sets from
+ordered it — a table create or delete included, since the tables are led as well — so a membership
+too small to claim anything, no etcd reached or this node alone registered in it, answers
+`no_leader` rather than writing what nobody ordered. It defaults to true, which is the lone instance
+every test and `cmk run` serve, and the `Dockerfile` sets it false, because a container is a node of
+a cluster and one on its own there has lost the others. The four are read in one place,
+`cluster::from_environment()` in `cluster/etcd_cluster.h`, which fills a `cluster::config`: the
+endpoints, this node and its zone, that flag, and beside them the tunables nothing sets from
 outside — a ten second membership lease, the `/asyncdb/node/` and `/asyncdb/leader/` prefixes,
 `claims_per_refresh`, and three timeouts (two seconds to connect at all, thirty to finish, and five
 for etcd, which is on a shorter leash because a node that cannot reach it carries on serving what
@@ -545,10 +546,16 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   the node reading passes over it as it passes over one that said nothing. `router::is_incomplete` is
   that flag — set from `rebuild::outcome::whole`, cleared by a reconcile pass that settles, and
   reported in `/health` as `incomplete`, because a node holding less than it owns still serves what
-  it has and must stay in the load balancer. A table create or delete goes to *every* node,
-  because a record can only be written where its table is; a scan is asked of **one zone** — this
-  node's own, since a zone holds a copy of the whole keyspace — and merged back into key order,
-  falling back to another zone when a node of that one does not answer. A forwarded request carries
+  it has and must stay in the load balancer. A table create or delete is **ordered like a write
+  and carried to every node**: it is not a record of any partition, so what orders it is the leader
+  of `cluster::table_key`, one constant, and from there it goes to every node because a record can
+  only be written where its table is. `router::order_schema` is those two hops and the term fence,
+  and the leader holds `write_lock(cluster::table_key)` across the whole of one — the tables are
+  read, validated against and written under it, so a create is weighed against what the cluster
+  held when it was carried out rather than when it arrived, and two creates of one name cannot be
+  applied on two nodes at once. A scan is asked of **one zone** — this node's own, since a zone
+  holds a copy of the whole keyspace — and merged back into key order, falling back to another zone
+  when a node of that one does not answer. A forwarded request carries
   `X-Asyncdb-Forwarded` and is served where it lands, which is what stops two nodes bouncing it. A
   `GET /table/{table}/file` is the same thing by construction: it is answered out of the store it
   landed on and asks the membership nothing.
@@ -736,11 +743,14 @@ for every share below it.
 
 **`verify` is then a matrix of four, one stack each, `fail-fast: false`.** Each share
 `make create-stack`s `asyncdb-{one,two,three,four}` — `STACK` and `CHAOS_STACK` come from the matrix —
-waits for `/health` to name six nodes, runs `chaos/validate.sh` and `chaos/run.sh` over the
-experiments the matrix names it in `CHAOS_EXPERIMENTS`, and `make delete-stack`s it again whether
-they passed or not. **The share carrying `matrix.suites` also runs the Postman collection, the
-Playwright journeys and `perf/write.sh` / `perf/read.sh` first**, before anything has broken its
-stack. The shares are balanced by measured time — about ten minutes of experiments each out of the
+waits for `/health` to name six nodes **and then for those nodes' own `leads` to sum to 256**,
+asked of each instance over Run Command because `leads` is a node's own count and the load balancer
+answers from one of them — a membership is not yet a cluster that takes writes, and a suite that
+starts before the claims settle is answered `no_leader`. It then runs `chaos/validate.sh` and
+`chaos/run.sh` over the experiments the matrix names it in `CHAOS_EXPERIMENTS`, and
+`make delete-stack`s it again whether they passed or not. **The share carrying `matrix.suites` also
+runs the Postman collection, the Playwright journeys and `perf/write.sh` / `perf/read.sh` first**,
+before anything has broken its stack. The shares are balanced by measured time — about ten minutes of experiments each out of the
 forty the ten of them take, with the suites counting as four beside them — so all four land within a
 minute or two of twenty-three. `doc/pipeline/index.md` is the page. **An experiment nobody names in
 the matrix is an experiment nobody runs**: there is no default list in the workflow.

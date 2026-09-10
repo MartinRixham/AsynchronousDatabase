@@ -1551,6 +1551,180 @@ TEST(router_cluster_test, agree_to_a_forwarded_deletion_of_a_table_that_is_not_t
 	EXPECT_EQ(router.route(del("/table/account")).status, boost::beast::http::status::not_found);
 }
 
+// A table is a record of no partition, so what orders one is the leader of the tables, and a
+// create that lands anywhere else is sent there rather than carried out where it landed.
+TEST(router_cluster_test, create_a_table_through_the_node_that_leads_the_tables)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, there, 41);
+
+	router.route(put("/table/account", "{}"));
+
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, there);
+	EXPECT_EQ(nodes.sent()[0].second.term, 0);
+	EXPECT_FALSE(repository.has_table("account"));
+}
+
+// This node leads the tables, so this is where two creates of one name are decided between — and
+// every node is told the term the one that won was decided in.
+TEST(router_cluster_test, order_a_table_create_this_node_leads)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, here, 41);
+
+	EXPECT_EQ(router.route(put("/table/account", "{}")).status, boost::beast::http::status::created);
+	EXPECT_TRUE(repository.has_table("account"));
+
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, there);
+	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+}
+
+// Nothing leading the tables is a create with nowhere to be ordered, and it is refused rather
+// than carried out on whichever node happened to take it.
+TEST(router_cluster_test, refuse_a_table_create_when_nothing_leads_the_tables)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by_nobody(cluster::table_key);
+
+	router::response response = router.route(put("/table/account", "{}"));
+
+	EXPECT_EQ(error_code(response), "no_leader");
+	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
+	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_FALSE(repository.has_table("account"));
+}
+
+TEST(router_cluster_test, apply_a_table_create_the_leader_ordered)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, there, 60);
+
+	router::request forwarded = put("/table/account", "{}");
+
+	forwarded.forwarded = true;
+	forwarded.term = 60;
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::created);
+	EXPECT_TRUE(repository.has_table("account"));
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
+// The same fence a record write has: a leader that lost its lease and does not know it must not
+// create a table behind the leader that replaced it.
+TEST(router_cluster_test, refuse_a_table_create_ordered_in_a_term_that_has_passed)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.applied(cluster::table_key, 60);
+
+	router::request forwarded = put("/table/account", "{}");
+
+	forwarded.forwarded = true;
+	forwarded.term = 41;
+
+	EXPECT_EQ(error_code(router.route(forwarded)), "stale_leader");
+	EXPECT_FALSE(repository.has_table("account"));
+}
+
+// Two nodes disagreeing about who leads the tables must not bounce a create between them.
+TEST(router_cluster_test, refuse_a_table_create_sent_here_to_be_ordered_that_this_node_does_not_lead)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, there, 41);
+
+	router::request forwarded = put("/table/account", "{}");
+
+	forwarded.forwarded = true;
+
+	EXPECT_EQ(error_code(router.route(forwarded)), "no_leader");
+	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_FALSE(repository.has_table("account"));
+}
+
+// Dropping a table is ordered by the node that orders creating one, so a drop and a create of the
+// same name are carried out one after the other rather than at once on two nodes.
+TEST(router_cluster_test, delete_a_table_through_the_node_that_leads_the_tables)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, here, 41);
+
+	create_table(router, "account");
+	nodes.forget();
+
+	EXPECT_EQ(router.route(del("/table/account")).status, boost::beast::http::status::no_content);
+	EXPECT_FALSE(repository.has_table("account"));
+
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
+	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+}
+
+TEST(router_cluster_test, delete_a_table_the_leader_ordered_without_passing_it_on)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, there, 60);
+
+	router::request forwarded = del("/table/account");
+
+	forwarded.forwarded = true;
+	forwarded.term = 60;
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
+// Every schema operation takes one lock rather than the stripe its name falls in, because what a
+// create is valid against is every other table: two of them at once are two nodes disagreeing
+// about the graph, and a create validated against a table another node is dropping is the
+// dangling edge parse_table exists to refuse.
+TEST(router_cluster_test, order_concurrent_table_creates)
+{
+	repository::fake_repository repository;
+	counting_cluster nodes;
+	router::router router(repository, nodes);
+	std::vector<std::thread> creating;
+
+	nodes.led_by(cluster::table_key, here, 41);
+
+	for (size_t i = 0; i < 4; i++)
+	{
+		creating.push_back(std::thread(create_table, std::ref(router), "account" + std::to_string(i)));
+	}
+
+	for (size_t i = 0; i < creating.size(); i++)
+	{
+		creating[i].join();
+	}
+
+	EXPECT_EQ(nodes.most_at_once(), 1u);
+	EXPECT_TRUE(repository.has_table("account3"));
+}
+
 TEST(router_cluster_test, scan_every_node_and_answer_in_key_order)
 {
 	repository::fake_repository repository;

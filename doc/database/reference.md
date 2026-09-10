@@ -49,7 +49,7 @@ status — is what a client should branch on.
 | `invalid_cursor` | 400 | A cursor this instance did not issue, or a file resumed at something that is not base64 |
 | `invalid_partitions` | 400 | A [file](/database/cluster#moving-a-share-of-a-table) asked for with something that is not a set of this cluster's partitions |
 | `write_stalled` | 503 | RocksDB is applying back pressure |
-| `no_leader` | 503 | No node is [leading this key's partition](/database/cluster#one-leader-for-each-partition) yet. Run the write again |
+| `no_leader` | 503 | No node is [leading this key's partition](/database/cluster#one-leader-for-each-partition) — or, for a table create or delete, [the tables](/database/cluster#the-tables-are-led-too) — yet. Run the write again |
 | `node_incomplete` | 503 | The node asked holds less than it owns, so it cannot say the key is missing. A read is asked of the next copy instead; `/health` names the node it came from |
 | `stale_leader` | 409 | The write was ordered by a node that has since been replaced. Run it again |
 | `storage_error` | 500 | RocksDB returned an error |

@@ -67,7 +67,8 @@ itself by design — so the way to run them at once is to have several clusters,
      │           │           │           │
 ┌────┴────┐ ┌────┴────┐ ┌────┴────┐ ┌────┴────┐
 │asyncdb- │ │asyncdb- │ │asyncdb- │ │asyncdb- │  create-stack, and wait for
-│  one    │ │  two    │ │ three   │ │  four   │  /health to name six nodes
+│  one    │ │  two    │ │ three   │ │  four   │  six nodes leading 256
+│         │ │         │ │         │ │         │  partitions between them
 ├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤
 │         │ │ newman  │ │         │ │         │  the API, browser and load
 │         │ │playwrgt │ │         │ │         │  suites run on one share only —
@@ -281,7 +282,7 @@ harness as `STACK` and `CHAOS_STACK`:
 | --- | --- |
 | Checkout code, Configure AWS credentials | as above |
 | Deploy the stack | `make create-stack`, `wait stack-create-complete`, and the `Url` output into `$GITHUB_ENV`; sets the `created` output the teardown keys off |
-| Wait for the cluster to come up | `/asyncdb/health` until `.nodes` is **six**, ninety attempts ten seconds apart |
+| Wait for the cluster to come up | `/asyncdb/health` until `.nodes` is **six**, ninety attempts ten seconds apart, and then each node's own `leads` until they sum to **256**, thirty attempts ten seconds apart. A membership is not a cluster that can be written to: a write is ordered by [the leader of the key's partition](/database/cluster#one-leader-for-each-partition) and a table create by [the leader of the tables](/database/cluster#the-tables-are-led-too), so a suite that starts before the claims settle is answered `503 no_leader` by a cluster that is merely young. `leads` is a node's own count and the load balancer answers from one node, so the second wait asks **each instance** over Run Command, the way [`every_node_whole`](https://github.com/MartinRixham/AsynchronousDatabase/tree/master/chaos) does — a node that cannot be asked counts nothing and the wait goes round again |
 | Install newman, Run the API collection | `if: matrix.suites` — [the Postman collection](https://github.com/MartinRixham/AsynchronousDatabase/tree/master/api) against `$URL/asyncdb` |
 | Install the browser tests, Run the browser tests | `if: matrix.suites` — Playwright with `ASYNCDB_URL=$URL`, and an `upload-artifact@v4` of the report `if: failure()` |
 | Run the load tests | `if: matrix.suites` — `perf/write.sh` then `perf/read.sh`, twice over: sixty-three kilobyte requests a thread on thirty-two threads, then thirty-two two megabyte ones on eight, and a `DELETE` of `perf_load` once all four have run |
@@ -329,7 +330,7 @@ and both are measured:
 
 | | |
 | --- | --- |
-| `create-stack`, waiting for six nodes, and the teardown | **8m** — fixed, per stack, whatever it then runs |
+| `create-stack`, waiting for six nodes to lead every partition, and the teardown | **8m** — fixed, per stack, whatever it then runs. The claims settle in a pass or two of the membership thread, which is seconds after the sixth node registers |
 | `nodes-added`, the longest experiment | **9m30** — one experiment, one cluster, not divisible |
 
 Forty minutes of experiments and four of suites over four stacks is about ten
