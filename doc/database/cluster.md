@@ -195,6 +195,22 @@ same partitions and losing. Between them, the nodes of a fresh cluster settle it
 in a pass or two, and a partition nobody has claimed yet answers `no_leader` to a
 write in the meantime.
 
+A claim outlives the ownership it was made under. Nothing but a lease takes one
+away, and a membership change redraws which node holds which partition without
+any node losing its lease — so a node that has stopped holding a partition
+**gives its claim up**, and the node holding it now claims it on a later pass.
+Until it does, the partition is led by a node that keeps no copy of it, and the
+node that does keep one cannot claim it, because the key is there.
+
+The delete is conditional on the key still holding this node's own address, so a
+claim whose lease ran out between the read and the delete belongs to whichever
+node claimed it next and is left where it is. And a claim is given up on the
+*second* pass that finds it gone rather than the first: a membership read a
+moment out of date is a partition this node may be about to be given back, and
+dropping that one is a partition with no leader until somebody claims it again.
+Giving a claim up costs the round trip that claiming one does, and comes out of
+the same sixty-four.
+
 ### The term
 
 The revision etcd created the claim at is the **term**, and it travels with every

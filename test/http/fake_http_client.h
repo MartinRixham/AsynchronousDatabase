@@ -14,14 +14,30 @@ namespace http
 	// so both are guarded.
 	class fake_client : public client
 	{
+		struct reply
+		{
+			std::string url;
+
+			// The piece of the request body this answer is for, and nothing when it answers
+			// whatever the body is.
+			std::string body;
+
+			response answer;
+		};
+
 		mutable std::mutex mutex;
 
 		mutable std::vector<request> requests;
 
-		std::vector<std::pair<std::string, response>> answers;
+		std::vector<reply> answers;
 
 	public:
 		void answer(const std::string &url, const response &response);
+
+		// The same for a URL that is asked more than one thing: etcd's gateway is one URL for
+		// every range, and the key in the body is what tells them apart. The first answer that
+		// matches is the one given, so the one asking for a body goes in first.
+		void answer(const std::string &url, const std::string &containing, const response &response);
 
 		response send(const request &request, long timeout_seconds) const override;
 

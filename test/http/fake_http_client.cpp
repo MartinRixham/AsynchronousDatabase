@@ -2,7 +2,12 @@
 
 void http::fake_client::answer(const std::string &url, const response &response)
 {
-	answers.push_back(std::pair<std::string, http::response>(url, response));
+	answers.push_back(reply { url, "", response });
+}
+
+void http::fake_client::answer(const std::string &url, const std::string &containing, const response &response)
+{
+	answers.push_back(reply { url, containing, response });
 }
 
 http::response http::fake_client::send(const request &request, long timeout_seconds) const
@@ -13,9 +18,10 @@ http::response http::fake_client::send(const request &request, long timeout_seco
 
 	for (size_t i = 0; i < answers.size(); i++)
 	{
-		if (request.url.find(answers[i].first) != std::string::npos)
+		if (request.url.find(answers[i].url) != std::string::npos &&
+			(answers[i].body.empty() || request.body.find(answers[i].body) != std::string::npos))
 		{
-			return answers[i].second;
+			return answers[i].answer;
 		}
 	}
 

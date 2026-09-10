@@ -202,6 +202,27 @@ std::optional<etcd::claim> etcd::client::create(const std::string &key, const st
 	return read_claim(*response);
 }
 
+bool etcd::client::remove(const std::string &key, const std::string &value) const
+{
+	boost::json::object request {
+		{ "compare",
+		  boost::json::array { boost::json::object { { "key", base64::encode(key) },
+													 { "target", "VALUE" },
+													 { "result", "EQUAL" },
+													 { "value", base64::encode(value) } } } },
+		{ "success",
+		  boost::json::array { boost::json::object {
+			  { "requestDeleteRange", boost::json::object { { "key", base64::encode(key) } } } } } }
+	};
+
+	std::optional<boost::json::object> response = call("kv/txn", request, true);
+
+	return response &&
+		response->contains("succeeded") &&
+		response->at("succeeded").is_bool() &&
+		response->at("succeeded").as_bool();
+}
+
 std::map<std::string, std::string> etcd::client::range(const std::string &prefix) const
 {
 	boost::json::object request { { "key", base64::encode(prefix) },

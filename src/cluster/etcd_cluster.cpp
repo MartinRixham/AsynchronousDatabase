@@ -3,6 +3,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <memory>
+#include <set>
 #include <utility>
 
 #include <pthread.h>
@@ -424,6 +425,7 @@ void cluster::etcd_cluster::read_leaders()
 
 	std::map<std::string, std::string> held = etcd_client.range(configuration.leader_prefix);
 	std::map<size_t, leadership> known;
+	std::set<size_t> to_release;
 	size_t claims = 0;
 
 	size_t offset = ::cluster::score(configuration.node, "leader") % partition_count;
@@ -436,6 +438,34 @@ void cluster::etcd_cluster::read_leaders()
 
 		if (holder != held.end())
 		{
+			// Nothing but a lease takes a claim away, and a membership change moves a partition
+			// without any node losing its lease — so a claim outlives the ownership it was made
+			// under unless the node that made it gives it up. Until it does, the node that holds
+			// the partition now cannot claim it, because the key is there.
+			if (holder->second == configuration.node && !holds(*registered, partition))
+			{
+				// A round trip either way, so giving one up costs what claiming one does and is
+				// bounded with it.
+				if (releasing.count(partition) != 0 && claims < configuration.claims_per_refresh)
+				{
+					claims++;
+
+					if (etcd_client.remove(key, configuration.node))
+					{
+						DEBUG(
+							"Node " +
+							configuration.node +
+							" gave up partition " +
+							std::to_string(partition) +
+							", which it no longer holds.");
+
+						continue;
+					}
+				}
+
+				to_release.insert(partition);
+			}
+
 			// The term is not in the value, so a leadership read back from the range is the node
 			// alone until this instance claims it. Reading it routes a write; leading it fences one.
 			leadership led;
@@ -487,6 +517,8 @@ void cluster::etcd_cluster::read_leaders()
 				".");
 		}
 	}
+
+	releasing = to_release;
 
 	std::unique_lock<std::shared_mutex> lock(leader_mutex);
 

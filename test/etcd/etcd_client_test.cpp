@@ -401,3 +401,56 @@ TEST(etcd_client_test, fail_to_create_a_key_when_etcd_is_not_there)
 
 	EXPECT_FALSE(client.create("/asyncdb/leader/7", "http://asyncdb-1:8080", 12).has_value());
 }
+
+TEST(etcd_client_test, remove_a_key_this_node_still_holds)
+{
+	http::fake_client http;
+
+	http.answer(
+		"/v3/kv/txn",
+		http::answer(200, "application/json", "{\"header\":{\"revision\":\"62\"},\"succeeded\":true}"));
+
+	etcd::client client(http, { "http://etcd-1:2379" });
+
+	EXPECT_TRUE(client.remove("/asyncdb/leader/7", "http://asyncdb-1:8080"));
+
+	ASSERT_EQ(http.sent_to("/v3/kv/txn").size(), 1u);
+
+	boost::json::object sent = body_of(http.sent_to("/v3/kv/txn")[0]);
+	const boost::json::object &compared = sent.at("compare").as_array()[0].as_object();
+
+	// "Only while this key still holds this value", which is what keeps a node from deleting a
+	// claim another node made after its own lease ran out.
+	EXPECT_EQ(decoded(compared, "key"), "/asyncdb/leader/7");
+	EXPECT_EQ(compared.at("target").as_string(), "VALUE");
+	EXPECT_EQ(compared.at("result").as_string(), "EQUAL");
+	EXPECT_EQ(decoded(compared, "value"), "http://asyncdb-1:8080");
+
+	const boost::json::object &deleted =
+		sent.at("success").as_array()[0].as_object().at("requestDeleteRange").as_object();
+
+	EXPECT_EQ(decoded(deleted, "key"), "/asyncdb/leader/7");
+}
+
+// The comparison failed, so the key holds something else: another node claimed it, and the delete
+// that would have taken its leadership away did nothing.
+TEST(etcd_client_test, remove_no_key_that_holds_another_value)
+{
+	http::fake_client http;
+
+	http.answer(
+		"/v3/kv/txn",
+		http::answer(200, "application/json", "{\"header\":{\"revision\":\"62\"},\"succeeded\":false}"));
+
+	etcd::client client(http, { "http://etcd-1:2379" });
+
+	EXPECT_FALSE(client.remove("/asyncdb/leader/7", "http://asyncdb-1:8080"));
+}
+
+TEST(etcd_client_test, fail_to_remove_a_key_when_etcd_is_not_there)
+{
+	http::fake_client http;
+	etcd::client client(http, { "http://etcd-1:2379" });
+
+	EXPECT_FALSE(client.remove("/asyncdb/leader/7", "http://asyncdb-1:8080"));
+}

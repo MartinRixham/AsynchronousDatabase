@@ -48,6 +48,11 @@ namespace etcd
 
 		std::optional<claim> create(const std::string &key, const std::string &value, int64_t lease) const;
 
+		// Deleting a key only while it still holds the value it is given. That is what makes giving
+		// a claim up safe: a claim whose lease ran out between the range that read it and this call
+		// belongs to whichever node claimed it next, and that node is leading on it.
+		bool remove(const std::string &key, const std::string &value) const;
+
 		std::map<std::string, std::string> range(const std::string &prefix) const;
 
 		bool revoke(int64_t lease) const;

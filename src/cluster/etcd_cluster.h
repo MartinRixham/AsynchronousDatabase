@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <set>
 #include <shared_mutex>
 #include <thread>
 #include <vector>
@@ -76,6 +77,12 @@ namespace cluster
 		mutable std::shared_mutex leader_mutex;
 
 		std::map<size_t, leadership> leader_list;
+
+		// The partitions this node holds a claim on and no copy of, as the pass before this one
+		// found them. A claim is given up on the second pass that finds it rather than the first,
+		// so a membership read a moment out of date is not a partition left with no leader.
+		// Touched only by the membership thread.
+		std::set<size_t> releasing;
 
 		// One slot a partition rather than a map behind a lock: the count is fixed, so every write
 		// raises the term of its own partition and no write waits on a write of another.

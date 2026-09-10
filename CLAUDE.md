@@ -615,7 +615,13 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   with a transaction that only succeeds if nothing created the key, on the node's own membership
   lease — so a node that stops renewing stops leading. A node claims
   `claims_per_refresh` (64) partitions per pass, from an offset of its own name, so a cold start is
-  a pass or two rather than 256 round trips. The **term** is the etcd revision that
+  a pass or two rather than 256 round trips. **A claim outlives the ownership it was made under**:
+  nothing but a lease takes one away, and a membership change moves a partition without any node
+  losing its lease — so a node gives up the claim on a partition it has stopped holding, deleting
+  the key only while it still holds that node's own address and on the second pass that finds it
+  gone rather than the first. Without that, a node added to a cluster leads nothing, ever, and the
+  nodes it took partitions from lead what they keep no copy of. Giving one up costs the round trip
+  claiming one does and comes out of the same 64. The **term** is the etcd revision that
   created the claim; it travels in `X-Asyncdb-Term` on every write the leader orders, and a copy
   refuses anything older than the newest term it has applied (`stale_leader`, 409). A partition
   nothing leads yet answers `no_leader` (503) to a write and serves reads as normal. **The term is

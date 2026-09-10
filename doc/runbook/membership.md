@@ -215,12 +215,19 @@ Reads never wait for a leader, which is why this presents as a write-only outage
 | Sums to less, and rising | A cold cluster still claiming. 64 per node per pass — wait a pass or two |
 | `0` everywhere, not rising | No node can write to etcd. Claims are transactions, so a read-only etcd claims nothing |
 | Sums to 256 but a write still says `no_leader` | The leader of that partition is a node this one cannot reach, or the two disagree about the membership |
+| Sums to 256, and a node that just joined leads none of it | The nodes it took partitions from have not given those claims up yet. Two passes, so seconds — longer, and they cannot write to etcd |
 
 A node claims only partitions it holds a copy of, on its own lease, and only
 while it *has* a lease — a node with no lease has nothing to claim on and would
 otherwise leave a leadership behind that nothing ever expires. So `leads: 0`
 everywhere is nearly always etcd, and the fix is
 [etcd cannot be reached](#etcd-cannot-be-reached).
+
+It gives up what it stops holding, too, which is what moves leadership after a
+resize: nothing but a lease takes a claim away, so a node that kept its lease
+through a membership change would otherwise lead partitions it holds no copy of
+for as long as it ran, and the nodes that took those partitions would lead
+nothing at all.
 
 **Do not try to force an election.** There is no way to, and none is needed: a
 partition nothing leads is claimed by whichever of its copies gets to it first on

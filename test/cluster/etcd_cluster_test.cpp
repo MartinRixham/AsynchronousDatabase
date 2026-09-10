@@ -1,6 +1,10 @@
+#include <algorithm>
+#include <chrono>
 #include <cstdlib>
+#include <map>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -45,6 +49,30 @@ namespace
 		for (size_t i = 0; i < sent.size(); i++)
 		{
 			boost::json::object body = boost::json::parse(sent[i].body).as_object();
+
+			keys.insert(
+				base64::decode(std::string(body.at("compare").as_array()[0].as_object().at("key").as_string()))
+					.value_or(""));
+		}
+
+		return keys;
+	}
+
+	// Which partitions a node gave up, read back out of what it sent to etcd: a delete of a leader
+	// key rather than a create of one.
+	std::set<std::string> released(const http::fake_client &http)
+	{
+		std::set<std::string> keys;
+		std::vector<http::request> sent = http.sent_to("/v3/kv/txn");
+
+		for (size_t i = 0; i < sent.size(); i++)
+		{
+			boost::json::object body = boost::json::parse(sent[i].body).as_object();
+
+			if (!body.at("success").as_array()[0].as_object().contains("requestDeleteRange"))
+			{
+				continue;
+			}
 
 			keys.insert(
 				base64::decode(std::string(body.at("compare").as_array()[0].as_object().at("key").as_string()))
@@ -116,6 +144,75 @@ namespace
 				200,
 				"application/json",
 				"{\"header\":{\"revision\":\"" + std::to_string(revision) + "\"},\"succeeded\":true}"));
+	}
+
+	// The leader keys as etcd holds them, which is a partition and the node leading it. The first
+	// answer that matches is the one given, so this goes in before the membership: both are a
+	// range, and the prefix in the body is what tells them apart.
+	void answer_leaders(http::fake_client *http, const std::map<size_t, std::string> &held)
+	{
+		boost::json::array kvs;
+
+		for (std::map<size_t, std::string>::const_iterator it = held.begin(); it != held.end(); ++it)
+		{
+			kvs.push_back(boost::json::object {
+				{ "key", base64::encode("/asyncdb/leader/" + std::to_string(it->first)) },
+				{ "value", base64::encode(it->second) }
+			});
+		}
+
+		http->answer(
+			"/v3/kv/range",
+			base64::encode("/asyncdb/leader/"),
+			http::answer(200, "application/json", boost::json::serialize(boost::json::object { { "kvs", kvs } })));
+	}
+
+	// A partition of a zone that a node of it owns, or one that it does not. Which partition is
+	// which is the hashing's business, so a test asks for one rather than naming it.
+	size_t partition_owned(const std::vector<std::string> &zone, const std::string &node, bool owned)
+	{
+		for (size_t i = 0; i < cluster::partition_count; i++)
+		{
+			if ((cluster::owner_of(cluster::partition_name(i), zone) == node) == owned)
+			{
+				return i;
+			}
+		}
+
+		return cluster::partition_count;
+	}
+
+	// A pass of the membership thread reads the leaders once, and a lease of a second is the
+	// shortest tick it has. Seeing the range of a pass means every pass before it has finished.
+	size_t passes(const http::fake_client &http)
+	{
+		std::vector<http::request> sent = http.sent_to("/v3/kv/range");
+		std::string prefix = base64::encode("/asyncdb/leader/");
+
+		return static_cast<size_t>(
+			std::count_if(sent.begin(), sent.end(), [&prefix](const http::request &asked) {
+				return asked.body.find(prefix) != std::string::npos;
+			}));
+	}
+
+	bool wait_for_passes(const http::fake_client &http, size_t wanted)
+	{
+		for (size_t i = 0; i < 500 && passes(http) < wanted; i++)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+
+		return passes(http) >= wanted;
+	}
+
+	bool wait_for_a_release(const http::fake_client &http)
+	{
+		for (size_t i = 0; i < 500 && released(http).empty(); i++)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+
+		return !released(http).empty();
 	}
 
 	void answer_etcd(http::fake_client *http, const std::vector<cluster::member> &nodes)
@@ -684,6 +781,82 @@ TEST(etcd_cluster_test, claim_only_so_many_partitions_on_one_pass)
 	// What was claimed is led, and what was not is a partition with no leader — a write of which
 	// waits for the pass that claims it.
 	EXPECT_EQ(claimed(http).size(), 4u);
+
+	cluster.stop();
+}
+
+// Nothing but a lease takes a claim away, and a membership change moves a partition without any
+// node losing its lease — so a node that has stopped holding a partition is a node leading what it
+// keeps no copy of, and the node holding it now cannot claim it while the key is there.
+TEST(etcd_cluster_test, give_up_a_claim_on_a_partition_it_no_longer_holds)
+{
+	http::fake_client http;
+	std::vector<std::string> zone { one, two };
+	size_t moved = partition_owned(zone, one, false);
+
+	ASSERT_LT(moved, cluster::partition_count);
+
+	// This node's own claim on a partition the other node of its zone owns, which is what a zone
+	// that grew leaves behind.
+	answer_leaders(&http, { { moved, one } });
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "a" } });
+	answer_elections(&http, 41);
+
+	cluster::config config = configuration(one, "a");
+
+	// The whole ring on every pass, so which pass gives the claim up is not a question of where
+	// the walk got to; and the shortest tick the membership thread has.
+	config.claims_per_refresh = cluster::partition_count;
+	config.lease_seconds = 1;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	// Not on the pass that finds it. A membership this node read a moment out of date is a claim
+	// it may be about to own again, and giving that one up is a partition with no leader until
+	// somebody claims it back.
+	EXPECT_TRUE(released(http).empty());
+
+	ASSERT_TRUE(wait_for_a_release(http));
+
+	// etcd answers the same range on every pass, so the claim is still there to be found: what
+	// the node did about it is what it sent.
+	EXPECT_EQ(released(http), std::set<std::string> { "/asyncdb/leader/" + std::to_string(moved) });
+
+	cluster.stop();
+}
+
+// The two a pass leaves alone: a partition this node still holds, and one another node claimed.
+TEST(etcd_cluster_test, keep_a_claim_on_a_partition_it_holds_and_one_it_never_made)
+{
+	http::fake_client http;
+	std::vector<std::string> zone { one, two };
+	size_t held = partition_owned(zone, one, true);
+	size_t theirs = partition_owned(zone, one, false);
+
+	ASSERT_LT(held, cluster::partition_count);
+	ASSERT_LT(theirs, cluster::partition_count);
+
+	answer_leaders(&http, { { held, one }, { theirs, two } });
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "a" } });
+	answer_elections(&http, 41);
+
+	cluster::config config = configuration(one, "a");
+
+	config.claims_per_refresh = cluster::partition_count;
+	config.lease_seconds = 1;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	// Two passes done, which is more than giving a claim up takes.
+	ASSERT_TRUE(wait_for_passes(http, 3));
+
+	EXPECT_TRUE(released(http).empty());
 
 	cluster.stop();
 }

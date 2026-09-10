@@ -94,6 +94,15 @@ for joined in $(comm -13 <(echo "$before") <(echo "$after")); do
 		"$(ssm_run "$joined" "$(container_logs) | grep -i rebuil | tail -1")"
 done
 
+# What a resize has to move besides the records. Nothing but a lease takes a claim away, so a node
+# that joins a tier whose 256 claims are all held leads nothing at all until the nodes it took
+# partitions from give theirs up — and no read would ever show it, because only a write needs a
+# leader. It is asked of the joined nodes themselves: `leads` is a node's own count, and the load
+# balancer answers from whichever node it picked.
+for joined in $(comm -13 <(echo "$before") <(echo "$after")); do
+	await_node "$joined" '.leads > 0' "$settle" "$joined leads partitions of its own once it has joined"
+done
+
 # Written while the tier is nine wide, so it lands on the owners the wider membership names. What
 # the shrink does to it is the point of the second half.
 grown=grown-$RANDOM
