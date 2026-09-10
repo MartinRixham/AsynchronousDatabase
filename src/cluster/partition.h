@@ -17,8 +17,9 @@ namespace cluster
 	// for each: the number is fixed for the life of a cluster, because changing it moves every key.
 	constexpr size_t partition_count = 256;
 
-	// The partition a key belongs to. The key alone decides, so the same key of two tables is in
-	// one partition and is led, held and moved as one thing.
+	// The partition a key belongs to. The partition key alone decides, so the same key of two
+	// tables is in one partition and is led, held and moved as one thing — and so is every record
+	// of one partition key, whatever it sorts under.
 	size_t partition_of(const std::string &key);
 
 	// The partitions a node holds, as a set. A node asking another for its share of a table names

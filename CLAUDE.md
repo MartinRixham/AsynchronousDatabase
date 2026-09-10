@@ -420,8 +420,8 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 - **`url`** splits the target at its unencoded slashes *before* percent-decoding each segment, so a key
   containing `/`, `?` or a zero byte stays one segment. Query values are decoded the same way.
 - **`router::router`** matches routes by hand — `/health`, `/table`, `/table/{table}`,
-  `/table/{table}/key`, `/table/{table}/key/{key}`, `/table/{table}/file` and
-  `/table/{table}/split` — and returns a
+  `/table/{table}/key`, `/table/{table}/key/{key}`, `/table/{table}/key/{key}/{sort}`,
+  `/table/{table}/file` and `/table/{table}/split` — and returns a
   `router::response` (status, content type, and either a `boost::json::object` or the raw text of a
   value). `router/api_error.cpp`
   is the one place a documented error code is mapped to a status.
@@ -497,6 +497,14 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 - `record::parse_record` enforces the limits (4 KiB of key, 16 MiB of value) and that a key is valid
   UTF-8. A value is never looked at — every string is a value, and the empty one is told from a missing
   key by the status code, which is why `read_record` returns a `std::optional`.
+- **A key is a partition key and a sort key, composed into one key the store holds.**
+  `record::compose_key` is `partition + '\0' + sort`, and the separator is dropped when the sort key
+  is empty, so a key of one part is those bytes and no more. It is the **first** zero byte that
+  separates (`record::partition_key`, `record::sort_key`), so a key carrying one *is* its two halves —
+  `/key/a/b` and `/key/a%00b` are one record, which is why there is no error code for this and
+  nothing to reject. The 4 KiB is over the whole composed key. **The separator sorts below every
+  other byte**, so a partition key's records are together in the store, in sort key order, and
+  before every key the partition key is a prefix of.
 - `scan::range` is the parsed query of a scan or a range delete, and a cursor is base64 of
   `{ "k": last key, "s": instance }`; the instance is what makes a cursor this instance did not issue
   refusable.
@@ -508,8 +516,14 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   answered within it but a zone of two nodes is two pages of it. **A record larger than the whole
   budget is still returned, alone**, or a scan could never get past that key. `fake_repository`
   walks the same way, so a unit test sees the page a client really gets.
-- **Partitioning is by key alone, never by table**, so the same key of two tables is in one
-  partition and a record and the records derived from it are one hop. A write is ordered by the node
+- **Partitioning is by the partition key alone, never by the table and never by the sort key**, so
+  the same key of two tables is in one partition and a record and the records derived from it are
+  one hop — and so is every record of one partition key, however many of them there are.
+  `cluster::partition_of` takes the composed key and hashes the partition half of it, which is what
+  makes every call site right without asking: the export walk, the reconcile pass and the leader
+  claim all hand it a key out of the store. The cost is that **a partition key is never split**: it
+  is the unit the cluster balances, so one with far more under it than the others is a node with
+  more of the table than the others. A write is ordered by the node
   **leading** the key's partition, which writes the copy in every zone and every one of them has to
   take it — all of them at once, so a copy that refuses is a copy the others were written beside
   rather than ahead of; a read goes to one copy — this node when it

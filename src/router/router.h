@@ -57,7 +57,11 @@ namespace router
 
 		response route_split(const request &request, const std::string &name);
 
-		response route_record(const request &request, const std::string &name, const std::string &key);
+		response route_record(
+			const request &request,
+			const std::string &name,
+			const std::string &partition,
+			const std::string &sort);
 
 		// The lock that orders writes to this key. Only the leader of the key's partition takes
 		// it: a copy applies the writes one leader sends it, in the order it is sent them.

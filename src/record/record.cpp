@@ -2,6 +2,23 @@
 
 #include "record.h"
 
+std::string record::compose_key(const std::string &partition, const std::string &sort)
+{
+	return sort.empty() ? partition : partition + sort_separator + sort;
+}
+
+std::string_view record::partition_key(const std::string &key)
+{
+	return std::string_view(key).substr(0, key.find(sort_separator));
+}
+
+std::string_view record::sort_key(const std::string &key)
+{
+	size_t separator = key.find(sort_separator);
+
+	return separator == std::string::npos ? std::string_view() : std::string_view(key).substr(separator + 1);
+}
+
 record::record record::parse_key(const std::string &key)
 {
 	if (!is_valid_utf8(key))

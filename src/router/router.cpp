@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <boost/json.hpp>
 #include <boost/beast.hpp>
@@ -62,7 +63,13 @@ namespace
 
 	boost::json::object to_json(const record::record &record, bool values)
 	{
-		boost::json::object json { { "key", boost::json::string(record.key) } };
+		boost::json::object json { { "key", boost::json::string(record::partition_key(record.key)) } };
+		std::string_view sort = record::sort_key(record.key);
+
+		if (!sort.empty())
+		{
+			json["sort"] = boost::json::string(sort);
+		}
 
 		if (values)
 		{
@@ -117,6 +124,7 @@ namespace
 
 			const boost::json::object &json = answered[i].as_object();
 			std::string value;
+			std::string sort;
 
 			if (!json.contains("key") || !json.at("key").is_string())
 			{
@@ -128,7 +136,14 @@ namespace
 				value = std::string(json.at("value").as_string());
 			}
 
-			page.records.push_back(record::valid_record(std::string(json.at("key").as_string()), value));
+			if (json.contains("sort") && json.at("sort").is_string())
+			{
+				sort = std::string(json.at("sort").as_string());
+			}
+
+			page.records.push_back(
+				record::valid_record(
+					record::compose_key(std::string(json.at("key").as_string()), sort), value));
 		}
 
 		page.has_more = response.json.contains("next");
@@ -271,7 +286,12 @@ router::response router::router::route(const request &request)
 
 	if (path.size() == 4)
 	{
-		return route_record(request, path[1], path[3]);
+		return route_record(request, path[1], path[3], "");
+	}
+
+	if (path.size() == 5)
+	{
+		return route_record(request, path[1], path[3], path[4]);
 	}
 
 	return not_found("route for this path");
@@ -448,8 +468,10 @@ router::response router::router::route_split(const request &request, const std::
 router::response router::router::route_record(
 	const request &request,
 	const std::string &name,
-	const std::string &key)
+	const std::string &partition,
+	const std::string &sort)
 {
+	std::string key = record::compose_key(partition, sort);
 	record::record record = request.method == boost::beast::http::verb::put
 		? record::parse_record(key, request.body)
 		: record::parse_key(key);

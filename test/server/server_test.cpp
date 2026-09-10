@@ -227,6 +227,30 @@ TEST_F(server_test, refuse_to_delete_a_record_of_an_immutable_table)
 // The documented limit is a value of 16 MiB and Beast's own default is a request body of one, so
 // without a body limit of its own the parser ends the read in an error and the session closes the
 // connection with no response at all.
+TEST_F(server_test, write_then_read_a_record_of_two_parts)
+{
+	request("PUT", "/table/account", "{}");
+
+	result written = request("PUT", "/table/account/key/4821/2019", "Eleanor Whitmore");
+
+	EXPECT_EQ(written.code, 204);
+
+	EXPECT_EQ(get("/table/account/key/4821/2019").body, "Eleanor Whitmore");
+	EXPECT_EQ(get("/table/account/key/4821").code, 404);
+}
+
+// A slash a key carries is percent encoded, and the one between the halves of a key is not, so
+// which is which survives a round trip over a socket.
+TEST_F(server_test, a_slash_in_a_key_is_not_the_slash_between_its_halves)
+{
+	request("PUT", "/table/account", "{}");
+	request("PUT", "/table/account/key/4821%2F2019", "one half");
+	request("PUT", "/table/account/key/4821/2019", "two halves");
+
+	EXPECT_EQ(get("/table/account/key/4821%2F2019").body, "one half");
+	EXPECT_EQ(get("/table/account/key/4821/2019").body, "two halves");
+}
+
 TEST_F(server_test, write_then_read_the_largest_value)
 {
 	request("PUT", "/table/account", "{}");

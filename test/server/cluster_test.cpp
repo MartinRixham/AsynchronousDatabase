@@ -273,6 +273,23 @@ TEST_F(cluster_test, a_record_is_written_to_the_node_that_owns_its_key)
 	EXPECT_EQ(request(stranger("4821"), "GET", "/table/account/key/4821", "", true).code, 404);
 }
 
+// What the split is for: every record of one partition key is in one partition, so one node holds
+// them all however many there are, and a record and the records derived from it are one hop.
+TEST_F(cluster_test, records_of_one_partition_key_are_held_by_one_node)
+{
+	request(first, "PUT", "/table/account", "{}");
+
+	for (size_t i = 0; i < 20; i++)
+	{
+		std::string year = std::to_string(2000 + i);
+
+		request(first, "PUT", "/table/account/key/4821/" + year, "a year of it");
+
+		EXPECT_TRUE(holds(owner("4821"), "4821/" + year));
+		EXPECT_FALSE(holds(stranger("4821"), "4821/" + year));
+	}
+}
+
 // An empty value is a value, and it is told from a missing key by the status, which has to survive
 // the hop to the node that owns the key.
 TEST_F(cluster_test, an_empty_value_survives_the_hop)

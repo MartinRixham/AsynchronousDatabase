@@ -20,6 +20,19 @@ GET /table/account/key?prefix=user:&limit=100
 `records` is in key order. `next` is a cursor, and its absence means the range
 is exhausted.
 
+A record with a [sort key](/database/records#partition-keys-and-sort-keys)
+carries its two halves as two fields, which is what a client puts back into a
+path. A record of one part has no `sort` at all:
+
+```json
+{
+  "records": [
+    { "key": "4821", "sort": "2026-01-31", "value": "..." },
+    { "key": "4821", "sort": "2026-02-28", "value": "..." }
+  ]
+}
+```
+
 A scan is the one place a value travels inside a document rather than as the
 body, so it appears as what it is: a JSON string. Keys and values are strings
 and [every string is valid](/database/records#keys-and-values), so a value that
@@ -35,6 +48,23 @@ is itself a JSON document arrives here escaped, and is the client's to parse.
 | `reverse` | `true` walks the range from `to` back towards `from` |
 | `limit` | At most this many records. Default 100, maximum 1000 — **and a page may be shorter**, see below |
 | `values` | `false` returns keys only |
+
+**The bounds range over the whole key**, both halves and the zero byte between
+them, because that is the order the store holds. A partition key sorts below
+every key under it, so `prefix=4821` is the record `4821`, everything sorting
+under it — and `48210` as well, because `prefix` is a prefix of the bytes and
+knows nothing about halves. To ask for one partition key and nothing else, bound
+it below the byte after the separator:
+
+```http
+GET /table/transaction/key?from=4821&to=4821%01
+```
+
+Every one of those records is on
+[one node](/database/cluster#which-node-owns-a-key), because a partition key is
+never split — so however large the cluster is, one node answers the range and
+the rest of its zone answers nothing. A scan's bounds are keys and not
+partitions, so the rest of the zone is still asked.
 
 `from` inclusive and `to` exclusive is RocksDB's own convention, and it is the
 one that makes ranges compose: the `to` of one page is the `from` of the next
@@ -101,10 +131,12 @@ decided when the keys are designed, not when the query is written. Two rules
 carry most of it:
 
 - **Put in the key, in order, what you will want to scan by.** A transaction
-  keyed `{account}\0{timestamp}` answers "this account's transactions, newest
-  first" with one reverse scan. Keyed `{timestamp}\0{account}` it answers "every
-  account's transactions in time order" instead, and answers the first question
-  only by reading everything.
+  with partition key `{account}` and sort key `{timestamp}` answers "this
+  account's transactions, newest first" with one reverse scan — and answers it
+  on [one node](/database/cluster#which-node-owns-a-key), because a partition
+  key is never split. The other way round it answers "every account's
+  transactions in time order" instead, from every node at once, and answers the
+  first question only by reading everything.
 - **A prefix scan is only cheap if the prefix is a prefix.** Asking for keys
   *containing* something is a full scan with the service throwing most of it
   away, which is why the API does not offer it: it would look like a query and

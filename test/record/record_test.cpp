@@ -98,3 +98,65 @@ TEST(record_test, invalid_utf8)
 	// A surrogate is not a code point.
 	EXPECT_FALSE(record::is_valid_utf8("\xed\xa0\x80"));
 }
+
+TEST(record_test, a_key_of_one_part_is_the_bytes_it_was_given)
+{
+	EXPECT_EQ(record::compose_key("4821", ""), "4821");
+}
+
+TEST(record_test, a_key_of_two_parts_carries_a_separator_between_them)
+{
+	EXPECT_EQ(record::compose_key("4821", "2019"), std::string("4821\0" "2019", 9));
+}
+
+TEST(record_test, the_halves_of_a_key_come_back)
+{
+	std::string key = record::compose_key("4821", "2019");
+
+	EXPECT_EQ(record::partition_key(key), "4821");
+	EXPECT_EQ(record::sort_key(key), "2019");
+}
+
+TEST(record_test, a_key_of_one_part_sorts_under_nothing)
+{
+	EXPECT_EQ(record::partition_key("4821"), "4821");
+	EXPECT_EQ(record::sort_key("4821"), "");
+}
+
+// A key written as one string with a zero byte in it and the same key written as two halves are
+// one record, because it is the first zero byte that separates either way.
+TEST(record_test, a_key_carrying_a_zero_byte_is_its_two_halves)
+{
+	std::string key("4821\0" "2019", 9);
+
+	EXPECT_EQ(record::compose_key(key, ""), record::compose_key("4821", "2019"));
+	EXPECT_EQ(record::partition_key(key), "4821");
+	EXPECT_EQ(record::sort_key(key), "2019");
+}
+
+// The sort key of a key of two parts may carry one, because it is only the first that separates.
+TEST(record_test, a_sort_key_may_carry_a_zero_byte)
+{
+	std::string key = record::compose_key("4821", std::string("2019\0" "1", 6));
+
+	EXPECT_EQ(record::partition_key(key), "4821");
+	EXPECT_EQ(record::sort_key(key), std::string("2019\0" "1", 6));
+}
+
+// The separator sorts below every other byte, which is what makes the store's order the order of
+// the pair: every record of a partition key is together, in sort key order, and before any key the
+// partition key is a prefix of.
+TEST(record_test, keys_sort_as_the_pair_they_are)
+{
+	EXPECT_LT(record::compose_key("a", ""), record::compose_key("a", "b"));
+	EXPECT_LT(record::compose_key("a", "b"), record::compose_key("a", "c"));
+	EXPECT_LT(record::compose_key("a", "c"), record::compose_key("ab", ""));
+}
+
+TEST(record_test, a_key_of_two_parts_is_counted_in_the_bytes_of_both)
+{
+	std::string half(record::max_key_size / 2, 'k');
+
+	EXPECT_TRUE(record::parse_key(record::compose_key(half, half.substr(1))).is_valid);
+	EXPECT_EQ(record::parse_key(record::compose_key(half, half)).code, "key_too_large");
+}

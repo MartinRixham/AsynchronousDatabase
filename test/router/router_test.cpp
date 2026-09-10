@@ -2321,3 +2321,135 @@ TEST(router_test, answers_a_file_of_no_more_of_the_table_than_it_was_asked_for)
 	EXPECT_EQ(1u, response.file.records);
 	EXPECT_FALSE(response.file.next.empty());
 }
+
+TEST(router_test, write_then_read_a_record_of_two_parts)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+
+	router::response written = router.route(put("/table/account/key/4821/2019", "Eleanor Whitmore"));
+
+	EXPECT_EQ(written.status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router.route(get("/table/account/key/4821/2019")).text, "Eleanor Whitmore");
+}
+
+// The sort key is part of what a record is, so a partition key of its own is a key of its own.
+TEST(router_test, a_partition_key_and_a_key_sorting_under_it_are_different_records)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	router.route(put("/table/account/key/4821", "the account"));
+	router.route(put("/table/account/key/4821/2019", "a year of it"));
+
+	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "the account");
+	EXPECT_EQ(router.route(get("/table/account/key/4821/2019")).text, "a year of it");
+}
+
+TEST(router_test, delete_a_record_of_two_parts)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	router.route(put("/table/account/key/4821/2019", "Eleanor Whitmore"));
+
+	EXPECT_EQ(router.route(del("/table/account/key/4821/2019")).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router.route(get("/table/account/key/4821/2019")).status, boost::beast::http::status::not_found);
+	EXPECT_EQ(router.route(get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
+}
+
+// The two halves are one key with a zero byte between them, so the two ways of writing it down
+// name one record.
+TEST(router_test, a_key_of_two_parts_is_the_key_carrying_a_zero_byte)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	router.route(put("/table/account/key/4821/2019", "Eleanor Whitmore"));
+
+	EXPECT_EQ(router.route(get("/table/account/key/4821%002019")).text, "Eleanor Whitmore");
+}
+
+TEST(router_test, a_scan_says_which_half_of_a_key_is_which)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	router.route(put("/table/account/key/4821/2019", "a year of it"));
+
+	boost::json::object record =
+		router.route(get("/table/account/key")).json.at("records").as_array()[0].as_object();
+
+	EXPECT_EQ(record.at("key"), "4821");
+	EXPECT_EQ(record.at("sort"), "2019");
+	EXPECT_EQ(record.at("value"), "a year of it");
+}
+
+TEST(router_test, a_scan_of_keys_of_one_part_says_nothing_about_sorting)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	write_record(router, "account", "4821", "Eleanor Whitmore");
+
+	boost::json::object record =
+		router.route(get("/table/account/key")).json.at("records").as_array()[0].as_object();
+
+	EXPECT_EQ(record.at("key"), "4821");
+	EXPECT_FALSE(record.contains("sort"));
+}
+
+// What the separator buys a scan: a partition key's records are together and in sort key order,
+// and they are before every key the partition key is a prefix of.
+TEST(router_test, records_of_one_partition_key_scan_together_in_sort_key_order)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	router.route(put("/table/account/key/48210", "another account"));
+	router.route(put("/table/account/key/4821/2020", "a later year"));
+	router.route(put("/table/account/key/4821/2019", "a year"));
+	router.route(put("/table/account/key/4821", "the account"));
+
+	std::vector<std::string> values;
+	boost::json::array records = router.route(get("/table/account/key")).json.at("records").as_array();
+
+	for (size_t i = 0; i < records.size(); i++)
+	{
+		values.push_back(std::string(records[i].as_object().at("value").as_string()));
+	}
+
+	EXPECT_EQ(values, (std::vector<std::string> { "the account", "a year", "a later year", "another account" }));
+}
+
+// One partition key and nothing else is a bounded range, because a prefix is a prefix of the
+// bytes: it cannot tell the separator from a key that carries those bytes and more.
+TEST(router_test, a_partition_key_and_nothing_else_is_a_bounded_range)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	router.route(put("/table/account/key/4821", "the account"));
+	router.route(put("/table/account/key/4821/2019", "a year"));
+	router.route(put("/table/account/key/48210", "another account"));
+
+	EXPECT_EQ(keys(router.route(get("/table/account/key?from=4821&to=4821%01"))).size(), 2u);
+	EXPECT_EQ(keys(router.route(get("/table/account/key?prefix=4821"))).size(), 3u);
+}

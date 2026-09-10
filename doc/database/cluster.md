@@ -116,13 +116,19 @@ on the same node, so a record and the records derived from it under the same key
 are one hop, not two. That is the shape asyncdb is for: a table and the tables
 [derived from it](/database/tables#dependencies).
 
+**And of the key, only its partition key.** A
+[sort key](/database/records#partition-keys-and-sort-keys) decides where a record
+sits in the store and nothing about where it is: every record of one partition
+key is on one node, so a scan of them is one node's answer rather than a
+fan-out's.
+
 ## Partitions
 
 A key belongs to a **partition** — 256 of them, fixed for the life of a cluster
 — and the partition is what a node holds, leads and moves:
 
 ```
-partition(key) = hash(key) mod 256
+partition(key) = hash(partition key of key) mod 256
 ```
 
 The number is not configurable, because changing it moves every key.

@@ -1,6 +1,8 @@
 #include <cctype>
 #include <map>
+#include <string_view>
 
+#include "record/record.h"
 #include "partition.h"
 
 namespace
@@ -22,7 +24,7 @@ namespace
 
 	constexpr uint64_t fnv_prime = 1099511628211ULL;
 
-	uint64_t hash(const std::string &text, uint64_t seed)
+	uint64_t hash(std::string_view text, uint64_t seed)
 	{
 		uint64_t hashed = seed;
 
@@ -49,7 +51,7 @@ namespace
 
 size_t cluster::partition_of(const std::string &key)
 {
-	return mix(hash(key, fnv_offset)) % partition_count;
+	return mix(hash(record::partition_key(key), fnv_offset)) % partition_count;
 }
 
 std::string cluster::encode_partitions(const partition_set &partitions)

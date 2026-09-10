@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "cluster/partition.h"
+#include "record/record.h"
 
 namespace
 {
@@ -412,4 +413,30 @@ TEST(partition_test, a_set_that_is_not_this_many_partitions_is_no_set_at_all)
 	EXPECT_FALSE(cluster::decode_partitions(whole.substr(1)).has_value());
 	EXPECT_FALSE(cluster::decode_partitions(whole + "0").has_value());
 	EXPECT_FALSE(cluster::decode_partitions(whole.substr(1) + "q").has_value());
+}
+
+// The whole of what the split is for: a partition key's records are one partition, so they are
+// held, led and moved together however many of them there are and whatever they sort under.
+TEST(partition_test, every_sort_key_of_one_partition_key_is_in_one_partition)
+{
+	size_t partition = cluster::partition_of("4821");
+
+	for (size_t i = 0; i < 1000; i++)
+	{
+		EXPECT_EQ(cluster::partition_of(record::compose_key("4821", std::to_string(i))), partition);
+	}
+}
+
+// The other half of it: what the partition key does not decide is nothing, so keys that differ
+// only there are spread the way any keys are.
+TEST(partition_test, partition_keys_are_spread_over_the_partitions)
+{
+	std::set<size_t> partitions;
+
+	for (size_t i = 0; i < 5000; i++)
+	{
+		partitions.insert(cluster::partition_of(record::compose_key(std::to_string(i), "2019")));
+	}
+
+	EXPECT_EQ(partitions.size(), cluster::partition_count);
 }

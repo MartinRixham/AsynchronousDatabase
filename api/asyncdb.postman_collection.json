@@ -1923,6 +1923,224 @@
 						}
 					],
 					"response": []
+				},
+				{
+					"name": "A key of a partition key and a sort key",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "two halves"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-pair/second",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-pair",
+								"second"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "It reads back under both halves",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-pair/second",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-pair",
+								"second"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"pm.test(\"the value it was written with\", function () {",
+									"    pm.expect(pm.response.text()).to.eql(\"two halves\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "The halves are one key with a zero byte between them",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-pair%00second",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-pair%00second"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"pm.test(\"the same record, written the other way\", function () {",
+									"    pm.expect(pm.response.text()).to.eql(\"two halves\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "The partition key on its own is a record of its own",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-pair",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-pair"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404\", function () { pm.response.to.have.status(404); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A slash inside a half is not the slash between them",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "one segment"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-pair%2Fsecond",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-pair%2Fsecond"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "And the two are different records",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-pair%2Fsecond",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-pair%2Fsecond"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"pm.test(\"one segment, not two\", function () {",
+									"    pm.expect(pm.response.text()).to.eql(\"one segment\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
 				}
 			]
 		},
@@ -2593,6 +2811,183 @@
 									"pm.test(\"404 table_not_found\", function () {",
 									"    pm.response.to.have.status(404);",
 									"    pm.expect(pm.response.json().error.code).to.eql(\"table_not_found\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Seed a sort key under a partition key",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "later"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-sorted/b",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-sorted",
+								"b"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "Seed an earlier one under the same partition key",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "earlier"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-sorted/a",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-sorted",
+								"a"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "One partition key and nothing else is a bounded range",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?from=postman-sorted&to=postman-sorted%01",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "postman-sorted"
+								},
+								{
+									"key": "to",
+									"value": "postman-sorted%01"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"const records = pm.response.json().records;",
+									"",
+									"pm.test(\"both records, in sort key order\", function () {",
+									"    pm.expect(records.map(function (record) { return record.sort; })).to.eql([ \"a\", \"b\" ]);",
+									"});",
+									"",
+									"pm.test(\"the key is the partition key, and the halves are apart\", function () {",
+									"    pm.expect(records.map(function (record) { return record.key; })).to.eql(",
+									"        [ \"postman-sorted\", \"postman-sorted\" ]);",
+									"});",
+									"",
+									"pm.test(\"values come back beside them\", function () {",
+									"    pm.expect(records[0].value).to.eql(\"earlier\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "A record of one part carries no sort key",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key?prefix=postman-outside",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key"
+							],
+							"query": [
+								{
+									"key": "prefix",
+									"value": "postman-outside"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
+									"",
+									"pm.test(\"no sort key on a key that was written as one part\", function () {",
+									"    pm.expect(pm.response.json().records[0]).to.not.have.property(\"sort\");",
 									"});"
 								]
 							}

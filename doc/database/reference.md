@@ -14,6 +14,7 @@ Every endpoint, status code, error code and limit in one place.
 | `HEAD` | `/table/{table}/key/{key}` | Existence and size of a record |
 | `PUT` | `/table/{table}/key/{key}` | [Write a record](/database/records#write-a-record) |
 | `DELETE` | `/table/{table}/key/{key}` | [Delete a record](/database/records#delete-a-record) |
+| | `/table/{table}/key/{key}/{sort}` | The same four, of a record with a [sort key](/database/records#partition-keys-and-sort-keys) |
 | `GET` | `/table/{table}/key` | [Scan a range](/database/scans) |
 | `DELETE` | `/table/{table}/key` | [Delete a range](/database/tables#delete-a-range) |
 | `GET` | `/table/{table}/file` | One node asking another for [its share of a table](/database/cluster#moving-a-share-of-a-table), as records or as `values=false` keys. Between nodes, not for clients |
@@ -63,7 +64,7 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 
 | Limit | Value | Why |
 | --- | --- | --- |
-| Key | 4 KiB | Keys live in indexes and bloom filters, which are held in memory |
+| Key | 4 KiB | Keys live in indexes and bloom filters, which are held in memory. It is the whole key: a partition key, its sort key and the byte between them |
 | Value | 16 MiB | A value is read whole into memory to be served |
 | Scan `limit` | 1000, default 100 | One page is one response, held in memory |
 | Scan page | 8 MiB | The same reason counted in bytes, because a limit cannot see the size of what it lets through: a page ends early and carries a cursor rather than building a response the node cannot hold |
