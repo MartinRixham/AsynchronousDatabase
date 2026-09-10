@@ -22,9 +22,10 @@ same list read the other way round: what to *do* about each one.
 | --- | --- | --- | --- |
 | `no_leader` | 503 | **Yes, after a second** | An election is in flight and will settle |
 | `write_stalled` | 503 | **Yes, backing off** | Back pressure, not failure |
+| `node_incomplete` | 503 | **Yes, once** | The node asked holds less than it owns; another copy can answer |
 | `stale_leader` | 409 | **Yes, at once** | The write went to a leader that had been replaced |
 | `storage_error` | 500 | **Yes, once** | A node did not answer; another may |
-| `table_not_found` | 404 | Only after declaring the table | A node may have come back empty |
+| `table_not_found` | 404 | Only after declaring the table | The table is not there. A node that came back empty answers `node_incomplete` instead, so this one is not a node's own gap |
 | `invalid_cursor` | 400 | No — restart the scan | The cursor belongs to another instance |
 | `table_exists` | 409 | No | The table is there with different options |
 | everything else 4xx | 400, 413 | No | The request is wrong and will stay wrong |

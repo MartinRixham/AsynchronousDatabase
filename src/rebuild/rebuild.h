@@ -20,13 +20,23 @@ namespace rebuild
 	// that has stopped answering between them.
 	constexpr long default_seconds = 600;
 
+	// What a rebuild took, and whether it read the whole of the share this node owns. A count
+	// alone cannot say: a store that needed nothing and a zone that stopped answering both took
+	// no records, and only one of them leaves the node holding less than it owns.
+	struct outcome
+	{
+		size_t records = 0;
+
+		bool whole = true;
+	};
+
 	// Nothing else in the cluster puts a lost copy back: there is no read repair, no anti-entropy,
 	// no hinted handoff and no replication log.
 	//
 	// **It runs before the node registers in etcd**, which is what makes it free to take as long
 	// as it needs: a node that is not in the membership is nobody's copy, so no read is answered
 	// from it and no write waits on it.
-	size_t rebuild(
+	outcome rebuild(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		long seconds = default_seconds,

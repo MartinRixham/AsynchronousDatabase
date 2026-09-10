@@ -19,7 +19,7 @@ Every endpoint, status code, error code and limit in one place.
 | `DELETE` | `/table/{table}/key` | [Delete a range](/database/tables#delete-a-range) |
 | `GET` | `/table/{table}/file` | One node asking another for [its share of a table](/database/cluster#moving-a-share-of-a-table), as records or as `values=false` keys. Between nodes, not for clients |
 | `GET` | `/table/{table}/split` | Where the node being read would [cut a walk of its table up](/database/cluster#several-pieces-at-once), so that several pieces of it can be read at once. Between nodes, not for clients |
-| `GET` | `/health` | Liveness, whether writes are stalled, [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) and how many partitions this node leads |
+| `GET` | `/health` | Liveness, whether writes are stalled, whether the node [holds less than it owns](/runbook/rebuild), [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) and how many partitions this node leads |
 
 ## Errors
 
@@ -52,6 +52,7 @@ status — is what a client should branch on.
 | `invalid_partitions` | 400 | A [file](/database/cluster#moving-a-share-of-a-table) asked for with something that is not a set of this cluster's partitions |
 | `write_stalled` | 503 | RocksDB is applying back pressure |
 | `no_leader` | 503 | No node is [leading this key's partition](/database/cluster#one-leader-for-each-partition) yet. Run the write again |
+| `node_incomplete` | 503 | The node asked holds less than it owns, so it cannot say the key is missing. A read is asked of the next copy instead; `/health` names the node it came from |
 | `stale_leader` | 409 | The write was ordered by a node that has since been replaced. Run it again |
 | `storage_error` | 500 | RocksDB returned an error |
 | `unavailable` | 500, 502, 504 | The nginx in front of the database answered instead of it. This one is the proxy's, not the server's — it is what a client sees while an instance is starting, once its container has stopped, or when a body too large to hold in memory could not be [spooled onto a full disk](/runbook/storage#the-disk-is-filling) |

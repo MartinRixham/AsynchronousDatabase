@@ -164,14 +164,18 @@ void server::server::serve()
 	{
 		try
 		{
-			rebuild::rebuild(repository, nodes);
+			router.is_incomplete(!rebuild::rebuild(repository, nodes).whole);
 		}
 		catch (const std::exception &caught)
 		{
+			router.is_incomplete(true);
+
 			DEBUG(std::string("The rebuild did not finish: ") + caught.what());
 		}
 		catch (...)
 		{
+			router.is_incomplete(true);
+
 			DEBUG("The rebuild did not finish.");
 		}
 	}
@@ -317,6 +321,10 @@ void server::server::reconcile()
 				// it is another node's own pass rather than anything this one can do again.
 				if (done.settled())
 				{
+					// A pass waiting on nothing has fetched everything this node owns and holds
+					// nothing for, so a store that started short of its share is short no longer.
+					router.is_incomplete(false);
+
 					attempts = 0;
 				}
 				else if (done.moved())

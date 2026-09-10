@@ -31,18 +31,27 @@ setup
 # to establish that there was something to break.
 whole()
 {
-	health_matches '(.nodes | length) == 6 and (.zones | length) == 3 and (.write_stalled | not)' 6
+	health_matches \
+		'(.nodes | length) == 6 and (.zones | length) == 3 and (.write_stalled | not) and (.incomplete | not)' 6
 }
 
 preflight_chaos || exit 1
 
-if whole; then
-	echo "Six nodes in three zones, nothing stalled. Starting."
-else
+if ! whole; then
 	echo "The cluster is not whole, so there is nothing worth breaking:" >&2
 	curl --fail --silent --max-time 10 "$base/health" | jq . >&2
 	exit 1
 fi
+
+# The shape above is sampled through the load balancer, which is enough for what every node
+# agrees on and not for what each of them says about itself. A node holding less than it owns
+# serves what it has and answers health, so it is only ever found by being asked.
+if ! every_node_whole; then
+	echo "A node is holding less than it owns, so nothing here would be measuring its own fault." >&2
+	exit 1
+fi
+
+echo "Six nodes in three zones, nothing stalled, every node holding what it owns. Starting."
 
 seed
 
@@ -101,6 +110,18 @@ for name in $experiments; do
 		echo "The cluster did not come back after $name. Nothing after it would mean anything." >&2
 		jq . < "$work/last" >&2
 		summary="$summary\nSTOPPED after $name"
+		failed=$((failed + 1))
+		break
+	fi
+
+	# A cluster of the right shape whose nodes are not all whole is the other way an experiment
+	# fails to recover, and the one the shape cannot show: a node that came back from a rebuild
+	# holding less than it owns is in the membership, answers health and serves what it has.
+	# Every experiment after it would be measuring a copy that is short.
+	if ! every_node_whole; then
+		echo
+		echo "A node came back from $name holding less than it owns." >&2
+		summary="$summary\nSHORT   after $name"
 		failed=$((failed + 1))
 		break
 	fi

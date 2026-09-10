@@ -132,6 +132,35 @@ it is still waiting for — so what is lost is the file it did not ask for and n
 a file half taken. It will not try again: an empty store is the only trigger, and
 the store is no longer empty.
 
+## A node that came up short
+
+A rebuild that did not read the whole of this node's share leaves the node
+holding less than it owns, and **the node knows it**. That matters because of
+what a miss means: a key this node has nothing for is a key that was never
+written *or* one it never received, and a node that cannot tell them apart must
+not answer as though it could.
+
+So a node in that state answers `503 node_incomplete` where it would otherwise
+say the key or the table is missing, and the node that asked
+[tries the next copy](/database/cluster#what-a-write-and-a-read-do) instead of believing
+it. A `404` is a claim about the keyspace; `node_incomplete` is a node declining
+to make one.
+
+It is not a node out of service. It still serves every key it does hold, still
+takes writes, still answers `/health` with `200` — so the load balancer keeps it
+— and `"incomplete": true` is where it shows:
+
+```bash
+curl -s http://asyncdb-3:8080/health | jq '.incomplete'
+```
+
+**What clears it is a reconcile pass that settles**, which is this node having
+fetched everything it owns and holds nothing for. A pass runs when the membership
+moves, so a node that came up short and then sees no membership change at all
+stays short — the rebuild will not run again, because an empty store is its only
+trigger and the store is no longer empty. Declaring the tables again, or any
+change that moves the membership, is what starts the pass that fills it.
+
 Nothing the rebuild does is worth dying over either. A store that refuses a
 write, or a neighbour that answers something unreadable, is logged and the node
 starts — because a process that fell over here would fall over in the same place
@@ -156,7 +185,8 @@ DEBUG: Rebuilt 8204 records before joining.
 
 From outside, a node that is rebuilding is a node that is not yet answering: it
 is absent from every other node's `/health`, and its own port is not open. When
-it appears in the membership it is already whole.
+it appears in the membership it has either read the whole of its share or is
+saying it did not, in its own `incomplete`.
 
 ```bash
 curl -s http://asyncdb-1:8080/health | jq '.nodes'
@@ -167,7 +197,9 @@ curl -s http://asyncdb-1:8080/health | jq '.nodes'
 - **It does not repair a node that is merely thin.** The trigger is an empty
   store. A node that lost one record to a write that one copy refused holds
   tables, so it rebuilds nothing — that record comes back when it is written
-  again, and nothing else brings it back.
+  again, and nothing else brings it back. A node that lost a record that way is
+  not `incomplete` either: what that flag reports is a rebuild that came up
+  short, and nothing here detects a gap by looking for one.
 - **It is not continuous.** One pass, on the way up. A copy that falls behind
   afterwards stays behind.
 - **It is not a backup.** It needs a zone that still holds the data. Lose every

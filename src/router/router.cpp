@@ -31,6 +31,12 @@ namespace
 		return router::error_response("table_not_found", "No table named \"" + name + "\".");
 	}
 
+	router::response node_incomplete()
+	{
+		return router::error_response(
+			"node_incomplete", "This node holds less than it owns, so it cannot say a key is missing.");
+	}
+
 	router::response immutable_table(const std::string &name)
 	{
 		return router::error_response(
@@ -195,6 +201,16 @@ router::router::router(repository::repository &repo, cluster::cluster &cluster_n
 {
 }
 
+void router::router::is_incomplete(bool value)
+{
+	incomplete = value;
+}
+
+bool router::router::is_incomplete() const
+{
+	return incomplete;
+}
+
 router::response router::router::route(const request &request)
 {
 	const std::vector<std::string> &path = request.path;
@@ -206,7 +222,11 @@ router::response router::router::route(const request &request)
 			return method_not_allowed(request.method);
 		}
 
-		boost::json::object health { { "status", "ok" }, { "write_stalled", repository.is_write_stalled() } };
+		boost::json::object health {
+			{ "status", "ok" },
+			{ "write_stalled", repository.is_write_stalled() },
+			{ "incomplete", incomplete.load() }
+		};
 		std::vector<cluster::member> members = nodes.members();
 
 		if (!members.empty())
@@ -481,9 +501,11 @@ router::response router::router::route_record(
 		return error_response(record.code, record.message);
 	}
 
+	// A node that came up short of its share is a node whose tables may be the ones it never
+	// read, so what it does not hold is unknown to it rather than absent.
 	if (!repository.has_table(name))
 	{
-		return table_not_found(name);
+		return incomplete ? node_incomplete() : table_not_found(name);
 	}
 
 	cluster::placement where = request.forwarded ? cluster::placement() : nodes.replicas(record.key);
@@ -570,7 +592,7 @@ router::response router::router::route_record(
 		return read_record(request, where.nodes);
 	}
 
-	return empty_response(boost::beast::http::status::not_found);
+	return incomplete ? node_incomplete() : empty_response(boost::beast::http::status::not_found);
 }
 
 std::mutex &router::router::write_lock(const std::string &key)

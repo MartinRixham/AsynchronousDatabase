@@ -124,6 +124,25 @@ TEST(router_test, health_says_whether_writes_are_stalled)
 	EXPECT_EQ(router.route(get("/health")).json.at("write_stalled"), true);
 }
 
+// A node holding less than it owns still serves what it has, so it answers health rather than
+// dropping out of the load balancer: what it cannot do is say a key is missing.
+TEST(router_test, health_says_whether_this_node_holds_less_than_it_owns)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	EXPECT_EQ(router.route(get("/health")).json.at("incomplete"), false);
+
+	router.is_incomplete(true);
+
+	router::response response = router.route(get("/health"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.json.at("status"), "ok");
+	EXPECT_EQ(response.json.at("incomplete"), true);
+}
+
 TEST(router_test, list_no_tables)
 {
 	repository::fake_repository repository;
@@ -1224,6 +1243,69 @@ TEST(router_cluster_test, answer_a_forwarded_read_of_a_key_this_node_has_none_of
 
 	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::not_found);
 	EXPECT_TRUE(nodes.sent().empty());
+}
+
+// A rebuild that did not read the whole of this node's share leaves it unable to tell a key that
+// was never written from one it never received, so the node that asked is told to ask elsewhere
+// rather than handed a miss it would believe.
+TEST(router_cluster_test, refuse_to_call_a_key_missing_when_this_node_holds_less_than_it_owns)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, there });
+
+	router::request forwarded = get("/table/account/key/4821");
+
+	forwarded.forwarded = true;
+
+	router.is_incomplete(true);
+
+	router::response response = router.route(forwarded);
+
+	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
+	EXPECT_EQ(error_code(response), "node_incomplete");
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
+// The tables are the first thing a rebuild reads, so a node that came up short may hold none of
+// them: an unknown table is the same answer as an unknown key.
+TEST(router_cluster_test, refuse_to_call_a_table_missing_when_this_node_holds_less_than_it_owns)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	router.is_incomplete(true);
+
+	EXPECT_EQ(error_code(router.route(get("/table/account/key/4821"))), "node_incomplete");
+}
+
+// The record is here, so nothing about the rest of the share bears on it.
+TEST(router_cluster_test, answer_a_key_this_node_holds_while_it_holds_less_than_it_owns)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, there });
+	repository.write_record("account", record::valid_record("4821", "Robert"));
+
+	router::request forwarded = get("/table/account/key/4821");
+
+	forwarded.forwarded = true;
+
+	router.is_incomplete(true);
+
+	router::response response = router.route(forwarded);
+
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.text, "Robert");
 }
 
 TEST(router_cluster_test, fail_to_read_a_record_no_copy_of_which_answers)

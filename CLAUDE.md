@@ -196,8 +196,14 @@ waits on a write rather than on `/health`: a write needs every copy, and a node 
 fails one.
 
 - **The suite refuses to start** against a cluster that is not already six nodes in three zones
-  with nothing stalled, and stops early if an experiment's damage did not heal — everything
-  after that would be measuring the previous fault.
+  with nothing stalled and every node holding what it owns, and stops early if an experiment's
+  damage did not heal — everything after that would be measuring the previous fault. `every_node_whole`
+  in `chaos/harness.sh` is the last of those, and it asks **each node** over Run Command rather
+  than sampling `/health` through the load balancer: `incomplete` is a node's own state, and a
+  node that came back from a rebuild short of its share is in the membership and answering, so
+  the shape cannot show it. A node that cannot be asked fails it. It runs at the start and after
+  every experiment, which is what makes `node-stops` and the three resizes a test of the rebuild
+  and not only of the records that moved.
 - **Order matters.** The three that need nothing of the instances are first; the three that
   resize the tier come after every fault that only breaks it, because they are the only ones that
   change what the deployment *is*; `etcd-quorum-lost` is last, because it is the only one that
@@ -528,7 +534,13 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   take it — all of them at once, so a copy that refuses is a copy the others were written beside
   rather than ahead of; a read goes to one copy — this node when it
   holds one, else the nearest zone's, passing over a node that does not answer, and asking the other
-  copies when this node holds nothing for the key. A table create or delete goes to *every* node,
+  copies when this node holds nothing for the key. **What a copy that answered says is the answer, a
+  404 included**, which rests on a copy being a copy: a node whose rebuild did not read the whole of
+  its share answers `node_incomplete` (503) rather than reporting an absence it cannot vouch for, and
+  the node reading passes over it as it passes over one that said nothing. `router::is_incomplete` is
+  that flag — set from `rebuild::outcome::whole`, cleared by a reconcile pass that settles, and
+  reported in `/health` as `incomplete`, because a node holding less than it owns still serves what
+  it has and must stay in the load balancer. A table create or delete goes to *every* node,
   because a record can only be written where its table is; a scan is asked of **one zone** — this
   node's own, since a zone holds a copy of the whole keyspace — and merged back into key order,
   falling back to another zone when a node of that one does not answer. A forwarded request carries

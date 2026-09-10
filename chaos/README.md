@@ -44,8 +44,19 @@ instance — and `zone-retired` is the only one that asks a whole zone's copy to
 ## Run it
 
 The stack has to be up, and the suite refuses to start against one that is not already whole —
-six nodes in three zones, nothing stalled. Chaos against a cluster that is already broken proves
-nothing.
+six nodes in three zones, nothing stalled, and **every node holding what it owns**. Chaos against a
+cluster that is already broken proves nothing.
+
+The last of those is asked of each node rather than of the load balancer. `incomplete` is a node's
+own state — [a rebuild that came up short](../doc/runbook/rebuild.md) — and a node in that state
+serves what it has and answers `/health` like any other, so a sampled check is one that may never
+land on it. Every node is asked over Run Command, and a node that cannot be asked fails the check
+rather than passing it silently.
+
+**The same check runs after every experiment**, beside the one that says the cluster came back to
+six nodes in three zones. A node that came back from a rebuild holding less than it owns is in the
+membership and answering, so the shape cannot show it — and every experiment after it would be
+measuring a copy that is short. The run stops there and says which node.
 
 ```bash
 make create-stack                    # or against the stack a build stood up

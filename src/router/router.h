@@ -2,6 +2,7 @@
 #define ROUTER_ROUTER_H
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <mutex>
 #include <optional>
@@ -41,10 +42,23 @@ namespace router
 
 		std::array<write_stripe, write_stripes> write_locks;
 
+		// Read by every session and written once by the thread that filled the store, so it is an
+		// atomic rather than a field a reader happens to see.
+		std::atomic<bool> incomplete = false;
+
 	public:
 		router(repository::repository &repo, cluster::cluster &nodes);
 
 		response route(const request &request);
+
+		// Whether this node holds less than it owns, which is a rebuild that did not read the
+		// whole of its share. A miss it reports is then absence it cannot vouch for, so a read is
+		// answered node_incomplete and the node that asked tries the next copy instead of
+		// believing it. Cleared by a reconcile pass that settles, which is this node having
+		// fetched everything it owns and holds nothing for.
+		void is_incomplete(bool incomplete);
+
+		bool is_incomplete() const;
 
 	private:
 		response route_tables(const request &request);

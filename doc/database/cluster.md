@@ -268,6 +268,13 @@ says is the answer, a `404` included — every zone is written before a write is
 answered, so one copy saying a key is not there is enough to say it is not
 there.
 
+That rests on the copy being a copy, so a node that knows it is not one does not
+get to make the claim. A node whose
+[rebuild came up short](/runbook/rebuild#a-node-that-came-up-short) holds less
+than it owns, and a key it has nothing for may be one it never received rather
+than one nobody wrote; it answers `503 node_incomplete` instead of `404`, and the
+node reading passes over it exactly as it passes over a node that said nothing.
+
 With one exception. **A key this node holds nothing for is asked of the other
 copies before it is answered as missing.** A node that has just replaced another,
 or a zone that has just come back, owns its share of the keys and holds none of
@@ -308,6 +315,7 @@ a membership settle:
 {
   "status": "ok",
   "write_stalled": false,
+  "incomplete": false,
   "nodes": [ "http://asyncdb-1:8080", "http://asyncdb-2:8080" ],
   "zones": {
     "eu-west-2a": [ "http://asyncdb-1:8080" ],

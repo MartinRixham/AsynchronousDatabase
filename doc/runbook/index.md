@@ -42,6 +42,7 @@ curl -s http://localhost:8080/asyncdb/health | jq
 {
   "status": "ok",
   "write_stalled": false,
+  "incomplete": false,
   "nodes": [ "http://asyncdb-1:8080", "http://asyncdb-2:8080", "http://asyncdb-3:8080" ],
   "zones": {
     "one": [ "http://asyncdb-1:8080", "http://asyncdb-2:8080" ],
@@ -54,8 +55,9 @@ curl -s http://localhost:8080/asyncdb/health | jq
 | Field | Read it as |
 | --- | --- |
 | no answer at all | The process is not serving, or nginx is answering for it — [a node that has failed](/runbook/nodes) |
-| `status` | Always `ok`. It says the process is answering, and nothing more |
+| `status` | Always `ok`. It says the process is answering, and nothing more — a node holding less than it owns is still serving, and says so in `incomplete` rather than here |
 | `write_stalled` | `true` is [RocksDB applying back pressure](/runbook/storage#writes-are-stalled) on this node |
+| `incomplete` | `true` is a node holding less than it owns — [a rebuild that did not read the whole of its share](/runbook/rebuild#a-node-that-came-up-short). It still serves what it has, and answers `node_incomplete` rather than calling a key missing |
 | `nodes` | The membership **as this node sees it**. A list naming only this node is [a node that has lost etcd](/runbook/membership#etcd-cannot-be-reached); absent entirely is an instance that was never clustered at all |
 | `zones` | The grouping, and so the number of copies. The number of zones *is* the number of copies |
 | `leads` | How many of the 256 partitions this node orders the writes of. `0` on every node is [an election that has not settled](/runbook/membership#no-partition-has-a-leader) |

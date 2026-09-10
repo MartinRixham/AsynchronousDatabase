@@ -167,7 +167,7 @@ namespace
 	}
 }
 
-size_t rebuild::rebuild(
+rebuild::outcome rebuild::rebuild(
 	repository::repository &repository,
 	const cluster::cluster &nodes,
 	long seconds,
@@ -175,14 +175,16 @@ size_t rebuild::rebuild(
 {
 	if (!repository.list_tables().empty())
 	{
-		return 0;
+		return outcome();
 	}
 
 	std::vector<std::vector<std::string>> zones = nodes.zones();
 
+	// A node with nowhere to read from is not a node that came up short: it owns every key it
+	// is asked about, and a miss it reports is the store and not the rebuild.
 	if (zones.size() < 2)
 	{
-		return 0;
+		return outcome();
 	}
 
 	progress::patience waiting(seconds);
@@ -202,7 +204,7 @@ size_t rebuild::rebuild(
 		{
 			DEBUG("A rebuild was answered nothing for long enough to stop, so this node starts with what it has.");
 
-			return 0;
+			return outcome { 0, false };
 		}
 
 		restored taken = from_zone(repository, nodes, zones[i], partitions, workers, waiting);
@@ -211,7 +213,7 @@ size_t rebuild::rebuild(
 		{
 			DEBUG("Rebuilt " + std::to_string(taken.records) + " records before joining.");
 
-			return taken.records;
+			return outcome { taken.records, true };
 		}
 
 		DEBUG("A node of a zone did not answer, so the rebuild asks the next zone.");
@@ -219,5 +221,5 @@ size_t rebuild::rebuild(
 
 	DEBUG("No zone answered a rebuild, so this node starts with what it has.");
 
-	return 0;
+	return outcome { 0, false };
 }

@@ -136,6 +136,67 @@ node_status()
 	ssm_run "$1" "curl -s -o /dev/null --max-time 15 -w '%{http_code}' 'http://localhost:8080$2'"
 }
 
+# Whether every node holds what it owns. `incomplete` is a node's own state — a rebuild that did
+# not read the whole of its share — and the load balancer answers from whichever node it picked,
+# so a sampled health check is one that may never land on the node that is short. Every node is
+# asked instead, and **a node that cannot be asked is a failed assertion and not a node that is
+# whole**, which is the rule collect_holdings is written to for the same reason: a silent empty
+# answer would say the opposite of what happened.
+#
+# One Run Command to the whole tier rather than one for each, because the wait is the cost and
+# there is no reason to pay it six times. The agent is asked first for the same reason may_run
+# asks it: send-command refuses the whole batch over one instance it does not know, so an
+# instance whose agent is not answering is taken out of the batch and named here rather than
+# costing the answer for the five that are.
+every_node_whole()
+{
+	local ids online id answer command short= silent=
+
+	ids=$(instances asyncdb | awk '{ print $1 }')
+
+	[ -n "$ids" ] || { echo "No asyncdb instance is running." >&2; return 1; }
+
+	online=$(aws ssm describe-instance-information \
+		--filters "Key=InstanceIds,Values=$(echo "$ids" | paste -sd,)" \
+		--query 'InstanceInformationList[?PingStatus == `Online`].InstanceId' \
+		--output text 2> /dev/null)
+
+	for id in $ids; do
+		echo "$online" | tr '\t' '\n' | grep -qx "$id" || silent="$silent $id"
+	done
+
+	if [ -n "$online" ]; then
+		jq -n --arg c 'curl -s --max-time 5 http://localhost:8080/health' \
+			'{ commands: [ $c ] }' > "$work/command.json"
+
+		# The ids are one argument each, which is what send-command takes.
+		# shellcheck disable=SC2086
+		command=$(aws ssm send-command --instance-ids $online \
+			--document-name AWS-RunShellScript \
+			--parameters "file://$work/command.json" \
+			--query 'Command.CommandId' --output text 2> /dev/null) || return 1
+
+		for id in $online; do
+			aws ssm wait command-executed --command-id "$command" --instance-id "$id" 2> /dev/null
+
+			answer=$(aws ssm get-command-invocation --command-id "$command" --instance-id "$id" \
+				--query 'StandardOutputContent' --output text 2> /dev/null)
+
+			if echo "$answer" | jq --exit-status 'has("incomplete")' > /dev/null 2>&1; then
+				echo "$answer" | jq --exit-status '.incomplete | not' > /dev/null 2>&1 ||
+					short="$short $id"
+			else
+				silent="$silent $id"
+			fi
+		done
+	fi
+
+	[ -z "$short" ] || echo "Holding less than they own:$short" >&2
+	[ -z "$silent" ] || echo "Did not say whether they hold what they own:$silent" >&2
+
+	[ -z "$short" ] && [ -z "$silent" ]
+}
+
 # ---------------------------------------------------------------------------- the data
 
 seed()

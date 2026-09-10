@@ -142,7 +142,7 @@ TEST_F(server_test, health_request)
 	result response = get("/health");
 
 	EXPECT_EQ(response.code, 200);
-	EXPECT_EQ(response.body, "{\"status\":\"ok\",\"write_stalled\":false}");
+	EXPECT_EQ(response.body, "{\"status\":\"ok\",\"write_stalled\":false,\"incomplete\":false}");
 }
 
 TEST_F(server_test, put_request)
