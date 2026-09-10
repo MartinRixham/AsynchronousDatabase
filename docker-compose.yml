@@ -1,6 +1,10 @@
 services:
   asyncdb-1:
+    # One image between the three nodes: a service that names a build of its own is another
+    # concurrent build of this same Dockerfile, blind to the layers the others are committing.
+    # The localhost/ prefix is what tells podman-compose the image is built here, not pulled.
     build: .
+    image: localhost/asyncdb
     container_name: asyncdb-1
     environment:
       # Where etcd answers, and this node as the other nodes reach it. Nodes talk to the API port
@@ -20,7 +24,7 @@ services:
     depends_on:
       - etcd
   asyncdb-2:
-    build: .
+    image: localhost/asyncdb
     container_name: asyncdb-2
     environment:
       - ASYNCDB_ETCD=http://etcd:2379
@@ -35,7 +39,7 @@ services:
     depends_on:
       - etcd
   asyncdb-3:
-    build: .
+    image: localhost/asyncdb
     container_name: asyncdb-3
     environment:
       - ASYNCDB_ETCD=http://etcd:2379
