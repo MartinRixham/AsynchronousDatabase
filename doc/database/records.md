@@ -80,13 +80,22 @@ GET /table/transaction/key/4821/2019
 GET /table/transaction/key/4821%002019
 ```
 
+**The slash is the one to send.** A path carrying a zero byte is refused by the
+nginx in front of every instance, with a `400` of its own and no JSON body,
+before the database is asked — its URI parser rejects the byte and no directive
+turns that off. The encoded form is therefore what reaches a node addressed on
+its [API port](/database/cluster#turning-it-on) directly, which is how one node
+writes a composed key when it forwards to another. Through the proxy, a
+composed key is spelled with the slash.
+
 Three things follow, and they are the whole of the rule:
 
 - **A key of one part is a partition key with no sort key.** Every key that
   carries no zero byte is that, so a table written without ever thinking about
   sort keys behaves exactly as it did.
 - **A partition key cannot contain a zero byte**, because the first one is the
-  separator. A sort key can: only the first separates.
+  separator. A sort key can: only the first separates — though the path that
+  writes one is the encoded form, so it is a key the proxy will not carry.
 - **The 4 KiB limit is over the whole key** — both halves and the byte between
   them.
 

@@ -2002,41 +2002,6 @@
 					"response": []
 				},
 				{
-					"name": "The halves are one key with a zero byte between them",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{baseUrl}}/table/{{table}}/key/postman-pair%00second",
-							"host": [
-								"{{baseUrl}}"
-							],
-							"path": [
-								"table",
-								"{{table}}",
-								"key",
-								"postman-pair%00second"
-							]
-						}
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"type": "text/javascript",
-								"exec": [
-									"pm.test(\"200\", function () { pm.response.to.have.status(200); });",
-									"",
-									"pm.test(\"the same record, written the other way\", function () {",
-									"    pm.expect(pm.response.text()).to.eql(\"two halves\");",
-									"});"
-								]
-							}
-						}
-					],
-					"response": []
-				},
-				{
 					"name": "The partition key on its own is a record of its own",
 					"request": {
 						"method": "GET",
