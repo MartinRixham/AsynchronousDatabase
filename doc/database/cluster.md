@@ -175,12 +175,18 @@ different values and stay that way. So one of the three copies of a partition
 **leads** it, and every write of every key in that partition is ordered by that
 one node.
 
-A leader is claimed, not agreed. The node writes `/asyncdb/leader/{partition}`
-into etcd **only if nothing has created it** — one transaction, so two claimants
-are one leader and one node that is told the winner's name — and it claims on the
+**Which of the copies leads is decided by the membership, not by the race.** The
+leader of a partition is the node that wins it across the whole membership under
+the same rendezvous hashing that chose the copies — which makes it the winner in
+its own zone as well, so a leader always holds a copy of what it orders writes
+to. Every node works the same answer out of the membership it reads, and no two
+of them ever want the same partition.
+
+Being named is not yet leading. The node named writes
+`/asyncdb/leader/{partition}` into etcd **only if nothing has created it** — one
+transaction, so a claim is a fact rather than an opinion — and it claims on the
 same lease its membership is on. A node that stops renewing therefore stops
-leading, and the partition is claimed by whichever of its other copies gets there
-first.
+leading.
 
 There is no election in the sense of votes: etcd already agrees with itself, and
 this borrows that. It is the one thing the cluster has ever needed a coordinator
@@ -189,18 +195,23 @@ for.
 A node claims **a few partitions at a time** — sixty-four on each pass of the
 membership thread, walking the ring from an offset of its own name. Claiming
 costs a round trip to etcd each, and there are 256 of them; taking a few at a
-time keeps a node's start-up short, and starting from different offsets means
-nodes claim different parts of the ring rather than racing each other for the
-same partitions and losing. Between them, the nodes of a fresh cluster settle it
-in a pass or two, and a partition nobody has claimed yet answers `no_leader` to a
-write in the meantime.
+time keeps a node's start-up short. Between them, the nodes of a fresh cluster
+settle it in a pass or two, and a partition nobody has claimed yet answers
+`no_leader` to a write in the meantime.
 
-A claim outlives the ownership it was made under. Nothing but a lease takes one
-away, and a membership change redraws which node holds which partition without
-any node losing its lease — so a node that has stopped holding a partition
-**gives its claim up**, and the node holding it now claims it on a later pass.
-Until it does, the partition is led by a node that keeps no copy of it, and the
-node that does keep one cannot claim it, because the key is there.
+A claim outlives the membership it was made under. Nothing but a lease takes one
+away, and a membership change renames the leader of a partition without any node
+losing its lease — so a node the membership has stopped naming **gives its claim
+up**, and the node named now claims it on a later pass. Until it does, the
+partition is led by a node that is no longer the answer, and the node that is
+cannot claim it, because the key is there.
+
+That is what makes leadership follow the membership rather than settle where the
+first pass happened to leave it. A node added to a cluster whose 256 claims are
+all held is named to lead a share of the ring the moment it registers, and the
+nodes that held those claims give them up; without that, leadership would only
+ever move when a lease ran out, and a node that joined a healthy cluster would
+lead nothing for as long as it lived.
 
 The delete is conditional on the key still holding this node's own address, so a
 claim whose lease ran out between the read and the delete belongs to whichever
@@ -257,8 +268,11 @@ A partition nothing leads yet has nowhere to order a write:
 > `503 no_leader` — no node is leading this key's partition, so try again.
 
 That is the window a leader's lease leaves when the node holding it goes away:
-up to ten seconds, and then one of the other copies has claimed it. **Reads are
-not in that window** — they are answered by a copy and never wait for a leader.
+up to ten seconds, and then the node the membership names next has claimed it. A
+membership change that moves leadership without anybody losing a lease leaves a
+shorter one — a pass to give the claim up and a pass to make it again. **Reads
+are not in either window** — they are answered by a copy and never wait for a
+leader.
 
 An instance standing alone, or a cluster with no zones, orders nothing: there is
 one copy and nobody to race with, so a write is written where it always was.
@@ -474,8 +488,8 @@ it ends.
   two clients diverging the copies. Catching a copy up is what a replication log
   would do, and there is not one.
 - **A write needs a leader, and a leader needs etcd.** A partition whose leader
-  has gone is unwritable until its lease runs out and another copy claims it —
-  ten seconds at the outside — and a cluster that cannot reach etcd at all keeps
+  has gone is unwritable until its lease runs out and the node the membership
+  names next claims it — ten seconds at the outside — and a cluster that cannot reach etcd at all keeps
   the leaders it last read and elects no new ones. Reads never wait for any of
   this. That is the trade leadership makes: writes are ordered, and they are
   ordered by a node that has to be there.

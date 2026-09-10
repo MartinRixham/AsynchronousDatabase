@@ -375,7 +375,7 @@ TEST(etcd_client_test, name_the_holder_of_a_key_that_is_already_there)
 		{ "succeeded", false },
 		{ "responses",
 		  boost::json::array { boost::json::object {
-			  { "responseRange",
+			  { "response_range",
 				boost::json::object {
 					{ "kvs",
 					  boost::json::array { boost::json::object { { "key", base64::encode("/asyncdb/leader/7") },

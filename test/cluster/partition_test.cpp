@@ -308,6 +308,64 @@ TEST(partition_test, every_node_of_a_zone_holds_a_share_of_its_copies)
 	EXPECT_EQ(owners, (std::set<std::string> { "http://asyncdb-1:8080", "http://asyncdb-2:8080" }));
 }
 
+// A write is ordered by the node leading the key's partition and then written to every copy, so a
+// leader that held no copy would be a hop the write did not need.
+TEST(partition_test, the_leader_of_a_key_is_one_of_the_nodes_that_hold_it)
+{
+	for (size_t i = 0; i < 1000; i++)
+	{
+		std::string leader = cluster::leader_of(key(i), zoned);
+		std::vector<cluster::member> owners = cluster::owners_of(key(i), zoned);
+
+		EXPECT_TRUE(
+			std::any_of(
+				owners.begin(),
+				owners.end(),
+				[&leader](const cluster::member &owner) { return owner.node == leader; }));
+	}
+}
+
+// Leadership is spread the way the keyspace is, so no node orders the writes of a larger part of it
+// than the others — and a node that joins is named to lead a share of it at once, rather than
+// leading whatever it happened to claim first.
+TEST(partition_test, every_node_leads_a_share_of_the_partitions)
+{
+	std::map<std::string, size_t> led;
+
+	for (size_t i = 0; i < cluster::partition_count; i++)
+	{
+		led[cluster::leader_of(cluster::partition_name(i), zoned)]++;
+	}
+
+	ASSERT_EQ(led.size(), zoned.size());
+
+	for (std::map<std::string, size_t>::const_iterator it = led.begin(); it != led.end(); ++it)
+	{
+		EXPECT_GT(it->second, cluster::partition_count / (2 * zoned.size()));
+	}
+}
+
+// A node added to a cluster is named to lead partitions the moment it is in the membership, and the
+// nodes that led them are the ones that give them up.
+TEST(partition_test, a_node_that_joins_is_named_to_lead_partitions_it_did_not_before)
+{
+	std::vector<cluster::member> joined = zoned;
+	std::string arrival = "http://asyncdb-7:8080";
+	size_t leads = 0;
+
+	joined.push_back(cluster::member { arrival, "a" });
+
+	for (size_t i = 0; i < cluster::partition_count; i++)
+	{
+		if (cluster::leader_of(cluster::partition_name(i), joined) == arrival)
+		{
+			leads++;
+		}
+	}
+
+	EXPECT_GT(leads, 0u);
+}
+
 // A scan asks one zone, because one zone holds every key, and it asks its own first: those nodes
 // are in the same availability zone, and a page from them crosses no boundary.
 TEST(partition_test, the_zones_of_a_scan_begin_with_this_node_s_own)

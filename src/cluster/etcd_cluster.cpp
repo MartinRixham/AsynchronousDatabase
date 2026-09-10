@@ -438,11 +438,11 @@ void cluster::etcd_cluster::read_leaders()
 
 		if (holder != held.end())
 		{
-			// Nothing but a lease takes a claim away, and a membership change moves a partition
-			// without any node losing its lease — so a claim outlives the ownership it was made
-			// under unless the node that made it gives it up. Until it does, the node that holds
-			// the partition now cannot claim it, because the key is there.
-			if (holder->second == configuration.node && !holds(*registered, partition))
+			// Nothing but a lease takes a claim away, and a membership change renames the leader
+			// of a partition without any node losing its lease — so a claim outlives the
+			// membership it was made under unless the node that made it gives it up. Until it
+			// does, the node named now cannot claim it, because the key is there.
+			if (holder->second == configuration.node && !should_lead(*registered, partition))
 			{
 				// A round trip either way, so giving one up costs what claiming one does and is
 				// bounded with it.
@@ -457,7 +457,7 @@ void cluster::etcd_cluster::read_leaders()
 							configuration.node +
 							" gave up partition " +
 							std::to_string(partition) +
-							", which it no longer holds.");
+							", which it no longer leads.");
 
 						continue;
 					}
@@ -480,7 +480,7 @@ void cluster::etcd_cluster::read_leaders()
 			continue;
 		}
 
-		if (claims >= configuration.claims_per_refresh || !holds(*registered, partition))
+		if (claims >= configuration.claims_per_refresh || !should_lead(*registered, partition))
 		{
 			continue;
 		}
@@ -525,14 +525,9 @@ void cluster::etcd_cluster::read_leaders()
 	leader_list = known;
 }
 
-bool cluster::etcd_cluster::holds(const std::vector<member> &registered, size_t partition) const
+bool cluster::etcd_cluster::should_lead(const std::vector<member> &registered, size_t partition) const
 {
-	std::vector<member> owners = ::cluster::owners_of(::cluster::partition_name(partition), registered);
-
-	return std::any_of(
-		owners.begin(),
-		owners.end(),
-		[this](const member &owner) { return owner.node == configuration.node; });
+	return ::cluster::leader_of(::cluster::partition_name(partition), registered) == configuration.node;
 }
 
 int64_t cluster::etcd_cluster::term_of(const std::string &holder, size_t partition) const

@@ -70,14 +70,17 @@ namespace
 
 		const boost::json::value &answered = response.at("responses").as_array()[0];
 
+		// The gateway reads a request written either way and writes an answer only one way, so the
+		// field a transaction is asked in is "requestRange" and the field it answers in is not.
+
 		if (!answered.is_object() ||
-			!answered.as_object().contains("responseRange") ||
-			!answered.as_object().at("responseRange").is_object())
+			!answered.as_object().contains("response_range") ||
+			!answered.as_object().at("response_range").is_object())
 		{
 			return std::nullopt;
 		}
 
-		const boost::json::object &ranged = answered.as_object().at("responseRange").as_object();
+		const boost::json::object &ranged = answered.as_object().at("response_range").as_object();
 
 		if (!ranged.contains("kvs") ||
 			!ranged.at("kvs").is_array() ||

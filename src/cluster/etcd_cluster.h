@@ -78,9 +78,9 @@ namespace cluster
 
 		std::map<size_t, leadership> leader_list;
 
-		// The partitions this node holds a claim on and no copy of, as the pass before this one
-		// found them. A claim is given up on the second pass that finds it rather than the first,
-		// so a membership read a moment out of date is not a partition left with no leader.
+		// The partitions this node holds a claim on and should no longer lead, as the pass before
+		// this one found them. A claim is given up on the second pass that finds it rather than the
+		// first, so a membership read a moment out of date is not a partition left with no leader.
 		// Touched only by the membership thread.
 		std::set<size_t> releasing;
 
@@ -154,7 +154,11 @@ namespace cluster
 		// cannot see the membership change half way through.
 		membership snapshot() const;
 
-		bool holds(const std::vector<member> &registered, size_t partition) const;
+		// Whether this node is the one the membership names to lead a partition. Every node works
+		// out the same answer, so a claim is the node saying it is that one rather than the node
+		// that got there first: leadership is spread as evenly as the keyspace, and a node that
+		// joins takes its share of it from the nodes that give theirs up.
+		bool should_lead(const std::vector<member> &registered, size_t partition) const;
 
 		// Compare and exchange rather than a store, because two writes of one partition arriving at
 		// once have to leave the higher term behind whichever of them wins.

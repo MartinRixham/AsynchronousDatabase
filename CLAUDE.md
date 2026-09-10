@@ -611,16 +611,23 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   beginning**, which is why a short pass is not the cheap way to bound one. What bounds a pass
   instead is the flag `server::server` hands it: a node being shut down waits for the pass in flight,
   so the pass is told to stop rather than kept short enough not to matter.
-- **A leader is claimed in etcd, not elected by votes.** `/asyncdb/leader/{partition}` is written
-  with a transaction that only succeeds if nothing created the key, on the node's own membership
-  lease — so a node that stops renewing stops leading. A node claims
+- **A leader is claimed in etcd, not elected by votes, and which node claims is decided by the
+  membership rather than by the race.** `cluster::leader_of` is the node that wins a partition
+  across the whole membership under the same rendezvous hashing that chose its copies — which
+  makes it the winner in its own zone too, so a leader always holds a copy of what it orders
+  writes to, and every node works the same answer out without asking. That node writes
+  `/asyncdb/leader/{partition}` with a transaction that only succeeds if nothing created the key,
+  on its own membership lease — so a node that stops renewing stops leading. A node claims
   `claims_per_refresh` (64) partitions per pass, from an offset of its own name, so a cold start is
-  a pass or two rather than 256 round trips. **A claim outlives the ownership it was made under**:
-  nothing but a lease takes one away, and a membership change moves a partition without any node
-  losing its lease — so a node gives up the claim on a partition it has stopped holding, deleting
-  the key only while it still holds that node's own address and on the second pass that finds it
-  gone rather than the first. Without that, a node added to a cluster leads nothing, ever, and the
-  nodes it took partitions from lead what they keep no copy of. Giving one up costs the round trip
+  a pass or two rather than 256 round trips. **A claim outlives the membership it was made under**:
+  nothing but a lease takes one away, and a membership change renames the leader of a partition
+  without any node losing its lease — so a node gives up the claim on a partition it is no longer
+  named for, deleting the key only while it still holds that node's own address and on the second
+  pass that finds it gone rather than the first. **Naming and giving up are what make leadership
+  follow the membership**: a claim only ever freed by a lease running out is a node that joins a
+  healthy cluster leading nothing for as long as it lives, and leadership that settles wherever the
+  first race left it is one node ordering the writes of a third of the keyspace and another
+  ordering none. Giving one up costs the round trip
   claiming one does and comes out of the same 64. The **term** is the etcd revision that
   created the claim; it travels in `X-Asyncdb-Term` on every write the leader orders, and a copy
   refuses anything older than the newest term it has applied (`stale_leader`, 409). A partition

@@ -167,19 +167,52 @@ namespace
 			http::answer(200, "application/json", boost::json::serialize(boost::json::object { { "kvs", kvs } })));
 	}
 
-	// A partition of a zone that a node of it owns, or one that it does not. Which partition is
-	// which is the hashing's business, so a test asks for one rather than naming it.
-	size_t partition_owned(const std::vector<std::string> &zone, const std::string &node, bool owned)
+	// A partition the membership names this node to lead, or one it names another node to. Which
+	// partition is which is the hashing's business, so a test asks for one rather than naming it.
+	size_t partition_led(const std::vector<cluster::member> &members, const std::string &node, bool led)
 	{
 		for (size_t i = 0; i < cluster::partition_count; i++)
 		{
-			if ((cluster::owner_of(cluster::partition_name(i), zone) == node) == owned)
+			if ((cluster::leader_of(cluster::partition_name(i), members) == node) == led)
 			{
 				return i;
 			}
 		}
 
 		return cluster::partition_count;
+	}
+
+	// The claims the membership says are this node's to make, under the keys they are written as.
+	std::set<std::string> to_lead(const std::vector<cluster::member> &members, const std::string &node)
+	{
+		std::set<std::string> keys;
+
+		for (size_t i = 0; i < cluster::partition_count; i++)
+		{
+			if (cluster::leader_of(cluster::partition_name(i), members) == node)
+			{
+				keys.insert("/asyncdb/leader/" + std::to_string(i));
+			}
+		}
+
+		return keys;
+	}
+
+	// A key of a partition the named node leads, which is the key a test about leadership has to
+	// ask about now that a node claims its share of the ring rather than all of it.
+	std::string key_led_by(const std::vector<cluster::member> &members, const std::string &node)
+	{
+		for (size_t i = 0; i < cluster::partition_count; i++)
+		{
+			std::string key = std::to_string(i);
+
+			if (cluster::leader_of(cluster::partition_name(cluster::partition_of(key)), members) == node)
+			{
+				return key;
+			}
+		}
+
+		return "";
 	}
 
 	// A pass of the membership thread reads the leaders once, and a lease of a second is the
@@ -624,12 +657,14 @@ TEST(etcd_cluster_test, stand_alone_when_only_etcd_is_named)
 	EXPECT_FALSE(cluster::from_environment().is_clustered());
 }
 
-// A node claims the partitions it holds a copy of, and the one that created the key leads.
-TEST(etcd_cluster_test, claim_the_partitions_this_node_holds)
+// A node claims the partitions the membership names it to lead, and the one that created the key
+// leads.
+TEST(etcd_cluster_test, claim_the_partitions_this_node_leads)
 {
 	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
 
-	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+	answer_etcd(&http, members);
 	answer_elections(&http, 41);
 
 	cluster::config config = configuration(one, "a");
@@ -641,11 +676,14 @@ TEST(etcd_cluster_test, claim_the_partitions_this_node_holds)
 
 	cluster.start();
 
-	// One node in each of two zones is both of them holding every partition, so this node claims
-	// all of them and leads all of them.
-	EXPECT_EQ(http.sent_to("/v3/kv/txn").size(), cluster::partition_count);
+	// One node in each of two zones is both of them holding every partition, and the membership
+	// still names one of them to lead each: this node claims its share of the ring and asks for
+	// none of the other's.
+	EXPECT_EQ(claimed(http), to_lead(members, one));
+	EXPECT_FALSE(claimed(http).empty());
+	EXPECT_LT(claimed(http).size(), cluster::partition_count);
 
-	std::optional<cluster::leadership> led = cluster.leader("4821");
+	std::optional<cluster::leadership> led = cluster.leader(key_led_by(members, one));
 
 	ASSERT_TRUE(led.has_value());
 	EXPECT_TRUE(led->known);
@@ -664,7 +702,7 @@ TEST(etcd_cluster_test, name_the_node_that_leads_a_partition)
 		{ "header", boost::json::object { { "revision", "60" } } },
 		{ "succeeded", false },
 		{ "responses", boost::json::array { boost::json::object {
-			{ "responseRange", boost::json::object {
+			{ "response_range", boost::json::object {
 				{ "kvs", boost::json::array { boost::json::object {
 					{ "value", base64::encode(two) },
 					{ "create_revision", "41" }
@@ -674,12 +712,13 @@ TEST(etcd_cluster_test, name_the_node_that_leads_a_partition)
 	};
 
 	cluster::config config = configuration(one, "a");
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
 
-	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+	answer_etcd(&http, members);
 	http.answer("/v3/kv/txn", http::answer(200, "application/json", boost::json::serialize(lost)));
 
-	// Every partition is claimed on this pass, so the one this key belongs to is among them
-	// whichever it is.
+	// Every partition this node leads is claimed on this pass, so the one the key belongs to is
+	// among them whichever it is.
 	config.claims_per_refresh = cluster::partition_count;
 
 	cluster::forwarder forwarder(http);
@@ -687,7 +726,7 @@ TEST(etcd_cluster_test, name_the_node_that_leads_a_partition)
 
 	cluster.start();
 
-	std::optional<cluster::leadership> led = cluster.leader("4821");
+	std::optional<cluster::leadership> led = cluster.leader(key_led_by(members, one));
 
 	ASSERT_TRUE(led.has_value());
 	EXPECT_TRUE(led->known);
@@ -785,21 +824,21 @@ TEST(etcd_cluster_test, claim_only_so_many_partitions_on_one_pass)
 	cluster.stop();
 }
 
-// Nothing but a lease takes a claim away, and a membership change moves a partition without any
-// node losing its lease — so a node that has stopped holding a partition is a node leading what it
-// keeps no copy of, and the node holding it now cannot claim it while the key is there.
-TEST(etcd_cluster_test, give_up_a_claim_on_a_partition_it_no_longer_holds)
+// Nothing but a lease takes a claim away, and a membership change renames the leader of a partition
+// without any node losing its lease — so a node the membership has stopped naming is a node leading
+// what is not its to lead, and the node named now cannot claim it while the key is there.
+TEST(etcd_cluster_test, give_up_a_claim_on_a_partition_it_no_longer_leads)
 {
 	http::fake_client http;
-	std::vector<std::string> zone { one, two };
-	size_t moved = partition_owned(zone, one, false);
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "a" } };
+	size_t moved = partition_led(members, one, false);
 
 	ASSERT_LT(moved, cluster::partition_count);
 
-	// This node's own claim on a partition the other node of its zone owns, which is what a zone
+	// This node's own claim on a partition the other node of its zone leads, which is what a zone
 	// that grew leaves behind.
 	answer_leaders(&http, { { moved, one } });
-	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "a" } });
+	answer_etcd(&http, members);
 	answer_elections(&http, 41);
 
 	cluster::config config = configuration(one, "a");
@@ -828,19 +867,52 @@ TEST(etcd_cluster_test, give_up_a_claim_on_a_partition_it_no_longer_holds)
 	cluster.stop();
 }
 
-// The two a pass leaves alone: a partition this node still holds, and one another node claimed.
-TEST(etcd_cluster_test, keep_a_claim_on_a_partition_it_holds_and_one_it_never_made)
+// The claim a node that joins would otherwise never be given. This node is its zone on its own, so
+// it holds a copy of every partition and would have kept every claim it ever made under a rule that
+// asked only whether it still held one — and the node that joined the cluster it is in would lead
+// nothing at all, because nothing would ever have let a claim go.
+TEST(etcd_cluster_test, give_up_a_claim_on_a_partition_it_holds_a_copy_of_and_does_not_lead)
 {
 	http::fake_client http;
-	std::vector<std::string> zone { one, two };
-	size_t held = partition_owned(zone, one, true);
-	size_t theirs = partition_owned(zone, one, false);
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
+	size_t theirs = partition_led(members, one, false);
 
-	ASSERT_LT(held, cluster::partition_count);
 	ASSERT_LT(theirs, cluster::partition_count);
 
-	answer_leaders(&http, { { held, one }, { theirs, two } });
-	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "a" } });
+	answer_leaders(&http, { { theirs, one } });
+	answer_etcd(&http, members);
+	answer_elections(&http, 41);
+
+	cluster::config config = configuration(one, "a");
+
+	config.claims_per_refresh = cluster::partition_count;
+	config.lease_seconds = 1;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	ASSERT_TRUE(wait_for_a_release(http));
+
+	EXPECT_EQ(released(http), std::set<std::string> { "/asyncdb/leader/" + std::to_string(theirs) });
+
+	cluster.stop();
+}
+
+// The two a pass leaves alone: a partition this node still leads, and one another node claimed.
+TEST(etcd_cluster_test, keep_a_claim_on_a_partition_it_leads_and_one_it_never_made)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "a" } };
+	size_t led = partition_led(members, one, true);
+	size_t theirs = partition_led(members, one, false);
+
+	ASSERT_LT(led, cluster::partition_count);
+	ASSERT_LT(theirs, cluster::partition_count);
+
+	answer_leaders(&http, { { led, one }, { theirs, two } });
+	answer_etcd(&http, members);
 	answer_elections(&http, 41);
 
 	cluster::config config = configuration(one, "a");
@@ -861,9 +933,9 @@ TEST(etcd_cluster_test, keep_a_claim_on_a_partition_it_holds_and_one_it_never_ma
 	cluster.stop();
 }
 
-// Nodes walk the partitions from an offset of their own, so two of them claim different parts of
-// the ring rather than racing each other for the same one on every pass.
-TEST(etcd_cluster_test, claim_from_an_offset_of_this_node_s_own)
+// The membership gives each node its own share of the ring to lead, so two of them claim different
+// partitions rather than racing each other for the same one on every pass.
+TEST(etcd_cluster_test, claim_partitions_no_other_node_is_claiming)
 {
 	http::fake_client first;
 	http::fake_client second;

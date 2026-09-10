@@ -300,13 +300,13 @@ those. The three numbers it prints beside that — fresh, stale, gone — are wh
 worth in a line: before it existed, four keys in sixty came back holding a value that had been
 overwritten while the tier was wider.
 
-`nodes-added` also asserts that **a node that joined leads partitions of its own**. A claim on a
-partition is held on the claiming node's lease, and a membership change moves partitions without any
-node losing its lease — so a node giving up the claim on what it has stopped holding is the whole of
-what leaves anything for a new node to claim. Nothing else here would show that missing: only a
-write needs a leader, and a write is ordered by whichever node holds the claim whether it keeps a
-copy of that partition or not. It is asked of the joined nodes over Run Command, because `leads` is
-a node's own count and the load balancer answers from whichever node it picked.
+`nodes-added` also asserts that **a node that joined leads partitions of its own**. Which node leads
+a partition is worked out from the membership, but a claim is held on the claiming node's lease and
+a membership change costs no node its lease — so a node giving up the claim on what it is no longer
+named for is the whole of what leaves anything for a new node to claim. Nothing else here would show
+that missing: only a write needs a leader, and a write is ordered by whichever node holds the claim
+whether the membership still names it or not. It is asked of the joined nodes over Run Command,
+because `leads` is a node's own count and the load balancer answers from whichever node it picked.
 
 ### What is measured and never asserted
 

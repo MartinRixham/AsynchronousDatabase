@@ -45,6 +45,13 @@ namespace cluster
 
 	std::vector<member> owners_of(const std::string &key, const std::vector<member> &members);
 
+	// The node that should lead a partition. It is the owner of the key across the whole
+	// membership, and so the owner of it in one zone as well: a leader always holds a copy of what
+	// it orders writes to. Every node works it out from the membership rather than racing for the
+	// key, which is what makes leadership move when the membership does — a node that has just
+	// joined is the answer for its share of the ring the moment it is in the list.
+	std::string leader_of(const std::string &key, const std::vector<member> &members);
+
 	std::vector<std::vector<std::string>> zones_of(
 		const std::vector<member> &members,
 		const std::string &node,

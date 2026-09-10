@@ -157,6 +157,18 @@ std::vector<cluster::member> cluster::owners_of(const std::string &key, const st
 	return owners;
 }
 
+std::string cluster::leader_of(const std::string &key, const std::vector<member> &members)
+{
+	std::vector<std::string> nodes;
+
+	for (size_t i = 0; i < members.size(); i++)
+	{
+		nodes.push_back(members[i].node);
+	}
+
+	return owner_of(key, nodes);
+}
+
 std::vector<std::vector<std::string>> cluster::zones_of(
 	const std::vector<member> &members,
 	const std::string &node,
