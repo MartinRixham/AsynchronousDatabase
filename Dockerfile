@@ -37,6 +37,11 @@ COPY --from=builder /build/bin/asyncdb .
 ENV ASYNCDB_DATA=/var/lib/asyncdb
 RUN mkdir -p /var/lib/asyncdb
 
+# A write is taken only where a leader claimed in etcd ordered it. A container is a node of a
+# cluster, so a node that reaches no etcd is a node that has lost the others rather than one
+# standing on its own, and a write it took alone is one no other copy of the key ever hears about.
+ENV ASYNCDB_UNLED_WRITES=false
+
 CMD nginx & ./asyncdb
 
 # 80 is nginx and the UI, and 8080 is the API, which is how the other nodes of a cluster reach

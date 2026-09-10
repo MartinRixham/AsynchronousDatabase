@@ -25,6 +25,13 @@ namespace
 		return value == NULL ? "" : value;
 	}
 
+	// A flag is turned off only by saying so: unset, empty and anything else is the default it
+	// carries in the config, because a misspelt value must not quietly change what a node does.
+	bool reads_false(const std::string &configured)
+	{
+		return configured == "false" || configured == "0";
+	}
+
 	std::vector<std::string> read_endpoints(const std::string &configured)
 	{
 		std::vector<std::string> split;
@@ -77,6 +84,7 @@ cluster::config cluster::from_environment()
 	config.endpoints = read_endpoints(environment("ASYNCDB_ETCD"));
 	config.node = environment("ASYNCDB_NODE");
 	config.zone = environment("ASYNCDB_ZONE");
+	config.unled_writes = !reads_false(environment("ASYNCDB_UNLED_WRITES"));
 
 	return config;
 }
@@ -278,7 +286,14 @@ std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::stri
 {
 	if (snapshot()->size() < 2)
 	{
-		return std::nullopt;
+		if (configuration.unled_writes)
+		{
+			return std::nullopt;
+		}
+
+		// A membership this small claims nothing, so a deployment that writes only where a leader
+		// says so is answered a leader it has not got rather than no leadership at all.
+		return leadership();
 	}
 
 	size_t partition = ::cluster::partition_of(key);

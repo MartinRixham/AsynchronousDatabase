@@ -78,6 +78,7 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 | `ASYNCDB_ETCD` | Where etcd answers. One base URL, or every member of the etcd cluster separated by commas. Unset is one instance on its own |
 | `ASYNCDB_NODE` | This node as the other nodes reach it. Unset is one instance on its own |
 | `ASYNCDB_ZONE` | The availability zone this node is in. Every zone holds [one copy of every record](/database/cluster#one-copy-in-every-zone). Unset is one zone, which is one copy |
+| `ASYNCDB_UNLED_WRITES` | Whether an instance that [leads nothing](/database/cluster#what-a-write-and-a-read-do) takes a write anyway. Default true, which is the lone instance writing what it is given; `false` refuses the write with `no_leader` unless a leader claimed in etcd ordered it, and is what the image sets |
 
 | Variable | Is |
 | --- | --- |

@@ -564,10 +564,13 @@ namespace
 
 		std::string previous_node;
 
+		std::string previous_unled_writes;
+
 	public:
 		environment():
 			previous_etcd(getenv("ASYNCDB_ETCD") == NULL ? "" : getenv("ASYNCDB_ETCD")),
-			previous_node(getenv("ASYNCDB_NODE") == NULL ? "" : getenv("ASYNCDB_NODE"))
+			previous_node(getenv("ASYNCDB_NODE") == NULL ? "" : getenv("ASYNCDB_NODE")),
+			previous_unled_writes(getenv("ASYNCDB_UNLED_WRITES") == NULL ? "" : getenv("ASYNCDB_UNLED_WRITES"))
 		{
 		}
 
@@ -575,6 +578,7 @@ namespace
 		{
 			set("ASYNCDB_ETCD", previous_etcd);
 			set("ASYNCDB_NODE", previous_node);
+			set("ASYNCDB_UNLED_WRITES", previous_unled_writes);
 		}
 
 		environment(const environment &) = delete;
@@ -655,6 +659,35 @@ TEST(etcd_cluster_test, stand_alone_when_only_etcd_is_named)
 	environment.set("ASYNCDB_NODE", "");
 
 	EXPECT_FALSE(cluster::from_environment().is_clustered());
+}
+
+TEST(etcd_cluster_test, take_a_write_no_leader_ordered_when_the_environment_says_nothing)
+{
+	environment environment;
+
+	environment.set("ASYNCDB_UNLED_WRITES", "");
+
+	EXPECT_TRUE(cluster::from_environment().unled_writes);
+}
+
+TEST(etcd_cluster_test, refuse_a_write_no_leader_ordered_when_the_environment_says_so)
+{
+	environment environment;
+
+	environment.set("ASYNCDB_UNLED_WRITES", "false");
+
+	EXPECT_FALSE(cluster::from_environment().unled_writes);
+}
+
+// A value that is not one this understands is a deployment that has said nothing rather than one
+// that has turned the flag off.
+TEST(etcd_cluster_test, take_a_write_no_leader_ordered_when_the_environment_says_something_else)
+{
+	environment environment;
+
+	environment.set("ASYNCDB_UNLED_WRITES", "no");
+
+	EXPECT_TRUE(cluster::from_environment().unled_writes);
 }
 
 // A node claims the partitions the membership names it to lead, and the one that created the key
@@ -751,6 +784,27 @@ TEST(etcd_cluster_test, lead_nothing_when_the_instance_stands_alone)
 
 	EXPECT_FALSE(cluster.leader("4821").has_value());
 	EXPECT_TRUE(http.sent_to("/v3/kv/txn").empty());
+}
+
+// The flag the image carries: an instance that stands alone claims nothing, so a deployment that
+// orders every write is one where it has no leader rather than no leadership to wait for.
+TEST(etcd_cluster_test, lead_nobody_when_the_instance_stands_alone_and_a_write_must_be_led)
+{
+	http::fake_client http;
+	cluster::config config;
+
+	config.node = one;
+	config.unled_writes = false;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	std::optional<cluster::leadership> led = cluster.leader("4821");
+
+	ASSERT_TRUE(led.has_value());
+	EXPECT_FALSE(led->known);
 }
 
 // A cluster whose leaders cannot be read from etcd is a partition that is led by nobody, which is

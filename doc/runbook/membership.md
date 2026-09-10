@@ -214,6 +214,7 @@ Reads never wait for a leader, which is why this presents as a write-only outage
 | Sums to 256 | Settled. Every partition is led |
 | Sums to less, and rising | A cold cluster still claiming. 64 per node per pass — wait a pass or two |
 | `0` everywhere, not rising | No node can write to etcd. Claims are transactions, so a read-only etcd claims nothing |
+| `0` on a node whose `nodes` names only itself | It reaches no etcd, and `ASYNCDB_UNLED_WRITES=false` refuses a write nothing ordered. It is [etcd cannot be reached](#etcd-cannot-be-reached), seen from a node that has lost the membership rather than from etcd |
 | Sums to 256 but a write still says `no_leader` | The leader of that partition is a node this one cannot reach, or the two disagree about the membership |
 | Sums to 256, and a node that just joined leads none of it | The nodes the membership stopped naming have not given those claims up yet. Two passes, so seconds — longer, and they cannot write to etcd |
 | Sums to 256, and one node leads far more of it than the others | The membership those nodes read does not agree. `leads` is worked out from the same hashing on every node, so an even split is what agreement looks like |

@@ -299,10 +299,15 @@ commas, tried in turn and sticky on whichever answered), `ASYNCDB_NODE` (this no
 reach it, the API port and not the nginx in front of it) and `ASYNCDB_ZONE` (the availability zone
 this node is in). **Set none and nothing changes**: no thread is started, nothing is registered, and
 the instance owns the whole keyspace, which is what every test that is not `cluster_test` runs as.
-Set the first two and the instance joins. The three are read in one place,
-`cluster::from_environment()` in `cluster/etcd_cluster.h`, which fills a `cluster::config`: the
-endpoints, this node and its zone, and beside them the tunables nothing sets from outside — a ten
-second membership lease, the `/asyncdb/node/` and `/asyncdb/leader/` prefixes,
+Set the first two and the instance joins. **`ASYNCDB_UNLED_WRITES` is the fourth**, and the only one
+of them that is not about joining: false is a node taking a write only where a leader claimed in etcd
+ordered it, so a membership too small to claim anything — no etcd reached, or this node alone
+registered in it — answers `no_leader` rather than writing what nobody ordered. It defaults to true,
+which is the lone instance every test and `cmk run` serve, and the `Dockerfile` sets it false, because
+a container is a node of a cluster and one on its own there has lost the others. The four are read in
+one place, `cluster::from_environment()` in `cluster/etcd_cluster.h`, which fills a `cluster::config`:
+the endpoints, this node and its zone, that flag, and beside them the tunables nothing sets from
+outside — a ten second membership lease, the `/asyncdb/node/` and `/asyncdb/leader/` prefixes,
 `claims_per_refresh`, and three timeouts (two seconds to connect at all, thirty to finish, and five
 for etcd, which is on a shorter leash because a node that cannot reach it carries on serving what
 it holds). `config::is_clustered()` — endpoints and a node name, both set — is that rule as the

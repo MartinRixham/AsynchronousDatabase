@@ -277,6 +277,19 @@ leader.
 An instance standing alone, or a cluster with no zones, orders nothing: there is
 one copy and nobody to race with, so a write is written where it always was.
 
+Unless it is told otherwise. `ASYNCDB_UNLED_WRITES=false` is a deployment where
+a write is taken only where a leader claimed in etcd ordered it, so an instance
+whose membership is too small to claim anything — one that reaches no etcd, and
+one that is the only node registered in it — answers `503 no_leader` to every
+write instead of taking one nothing ordered. Reads are untouched, as they are in
+every other window a leader leaves.
+
+**The image sets it**, because a container is a node of a cluster: a node there
+that is alone has lost the others rather than been meant to stand by itself, and
+a write it takes on its own is one the other copies of the key never hear about.
+The binary's own default is the other way, which is the lone instance a
+`cmk run` or a test serves.
+
 A record is read from **one** copy: this node's own when it holds one, and
 otherwise the copy in this node's own zone, which is the near one. A copy that
 does not answer at all is passed over for the next, so a zone being down is a

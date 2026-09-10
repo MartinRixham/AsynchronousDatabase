@@ -31,6 +31,14 @@ namespace cluster
 
 		std::string zone;
 
+		// Whether a node leading nothing takes a write anyway. A node standing alone claims no
+		// partition, because it races with nobody, so true is the lone instance that owns the
+		// whole keyspace serving writes as it always has; false is a deployment where a write is
+		// only ever ordered by a leader claimed in etcd, and a node that reaches no etcd — or
+		// stands in a membership too small to claim anything — refuses the write rather than
+		// taking one nothing ordered.
+		bool unled_writes = true;
+
 		// How long the membership of a node outlives the node itself.
 		int64_t lease_seconds = 10;
 
