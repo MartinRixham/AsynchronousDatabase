@@ -7,8 +7,6 @@ namespace
 	const std::map<std::string, boost::beast::http::status> statuses {
 		{ "table_not_found", boost::beast::http::status::not_found },
 		{ "table_exists", boost::beast::http::status::conflict },
-		{ "record_exists", boost::beast::http::status::conflict },
-		{ "table_immutable", boost::beast::http::status::conflict },
 		{ "invalid_table_name", boost::beast::http::status::bad_request },
 		{ "invalid_body", boost::beast::http::status::bad_request },
 		{ "dependency_not_found", boost::beast::http::status::bad_request },

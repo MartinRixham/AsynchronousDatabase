@@ -64,7 +64,7 @@ protected:
 
 	void create_table(const std::string &name)
 	{
-		repository->create_table(table::valid_table(name, std::vector<std::string>(), false));
+		repository->create_table(table::valid_table(name, std::vector<std::string>()));
 	}
 };
 
@@ -84,7 +84,7 @@ TEST_F(repository_test, create_and_read_tables)
 TEST_F(repository_test, two_instances_do_not_share_a_keyspace)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>(), false));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
 
 	repository->write_record("a_table", record::valid_record("a key", "a value"));
 
@@ -436,7 +436,7 @@ namespace
 TEST_F(repository_test, a_file_carries_a_table_from_one_store_to_another)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>(), false));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 	repository->write_record("a_table", record::valid_record("2", "two"));
@@ -454,7 +454,7 @@ TEST_F(repository_test, a_file_carries_a_table_from_one_store_to_another)
 TEST_F(repository_test, a_file_carries_the_partitions_it_was_asked_for_and_no_others)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>(), false));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 	repository->write_record("a_table", record::valid_record("2", "two"));
@@ -475,7 +475,7 @@ TEST_F(repository_test, a_file_carries_the_partitions_it_was_asked_for_and_no_ot
 TEST_F(repository_test, a_file_that_carried_nothing_is_no_file_at_all)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>(), false));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 
@@ -503,7 +503,7 @@ TEST_F(repository_test, an_export_of_a_table_holding_nothing_carries_nothing)
 TEST_F(repository_test, a_store_keeps_what_it_holds_already_when_a_file_carries_that_key_too)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>(), false));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
 
 	repository->write_record("a_table", record::valid_record("1", "theirs"));
 	repository->write_record("a_table", record::valid_record("2", "theirs"));
@@ -523,7 +523,7 @@ TEST_F(repository_test, a_store_keeps_what_it_holds_already_when_a_file_carries_
 TEST_F(repository_test, a_walk_larger_than_one_file_resumes_where_it_reached)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>(), false));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 	repository->write_record("a_table", record::valid_record("2", "two"));
@@ -569,7 +569,7 @@ TEST_F(repository_test, a_store_serves_within_the_memory_budget_it_was_given)
 
 	repository::rocksdb_repository small("/tmp/asyncdb_small", 16 * 1024 * 1024);
 
-	small.create_table(table::valid_table("a_table", std::vector<std::string>(), false));
+	small.create_table(table::valid_table("a_table", std::vector<std::string>()));
 	small.write_record("a_table", record::valid_record("1", "one"));
 
 	EXPECT_EQ("one", small.read_record("a_table", "1").value_or(""));
@@ -601,7 +601,7 @@ TEST_F(repository_test, a_transfer_the_process_before_it_left_behind_goes_when_t
 TEST_F(repository_test, a_file_of_keys_is_what_a_store_gives_records_up_on)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>(), false));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 	repository->write_record("a_table", record::valid_record("2", "two"));
@@ -666,7 +666,7 @@ TEST_F(repository_test, says_where_a_table_would_be_cut_up)
 	// files a split is read off rather than sitting in memory where it cannot be seen.
 	repository::rocksdb_repository splitting("/tmp/asyncdb_split", 16 * 1024 * 1024);
 
-	splitting.create_table(table::valid_table("a_table", std::vector<std::string>(), false));
+	splitting.create_table(table::valid_table("a_table", std::vector<std::string>()));
 
 	for (size_t i = 0; i < 320; i++)
 	{
@@ -713,7 +713,7 @@ TEST_F(repository_test, a_table_that_is_not_worth_cutting_up_is_cut_up_no_ways)
 TEST_F(repository_test, the_pieces_of_a_share_are_every_record_and_no_record_twice)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>(), false));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 	repository->write_record("a_table", record::valid_record("2", "two"));

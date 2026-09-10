@@ -42,7 +42,7 @@ test.describe("create table", () => {
 			// The name and the dependency reached the database, and it is the new table the side
 			// bar opens on.
 			expect(await database.tables())
-				.toContainEqual({ name: "ledger", dependencies: ["transaction"], immutable: false });
+				.toContainEqual({ name: "ledger", dependencies: ["transaction"] });
 
 			await box(page, "ledger").click();
 

@@ -19,8 +19,6 @@ namespace table
 
 		boost::json::object json;
 
-		bool immutable = false;
-
 		std::string code;
 
 		std::string message;
@@ -32,7 +30,7 @@ namespace table
 
 	table parse_table(const std::string &name, const boost::json::object &json, const std::set<std::string> &tables);
 
-	table valid_table(const std::string &name, const std::vector<std::string> &dependencies, bool immutable);
+	table valid_table(const std::string &name, const std::vector<std::string> &dependencies);
 
 	table invalid_table(const std::string &code, const std::string &message);
 

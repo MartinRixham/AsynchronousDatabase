@@ -252,19 +252,6 @@ idempotent, a key and a value or a key that is gone, so **the remedy is to run
 the request again**, which is the remedy for a table create or a range delete
 that one node refused as well.
 
-A write to a key an [immutable table](/database/tables#immutable-tables) already
-holds never gets that far. The leader holds a copy of the key, so it is the node
-that can tell, and it refuses before it has written its own copy or asked the
-others:
-
-> `409 record_exists` — this key has been written, and an immutable table writes
-> each key once.
-
-A delete does not get as far as the leader at all. Every node holds the table
-document, so whichever node the request landed on answers it:
-
-> `409 table_immutable` — an immutable table keeps what it holds.
-
 A partition nothing leads yet has nowhere to order a write:
 
 > `503 no_leader` — no node is leading this key's partition, so try again.
