@@ -494,9 +494,11 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   answers "which partition is this key in" is a pure function of the key. `split_points` is the
   other half of a walk: where a table would be cut up so that several workers can read it at once,
   weighed by the sizes of the files each key starts.
-  `rocksdb_repository` makes each table a **column family** and keeps its document in the default one
-  under `"TABLE_<name>"`; dropping a table drops the column family, so the data goes with it. The
-  handle map is guarded by a `shared_mutex`. Every write goes through `written` rather than `check`,
+  `rocksdb_repository` makes each table a **column family** and keeps the whole schema in one
+  record of the default one under `"SCHEMA"`; dropping a table drops the column family, so the data
+  goes with it. The handle map and the parsed schema beside it are guarded by one `shared_mutex`,
+  and the families are made to match the schema record at open, that record being what the cluster
+  agrees on where a create's two writes did not both land. Every write goes through `written` rather than `check`,
   which `Resume()`s a store RocksDB stopped for a background error before reporting the failure:
   a write that failed for want of space is otherwise sticky, and a disk with room on it again would
   be a node refusing every write to half the keyspace until somebody restarted it.
@@ -609,9 +611,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   is why a file of records carries versions without carrying anything extra, the bytes that move
   being the bytes the store holds. The count comes from `repository::next_count()`, reserved on disk
   a million at a time, so stamping a write costs nothing and a process that restarts carries on
-  above every count the one before it issued. **A store written before this refuses to open**: its
-  values have no version to tell from their first bytes, and `check_format` says so rather than
-  serving what was never written.
+  above every count the one before it issued. It is the same count a schema operation is stamped
+  with. **A store of another format refuses to open**: `check_format` holds `format_version`, 1
+  for the schema in one versioned record, and a store that names a different one or names none at
+  all and has something in it is refused rather than read as versions that were never written.
 - **A file overwrites only what was written before it.** `import_records` keeps a record the store
   holds at a later version and replaces an earlier one, which is what catches up a copy that was
   not there for a write the others took. It is the store that decides and not the caller — the
@@ -621,13 +624,25 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   up on rather than one to hand over, and leaves a key it has nothing for alone, so a pass does not
   write a tombstone for every record it never held. That is why a file of keys alone carries the
   versions in place of the values.
-- **A pass reads the schema before it reads a record.** `transfer::tables` asks the nodes of a
-  zone in turn for `GET /table` and takes the first answer, and both `rebuild::rebuild` and
-  `reconcile::reconcile` go through it. The reconcile pass creates the tables this node lacks and
-  **never drops one**: nothing else puts a table on a node that missed the create, because the
-  rebuild runs on an empty store alone, while a table dropped here on a peer's say so takes its
-  records with it. A table a node is missing is every write to it refused for the keys that node
-  owns, which is what makes it worth a round trip a pass.
+- **The schema is one record, and every name in it carries a version.** `table::schema` is every
+  name the store has heard of — the dropped ones kept as tombstones — each at the version it was
+  last written at, and `repository` holds it parsed rather than reading it per request, because
+  every record request asks whether the table is there. A create and a delete are stamped by the
+  node that ordered them the way a record write is (`router::schema_stamp`), and the stamp travels
+  to every node, so one create is one version across the cluster. **The version is per name and
+  never per schema**: one number over the whole document would vouch for operations the node never
+  applied, a node that missed one and took the next carrying a version as high as a node that took
+  both — which is a replication log, and there is none here.
+- **A pass reads the schema before it reads a record.** `transfer::tables` asks the nodes of a zone
+  in turn for `GET /schema` and takes the first answer, and both `rebuild::rebuild` and
+  `reconcile::reconcile` go through it into `repository::merge_schema`, which takes every entry
+  standing later than this node's own and makes or drops a column family to match. A table a node
+  is missing is every write to it refused for the keys that node owns; a tombstone stamped after
+  the create this node holds is the delete it missed. **A live entry never drops a column family**:
+  one create carried to a node that had missed it is stamped again, so two nodes hold one table at
+  two versions, and dropping on that would take the records of a table the cluster still has. A
+  name the peer says nothing at all about is likewise left standing — that is a node wrong about
+  the schema, not a delete.
 - **Records move when ownership moves, and only then.** A membership change redraws the split inside
   a zone without moving a record, so `reconcile::reconcile` does: it **fetches** what this node now
   owns and holds nothing for, from every other node, and **clears down** what it no longer owns.

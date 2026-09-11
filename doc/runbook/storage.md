@@ -1,8 +1,9 @@
 # The store
 
 One instance is one RocksDB, in one directory, named by `ASYNCDB_DATA` and
-defaulting to `/var/lib/asyncdb`. A table is a **column family**, and the table
-document lives in the default one under `TABLE_<name>`.
+defaulting to `/var/lib/asyncdb`. A table is a **column family**, and the whole
+schema — every name the store has heard of, the dropped ones included — is one
+record of the default one under `SCHEMA`.
 
 Two consequences run through everything on this page:
 
@@ -115,7 +116,15 @@ in](/database/cluster#every-record-carries-a-version) in front of their values,
 and a store written before they did holds values that are values all the way
 through. The two cannot be told apart by looking, so a store with tables in it
 and no note of its format is refused rather than read as versions that were never
-written. **Upgrading past this is therefore a rebuild and not a restart**: empty
+written. A store that names a format this build does not read is refused the same
+way and says so:
+
+> `The store is format 2 and this build reads format 1.`
+
+Format 1 is [the schema in one versioned
+record](/database/cluster#the-schema-is-one-record-and-every-name-in-it-carries-a-version),
+and it is the only format there has been: a store naming another one was written
+by a build this one is not. **Moving across a format is therefore a rebuild and not a restart**: empty
 the volume and let the node fill itself from a zone that is already on the new
 build — which is what happens by itself wherever an instance is replaced rather
 than restarted, the root volume going with it. Do one node at a time, and never

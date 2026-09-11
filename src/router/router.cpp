@@ -281,6 +281,19 @@ router::response router::router::route(const request &request)
 			health);
 	}
 
+	// The whole schema, versions and tombstones and all, for a node filling a store or reconciling
+	// one against the cluster. `GET /table` is the client's view of the same thing and carries
+	// neither, because a client has no use for a name that is gone.
+	if (path.size() == 1 && path[0] == "schema")
+	{
+		if (request.method != boost::beast::http::verb::get)
+		{
+			return method_not_allowed(request.method);
+		}
+
+		return json_response(boost::beast::http::status::ok, repository.read_schema().json());
+	}
+
 	if (path.empty() || path[0] != "table")
 	{
 		return not_found("route for this path");
@@ -695,6 +708,19 @@ router::router::ordering router::router::order_schema(const request &request)
 	return ordering { std::nullopt, nodes.peers(), lead->term };
 }
 
+// A schema operation is stamped by the node that orders it, exactly as a write to a record is, and
+// the stamp travels to every node so that one create is one version everywhere. A node it was
+// carried to applies what it was given; a node ordering it takes the next count of its own.
+record::version router::router::schema_stamp(const request &request, const ordering &order) const
+{
+	if (order.carried)
+	{
+		return record::version { static_cast<uint64_t>(request.term), request.count };
+	}
+
+	return record::version { static_cast<uint64_t>(order.term), repository.next_count() };
+}
+
 router::response router::router::create_table(const request &request, const std::string &name)
 {
 	std::optional<boost::json::object> body = parse_body(request.body);
@@ -724,6 +750,7 @@ router::response router::router::create_table(const request &request, const std:
 	}
 
 	table::table existing = repository.read_table(name);
+	record::version stamp = schema_stamp(request, order);
 	response created;
 
 	if (existing.is_valid)
@@ -737,12 +764,12 @@ router::response router::router::create_table(const request &request, const std:
 	}
 	else
 	{
-		repository.create_table(table);
+		repository.create_table(table, stamp);
 
 		created = json_response(boost::beast::http::status::created, table.json);
 	}
 
-	std::optional<response> failure = nodes.send_all(order.peers, carried(request, order.term));
+	std::optional<response> failure = nodes.send_all(order.peers, carried(request, order.term, stamp.count));
 
 	return failure ? *failure : created;
 }
@@ -758,10 +785,17 @@ router::response router::router::delete_table(const request &request, const std:
 
 	std::lock_guard<std::mutex> ordered(write_lock(cluster::table_key));
 
+	record::version stamp = schema_stamp(request, order);
+
 	if (!repository.has_table(name))
 	{
+		// A node the delete was carried to writes the tombstone anyway. It may be a node that
+		// missed the create, and the name being gone as of this version is the answer it needs
+		// most — otherwise it takes the table back from a peer on the next pass.
 		if (order.carried)
 		{
+			repository.delete_table(name, stamp);
+
 			return empty_response(boost::beast::http::status::no_content);
 		}
 
@@ -770,14 +804,14 @@ router::response router::router::delete_table(const request &request, const std:
 			return node_incomplete();
 		}
 
-		std::optional<response> refused = nodes.send_all(order.peers, carried(request, order.term));
+		std::optional<response> refused = nodes.send_all(order.peers, carried(request, order.term, stamp.count));
 
 		return refused ? *refused : table_not_found(name);
 	}
 
-	repository.delete_table(name);
+	repository.delete_table(name, stamp);
 
-	std::optional<response> failure = nodes.send_all(order.peers, carried(request, order.term));
+	std::optional<response> failure = nodes.send_all(order.peers, carried(request, order.term, stamp.count));
 
 	return failure ? *failure : empty_response(boost::beast::http::status::no_content);
 }

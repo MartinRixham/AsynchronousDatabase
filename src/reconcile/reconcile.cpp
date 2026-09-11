@@ -162,10 +162,14 @@ namespace
 		return found;
 	}
 
-	// The tables a node of this cluster has that this one does not. **A pass creates them and never
-	// drops one**: a table here that no peer named is a delete this node missed or a peer that is
-	// wrong about the schema, and only one of those is worth acting on — where a table this node
-	// is missing is every write to it refused for the keys this node owns.
+	// This node's schema brought up to the cluster's: every name the peer holds at a later version
+	// than this node does, taken. **A name is decided on its own version and never on the
+	// schema's**, because a node that missed one operation and applied the next would otherwise
+	// carry a version vouching for both — which is a replication log, and there is none here.
+	//
+	// A table this node is missing is every write to it refused for the keys this node owns, and a
+	// table the cluster dropped is a name whose tombstone says so. What a live entry replacing a
+	// live entry never does is drop a column family: one create carried twice is one table.
 	size_t declare_tables(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
@@ -174,26 +178,14 @@ namespace
 	{
 		for (size_t zone = 0; zone < zones.size(); zone++)
 		{
-			std::optional<std::vector<table::table>> named = transfer::tables(nodes, zones[zone], waiting);
+			std::optional<table::schema> named = transfer::tables(nodes, zones[zone], waiting);
 
 			if (!named)
 			{
 				continue;
 			}
 
-			size_t declared = 0;
-
-			for (size_t i = 0; i < named->size(); i++)
-			{
-				if (!repository.has_table((*named)[i].name))
-				{
-					repository.create_table((*named)[i]);
-
-					declared++;
-				}
-			}
-
-			return declared;
+			return repository.merge_schema(*named);
 		}
 
 		return 0;
@@ -289,7 +281,7 @@ reconcile::outcome reconcile::reconcile(
 
 	if (declared > 0)
 	{
-		DEBUG("Declared " + std::to_string(declared) + " tables the rest of the cluster has.");
+		DEBUG("Took " + std::to_string(declared) + " names from the schema the rest of the cluster is on.");
 	}
 
 	std::set<table::table> tables = repository.list_tables();

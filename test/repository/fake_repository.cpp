@@ -50,13 +50,13 @@ repository::fake_repository::fake_repository():
 {
 }
 
-void repository::fake_repository::create_table(const table::table &table)
+void repository::fake_repository::create_table(const table::table &table, const record::version &stamp)
 {
 	std::lock_guard<std::mutex> lock(*mutex);
 
 	if (table.is_valid)
 	{
-		tables[table.name] = boost::json::serialize(table.json);
+		tables.create(table, stamp);
 		records[table.name];
 	}
 }
@@ -65,14 +65,7 @@ std::set<table::table> repository::fake_repository::list_tables() const
 {
 	std::lock_guard<std::mutex> lock(*mutex);
 
-	std::set<table::table> table_list;
-
-	for (std::map<std::string, std::string>::const_iterator it = tables.begin(); it != tables.end(); ++it)
-	{
-		table_list.insert(table::to_table(it->second));
-	}
-
-	return table_list;
+	return tables.tables();
 }
 
 bool repository::fake_repository::has_table(const std::string &table_name) const
@@ -84,28 +77,51 @@ bool repository::fake_repository::has_table(const std::string &table_name) const
 
 bool repository::fake_repository::holds(const std::string &table_name) const
 {
-	return tables.count(table_name) > 0;
+	return tables.has(table_name);
 }
 
 table::table repository::fake_repository::read_table(const std::string &table_name) const
 {
 	std::lock_guard<std::mutex> lock(*mutex);
 
-	if (tables.count(table_name))
-	{
-		return table::to_table(tables.at(table_name));
-	}
-
-	return table::invalid_table("table_not_found", "No table named \"" + table_name + "\".");
+	return tables.read(table_name);
 }
 
-void repository::fake_repository::delete_table(const std::string &table_name)
+void repository::fake_repository::delete_table(const std::string &table_name, const record::version &stamp)
 {
 	std::lock_guard<std::mutex> lock(*mutex);
 
-	// The data goes with the table, as it goes with a dropped column family.
-	tables.erase(table_name);
+	// The data goes with the table, as it goes with a dropped column family, and the name is left
+	// standing as a tombstone.
+	tables.remove(table_name, stamp);
 	records.erase(table_name);
+}
+
+table::schema repository::fake_repository::read_schema() const
+{
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	return tables;
+}
+
+size_t repository::fake_repository::merge_schema(const table::schema &named)
+{
+	std::lock_guard<std::mutex> lock(*mutex);
+	std::vector<table::schema::change> changed = tables.merge(named);
+
+	for (size_t i = 0; i < changed.size(); i++)
+	{
+		if (changed[i].live)
+		{
+			records[changed[i].name];
+		}
+		else
+		{
+			records.erase(changed[i].name);
+		}
+	}
+
+	return changed.size();
 }
 
 void repository::fake_repository::write_record(const std::string &table_name, const record::record &record)

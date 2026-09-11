@@ -121,6 +121,8 @@ namespace router
 
 		ordering order_schema(const request &request);
 
+		record::version schema_stamp(const request &request, const ordering &order) const;
+
 		response create_table(const request &request, const std::string &name);
 
 		response delete_table(const request &request, const std::string &name);

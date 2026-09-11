@@ -17,6 +17,7 @@ Every endpoint, status code, error code and limit in one place.
 | `GET` | `/table/{table}/key` | [Scan a range](/database/scans) |
 | `GET` | `/table/{table}/file` | One node asking another for [its share of a table](/database/cluster#moving-a-share-of-a-table), as records or as `values=false` keys. Between nodes, not for clients |
 | `GET` | `/table/{table}/split` | Where the node being read would [cut a walk of its table up](/database/cluster#several-pieces-at-once), so that several pieces of it can be read at once. Between nodes, not for clients |
+| `GET` | `/schema` | The [whole schema](/database/cluster#the-schema-is-one-record-and-every-name-in-it-carries-a-version) this node holds: every name it has heard of, the dropped ones included, each with the version it stands at. Between nodes, not for clients |
 | `GET` | `/health` | Liveness, whether writes are stalled, whether the node [holds less than it owns](/runbook/rebuild), whether it can order a write at all, [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) and how many partitions this node leads. `503` rather than `200` is a node that can order no write, and the document is the same either way — [reading it](/runbook/#health) |
 
 ## Errors

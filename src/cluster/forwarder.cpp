@@ -48,6 +48,13 @@ namespace
 		if (request.term != 0)
 		{
 			headers.push_back(std::string(cluster::term_header) + ": " + std::to_string(request.term));
+		}
+
+		// The count travels without a term as well, because a schema operation in a cluster that
+		// leads nothing is still stamped once by the node that ordered it and applied as it was
+		// given everywhere else. A term of its own is the one thing such a node cannot issue.
+		if (request.count != 0)
+		{
 			headers.push_back(std::string(cluster::count_header) + ": " + std::to_string(request.count));
 		}
 

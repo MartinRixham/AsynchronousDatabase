@@ -11,6 +11,7 @@
 #include "reconcile/reconcile.h"
 #include "record/record.h"
 #include "table/table.h"
+#include "table/schema.h"
 #include "url/url.h"
 #include "../cluster/fake_cluster.h"
 #include "../repository/fake_repository.h"
@@ -48,7 +49,7 @@ namespace
 	{
 		repository::fake_repository source;
 
-		source.create_table(table::valid_table("account", std::vector<std::string>()));
+		source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
 		for (size_t i = 0; i < keys.size(); i++)
 		{
@@ -67,17 +68,27 @@ namespace
 
 	// The schema as a node names it, which is the first thing a pass asks any node for: a table
 	// this node is missing is one it would refuse every write to.
-	router::response named(const std::vector<std::string> &names)
+	router::response named(
+		const std::vector<std::string> &names,
+		const std::vector<std::string> &dropped = std::vector<std::string>(),
+		const record::version &stamp = record::version { 1, 1 })
 	{
-		boost::json::array listed;
+		table::schema schema;
 
 		for (size_t i = 0; i < names.size(); i++)
 		{
-			listed.push_back(table::valid_table(names[i], std::vector<std::string>()).json);
+			schema.create(table::valid_table(names[i], std::vector<std::string>()), stamp);
 		}
 
-		return router::json_response(
-			boost::beast::http::status::ok, boost::json::object { { "tables", listed } });
+		// A name the cluster dropped, at the version the delete was ordered in. It is what tells a
+		// node holding that table that it missed the delete rather than that its peer missed the
+		// create.
+		for (size_t i = 0; i < dropped.size(); i++)
+		{
+			schema.remove(dropped[i], stamp);
+		}
+
+		return router::json_response(boost::beast::http::status::ok, schema.json());
 	}
 
 	// A file of records, which is what a node answers a fetch with.
@@ -113,7 +124,7 @@ namespace
 	{
 		repository::fake_repository source;
 
-		source.create_table(table::valid_table("account", std::vector<std::string>()));
+		source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
 		for (size_t i = 0; i < keys.size(); i++)
 		{
@@ -134,7 +145,7 @@ namespace
 	{
 		repository::fake_repository repository;
 
-		repository.create_table(table::valid_table("account", std::vector<std::string>()));
+		repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
 		for (size_t i = 0; i < keys.size(); i++)
 		{
@@ -629,7 +640,7 @@ TEST(reconcile_test, takes_a_record_written_after_the_one_this_node_holds)
 {
 	repository::fake_repository repository;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 	repository.write_record("account", stamped("a", "stale", 41, 4));
 
 	cluster::fake_cluster nodes(self, three_zones());
@@ -649,7 +660,7 @@ TEST(reconcile_test, keeps_a_record_written_after_the_one_a_file_carries)
 {
 	repository::fake_repository repository;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 	repository.write_record("account", stamped("a", "fresh", 41, 9));
 
 	cluster::fake_cluster nodes(self, three_zones());
@@ -671,7 +682,7 @@ TEST(reconcile_test, keeps_a_record_the_node_that_owns_it_has_yet_to_catch_up_on
 {
 	repository::fake_repository repository;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 	repository.write_record("account", stamped("gone", "fresh", 41, 9));
 
 	cluster::fake_cluster nodes(self, three_zones());
@@ -693,7 +704,7 @@ TEST(reconcile_test, gives_up_a_record_the_node_that_owns_it_holds_at_the_same_v
 {
 	repository::fake_repository repository;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 	repository.write_record("account", stamped("gone", "the write", 41, 9));
 
 	cluster::fake_cluster nodes(self, three_zones());
@@ -738,14 +749,14 @@ TEST(reconcile_test, fills_a_table_it_declared_in_the_same_pass)
 	EXPECT_EQ("value of a", repository.read_record("account", "a").value_or(""));
 }
 
-// A pass declares a table and never drops one. A table here that no other node names is a delete
-// this node missed or a node that is wrong about the schema, and dropping a table takes its records
-// with it — so it is left standing and the delete is run again instead.
+// A name no other node mentions at all is a node that is wrong about the schema rather than a
+// delete this node missed, and dropping a table takes its records with it — so it is left standing.
+// It is the tombstone below, and nothing else, that says a name is gone.
 TEST(reconcile_test, keeps_a_table_no_other_node_names)
 {
 	repository::fake_repository repository = store({});
 
-	repository.create_table(table::valid_table("kept", std::vector<std::string>()));
+	repository.create_table(table::valid_table("kept", std::vector<std::string>()), record::version { 1, 1 });
 
 	cluster::fake_cluster nodes(self, three_zones());
 
@@ -754,6 +765,63 @@ TEST(reconcile_test, keeps_a_table_no_other_node_names)
 	reconciled(repository, nodes, running);
 
 	EXPECT_TRUE(repository.has_table("kept"));
+}
+
+// The delete this node missed, as the rest of the cluster carries it: a name it holds live against
+// a tombstone stamped later. That is the one thing that drops a table here, and it takes the
+// records with it as a delete always does.
+TEST(reconcile_test, drops_a_table_the_cluster_dropped_while_this_node_was_away)
+{
+	repository::fake_repository repository = store({});
+
+	repository.create_table(table::valid_table("gone", std::vector<std::string>()), record::version { 1, 1 });
+	repository.write_record("gone", record::valid_record("a", "a value"));
+
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.answer(mate, named({ "account" }, { "gone" }, record::version { 1, 2 }));
+
+	reconciled(repository, nodes, running);
+
+	EXPECT_FALSE(repository.has_table("gone"));
+	EXPECT_FALSE(repository.read_record("gone", "a").has_value());
+}
+
+// A tombstone older than the create this node holds is a node that has not caught up with the
+// table being made again, and acting on it would drop a table the cluster has.
+TEST(reconcile_test, keeps_a_table_against_a_tombstone_older_than_it)
+{
+	repository::fake_repository repository = store({});
+
+	repository.create_table(table::valid_table("kept", std::vector<std::string>()), record::version { 2, 1 });
+
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.answer(mate, named({}, { "kept" }, record::version { 1, 9 }));
+
+	reconciled(repository, nodes, running);
+
+	EXPECT_TRUE(repository.has_table("kept"));
+}
+
+// **A live entry never drops a column family.** One create carried to a node that had missed it is
+// stamped again, so two nodes can hold one table at two versions — and taking the later document
+// is right where taking the later table would throw the records away.
+TEST(reconcile_test, keeps_the_records_of_a_table_the_cluster_stamped_again)
+{
+	repository::fake_repository repository = store({});
+
+	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	repository.write_record("account", record::valid_record("a", "a value"));
+
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.answer(mate, named({ "account" }, {}, record::version { 9, 9 }));
+
+	reconciled(repository, nodes, running);
+
+	EXPECT_TRUE(repository.has_table("account"));
+	EXPECT_EQ("a value", repository.read_record("account", "a").value_or(""));
 }
 
 // A pass that has been told to stop asks nobody for anything, the schema included.

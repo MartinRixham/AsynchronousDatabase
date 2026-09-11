@@ -12,7 +12,7 @@ namespace repository
 {
 	class fake_repository : public repository
 	{
-		std::map<std::string, std::string> tables;
+		table::schema tables;
 
 		// A table of its own per table, ordered by the byte comparison std::string already makes,
 		// which is the ordering RocksDB gives a column family.
@@ -32,7 +32,7 @@ namespace repository
 	public:
 		fake_repository();
 
-		void create_table(const table::table &table) override;
+		void create_table(const table::table &table, const record::version &stamp) override;
 
 		std::set<table::table> list_tables() const override;
 
@@ -40,7 +40,11 @@ namespace repository
 
 		table::table read_table(const std::string &table_name) const override;
 
-		void delete_table(const std::string &table_name) override;
+		void delete_table(const std::string &table_name, const record::version &stamp) override;
+
+		table::schema read_schema() const override;
+
+		size_t merge_schema(const table::schema &named) override;
 
 		void write_record(const std::string &table_name, const record::record &record) override;
 

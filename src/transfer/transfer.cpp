@@ -15,24 +15,14 @@
 
 namespace
 {
-	router::request table_request()
+	router::request schema_request()
 	{
 		router::request request;
 
 		request.method = boost::beast::http::verb::get;
-		request.path = std::vector<std::string> { "table" };
+		request.path = std::vector<std::string> { "schema" };
 
 		return request;
-	}
-
-	std::string field(const boost::json::object &object, const std::string &name)
-	{
-		if (!object.contains(name) || !object.at(name).is_string())
-		{
-			return "";
-		}
-
-		return std::string(object.at(name).as_string());
 	}
 
 	// One piece of a share: the keys after `from` up to and including `to`, either of which may be
@@ -321,7 +311,7 @@ transfer::outcome transfer::walk(
 	return done;
 }
 
-std::optional<std::vector<table::table>> transfer::tables(
+std::optional<table::schema> transfer::tables(
 	const cluster::cluster &nodes,
 	const std::vector<std::string> &zone,
 	progress::patience &waiting)
@@ -333,32 +323,19 @@ std::optional<std::vector<table::table>> transfer::tables(
 			return std::nullopt;
 		}
 
-		router::response answer = nodes.send(zone[i], table_request());
+		router::response answer = nodes.send(zone[i], schema_request());
 
 		if (answer.status != boost::beast::http::status::ok ||
-			!answer.json.contains("tables") || !answer.json.at("tables").is_array())
+			!answer.json.contains("schema") || !answer.json.at("schema").is_array())
 		{
 			DEBUG("Node " + zone[i] + " did not name its tables.");
 
 			continue;
 		}
 
-		const boost::json::array &listed = answer.json.at("tables").as_array();
-		std::vector<table::table> named;
-
-		for (size_t j = 0; j < listed.size(); j++)
-		{
-			if (!listed[j].is_object() || field(listed[j].as_object(), "name").empty())
-			{
-				continue;
-			}
-
-			named.push_back(table::to_table(boost::json::serialize(listed[j])));
-		}
-
 		waiting.renew();
 
-		return named;
+		return table::to_schema(boost::json::serialize(answer.json));
 	}
 
 	return std::nullopt;

@@ -261,6 +261,31 @@ TEST_F(cluster_test, a_table_is_created_on_every_node)
 	EXPECT_EQ(get(second, "/table/account").code, 200);
 }
 
+// One create is one version on both nodes, which is what the stamp travelling in a header buys: a
+// version apiece would be two nodes that disagree about a name neither of them is wrong about.
+TEST_F(cluster_test, a_table_is_created_at_one_version_on_every_node)
+{
+	request(first, "PUT", "/table/account", "{}");
+
+	EXPECT_EQ(get(first, "/schema").body, get(second, "/schema").body);
+}
+
+// And the delete leaves the same tombstone on both, which is what a node that missed one is put
+// right by.
+TEST_F(cluster_test, a_deleted_table_leaves_the_same_tombstone_on_every_node)
+{
+	request(first, "PUT", "/table/account", "{}");
+	request(second, "DELETE", "/table/account", "");
+
+	boost::json::array named = boost::json::parse(get(first, "/schema").body).as_object()
+		.at("schema").as_array();
+
+	ASSERT_EQ(named.size(), 1u);
+	EXPECT_EQ(named[0].as_object().at("name").as_string(), "account");
+	EXPECT_FALSE(named[0].as_object().at("live").as_bool());
+	EXPECT_EQ(get(first, "/schema").body, get(second, "/schema").body);
+}
+
 TEST_F(cluster_test, a_record_is_written_to_the_node_that_owns_its_key)
 {
 	request(first, "PUT", "/table/account", "{}");

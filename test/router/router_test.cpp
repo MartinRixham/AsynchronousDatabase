@@ -15,6 +15,7 @@
 #include "cluster/fake_cluster.h"
 #include "repository/fake_repository.h"
 #include "router/router.h"
+#include "table/schema.h"
 #include "url/url.h"
 
 namespace
@@ -1607,6 +1608,116 @@ TEST(router_cluster_test, agree_to_a_forwarded_deletion_of_a_table_that_is_not_t
 	EXPECT_EQ(router.route(del("/table/account")).status, boost::beast::http::status::not_found);
 }
 
+// And it writes the tombstone down. A node agreeing to a delete of a table it never had may be a
+// node that missed the create, and the name being gone as of this version is what stops it taking
+// the table back from a peer on the next pass.
+TEST(router_cluster_test, write_down_a_forwarded_deletion_of_a_table_that_is_not_there)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	router::request forwarded = del("/table/account");
+
+	forwarded.forwarded = true;
+	forwarded.term = 41;
+	forwarded.count = 7;
+
+	nodes.led_by(cluster::table_key, there, 41);
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+
+	std::optional<table::entry> gone = repository.read_schema().read_entry("account");
+
+	ASSERT_TRUE(gone.has_value());
+	EXPECT_FALSE(gone->live);
+	EXPECT_EQ(gone->stamp.term, 41u);
+	EXPECT_EQ(gone->stamp.count, 7u);
+}
+
+// A cluster that leads nothing stamps the create once all the same, on the node that took it, and
+// the count travels without a term — which a node with no leadership to claim cannot issue. Without
+// it every node would stamp the same create itself and one table would stand at a version apiece.
+TEST(router_cluster_test, carry_the_version_of_a_create_that_no_leader_ordered)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	EXPECT_EQ(router.route(put("/table/account", "{}")).status, boost::beast::http::status::created);
+
+	std::optional<table::entry> made = repository.read_schema().read_entry("account");
+
+	ASSERT_TRUE(made.has_value());
+	EXPECT_EQ(made->stamp.term, 0u);
+
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].second.term, 0);
+	EXPECT_EQ(nodes.sent()[0].second.count, made->stamp.count);
+}
+
+// The stamp a create is ordered in travels to every node, so one create is one version across the
+// cluster rather than a version apiece.
+TEST(router_cluster_test, carry_the_version_a_table_was_created_in_to_the_other_nodes)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, here, 41);
+
+	EXPECT_EQ(router.route(put("/table/account", "{}")).status, boost::beast::http::status::created);
+
+	std::optional<table::entry> made = repository.read_schema().read_entry("account");
+
+	ASSERT_TRUE(made.has_value());
+	EXPECT_EQ(made->stamp.term, 41u);
+
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+	EXPECT_EQ(nodes.sent()[0].second.count, made->stamp.count);
+}
+
+// The whole schema, tombstones and versions and all, which is what a node filling a store or
+// reconciling one against the cluster asks another node for. `GET /table` is the client's view and
+// carries neither.
+TEST(router_test, answer_the_schema_a_node_holds)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	create_table(router, "dropped");
+	router.route(del("/table/dropped"));
+
+	router::response response = router.route(get("/schema"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+
+	table::schema answered = table::to_schema(boost::json::serialize(response.json));
+
+	EXPECT_TRUE(answered.has("account"));
+	EXPECT_FALSE(answered.has("dropped"));
+	ASSERT_TRUE(answered.read_entry("dropped").has_value());
+	EXPECT_FALSE(answered.read_entry("dropped")->live);
+
+	// And the client's view carries only what is there.
+	boost::json::array listed = router.route(get("/table")).json.at("tables").as_array();
+
+	ASSERT_EQ(listed.size(), 1u);
+	EXPECT_EQ(listed[0].as_object().at("name").as_string(), "account");
+}
+
+TEST(router_test, refuse_a_method_the_schema_route_does_not_have)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	EXPECT_EQ(error_code(router.route(del("/schema"))), "method_not_allowed");
+}
+
 // The client's own delete, forwarded to the node that leads the tables because it landed on one
 // that does not. It carries no term, so it is the request to order and not an order to apply, and
 // a table that is not there is a 404 for the client rather than the leader agreeing with itself.
@@ -2239,7 +2350,7 @@ TEST(router_test, answers_a_file_of_the_records_of_the_partitions_asked_for)
 	write_record(router, "account", "1", "one");
 	write_record(router, "account", "2", "two");
 
-	taking.create_table(table::valid_table("account", std::vector<std::string>()));
+	taking.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
 	router::response response = router.route(get("/table/account/file?partitions=" + only("1")));
 
@@ -2318,7 +2429,7 @@ TEST(router_test, answers_a_file_of_keys_alone_when_the_values_are_not_wanted)
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
 
-	giving.create_table(table::valid_table("account", std::vector<std::string>()));
+	giving.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 	giving.write_record("account", record::valid_record("1", "mine"));
 	giving.write_record("account", record::valid_record("2", "mine"));
 
@@ -2411,7 +2522,7 @@ TEST(router_test, answers_a_file_that_ends_where_it_was_told_to)
 	write_record(router, "account", "2", "two");
 	write_record(router, "account", "3", "three");
 
-	taking.create_table(table::valid_table("account", std::vector<std::string>()));
+	taking.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
 	router::response response = router.route(
 		get("/table/account/file?partitions=" + every_partition() + "&to=" + url::encode(base64::encode("2"))));

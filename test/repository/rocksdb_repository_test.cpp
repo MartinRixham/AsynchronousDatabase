@@ -13,6 +13,7 @@
 #include "cluster/partition.h"
 #include "repository/rocksdb_repository.h"
 #include "table/table.h"
+#include "table/schema.h"
 
 namespace
 {
@@ -64,7 +65,7 @@ protected:
 
 	void create_table(const std::string &name)
 	{
-		repository->create_table(table::valid_table(name, std::vector<std::string>()));
+		repository->create_table(table::valid_table(name, std::vector<std::string>()), record::version { 1, 1 });
 	}
 };
 
@@ -84,7 +85,7 @@ TEST_F(repository_test, create_and_read_tables)
 TEST_F(repository_test, two_instances_do_not_share_a_keyspace)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", record::valid_record("a key", "a value"));
 
@@ -108,6 +109,54 @@ TEST_F(repository_test, a_store_is_read_back_by_the_instance_started_after_it)
 
 	EXPECT_TRUE(repository->has_table("a_table"));
 	EXPECT_EQ(repository->read_record("a_table", "a key"), "a value");
+}
+
+// The schema is one record, so what survives a restart is the whole of it — the names the store
+// has dropped as well as the ones it holds. A tombstone that did not survive would be a node that
+// takes a dropped table back from a peer the first time it reconciles.
+TEST_F(repository_test, the_names_a_store_dropped_are_read_back_with_the_ones_it_holds)
+{
+	create_table("a_table");
+	create_table("dropped_table");
+
+	repository->delete_table("dropped_table", record::version { 1, 2 });
+
+	repository = nullptr;
+	repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
+
+	table::schema read = repository->read_schema();
+
+	EXPECT_TRUE(read.has("a_table"));
+	ASSERT_TRUE(read.read_entry("dropped_table").has_value());
+	EXPECT_FALSE(read.read_entry("dropped_table")->live);
+	EXPECT_EQ(read.read_entry("dropped_table")->stamp.count, 2u);
+}
+
+// A merge is the pass reaching the store: the column family of a name that arrived is made, and
+// the one a tombstone took away is dropped with the records in it.
+TEST_F(repository_test, a_merged_schema_makes_and_drops_the_column_families_to_match)
+{
+	create_table("going");
+	repository->write_record("going", record::valid_record("a key", "a value"));
+
+	table::schema named;
+
+	named.create(table::valid_table("arriving", std::vector<std::string>()), record::version { 1, 2 });
+	named.remove("going", record::version { 1, 2 });
+
+	EXPECT_EQ(repository->merge_schema(named), 2u);
+	EXPECT_TRUE(repository->has_table("arriving"));
+	EXPECT_FALSE(repository->has_table("going"));
+
+	// Writable, which is what says the family was made rather than only the name.
+	repository->write_record("arriving", record::valid_record("a key", "a value"));
+
+	EXPECT_EQ(repository->read_record("arriving", "a key"), "a value");
+
+	// And the records went with the family, so the name coming back is an empty table.
+	repository->create_table(table::valid_table("going", std::vector<std::string>()), record::version { 1, 3 });
+
+	EXPECT_EQ(repository->read_record("going", "a key"), std::nullopt);
 }
 
 TEST_F(repository_test, read_table)
@@ -135,7 +184,7 @@ TEST_F(repository_test, fail_to_read_table_that_does_not_exist)
 
 TEST_F(repository_test, does_not_have_invalid_table)
 {
-	repository->create_table(table::invalid_table("invalid_table_name", "error"));
+	repository->create_table(table::invalid_table("invalid_table_name", "error"), record::version { 1, 1 });
 
 	EXPECT_EQ(repository->list_tables().size(), 0);
 }
@@ -158,7 +207,7 @@ TEST_F(repository_test, does_not_delete_a_table_that_is_not_there)
 {
 	create_table("a_table");
 
-	repository->delete_table("not_a_table");
+	repository->delete_table("not_a_table", record::version { 1, 2 });
 
 	EXPECT_TRUE(repository->has_table("a_table"));
 }
@@ -167,7 +216,7 @@ TEST_F(repository_test, delete_table_from_repository)
 {
 	create_table("a_table");
 
-	repository->delete_table("a_table");
+	repository->delete_table("a_table", record::version { 1, 2 });
 
 	EXPECT_FALSE(repository->has_table("a_table"));
 	EXPECT_EQ(repository->list_tables().size(), 0);
@@ -178,7 +227,7 @@ TEST_F(repository_test, the_data_goes_with_the_table)
 	create_table("a_table");
 	repository->write_record("a_table", record::valid_record("a key", "a value"));
 
-	repository->delete_table("a_table");
+	repository->delete_table("a_table", record::version { 1, 2 });
 	create_table("a_table");
 
 	EXPECT_EQ(repository->read_record("a_table", "a key"), std::nullopt);
@@ -402,7 +451,7 @@ namespace
 TEST_F(repository_test, a_file_carries_a_table_from_one_store_to_another)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 	repository->write_record("a_table", record::valid_record("2", "two"));
@@ -420,7 +469,7 @@ TEST_F(repository_test, a_file_carries_a_table_from_one_store_to_another)
 TEST_F(repository_test, a_file_carries_the_partitions_it_was_asked_for_and_no_others)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 	repository->write_record("a_table", record::valid_record("2", "two"));
@@ -441,7 +490,7 @@ TEST_F(repository_test, a_file_carries_the_partitions_it_was_asked_for_and_no_ot
 TEST_F(repository_test, a_file_that_carried_nothing_is_no_file_at_all)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 
@@ -468,7 +517,7 @@ TEST_F(repository_test, an_export_of_a_table_holding_nothing_carries_nothing)
 TEST_F(repository_test, a_store_keeps_what_it_holds_already_when_a_file_carries_that_key_too)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", record::valid_record("1", "theirs"));
 	repository->write_record("a_table", record::valid_record("2", "theirs"));
@@ -489,7 +538,7 @@ TEST_F(repository_test, a_store_keeps_what_it_holds_already_when_a_file_carries_
 TEST_F(repository_test, a_store_takes_a_record_from_a_file_written_after_the_one_it_holds)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", versioned("1", "theirs", 41, 9));
 	other_repository->write_record("a_table", versioned("1", "mine", 41, 4));
@@ -505,7 +554,7 @@ TEST_F(repository_test, a_store_takes_a_record_from_a_file_written_after_the_one
 TEST_F(repository_test, a_store_keeps_a_record_written_after_the_one_a_file_carries)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", versioned("1", "theirs", 41, 4));
 	other_repository->write_record("a_table", versioned("1", "mine", 41, 9));
@@ -522,7 +571,7 @@ TEST_F(repository_test, a_store_keeps_a_record_written_after_the_one_a_file_carr
 TEST_F(repository_test, a_file_taken_whole_carries_the_versions_it_was_written_with)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", versioned("1", "one", 41, 9));
 
@@ -549,7 +598,7 @@ TEST_F(repository_test, a_file_taken_whole_carries_the_versions_it_was_written_w
 TEST_F(repository_test, a_store_keeps_a_record_the_node_that_owns_it_has_yet_to_catch_up_on)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	// The owner's copy, and the one being given up, which was written after it.
 	repository->write_record("a_table", versioned("1", "the owner\'s", 41, 4));
@@ -629,7 +678,7 @@ TEST_F(repository_test, a_store_written_before_records_carried_a_version_is_refu
 TEST_F(repository_test, a_walk_larger_than_one_file_resumes_where_it_reached)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 	repository->write_record("a_table", record::valid_record("2", "two"));
@@ -675,7 +724,7 @@ TEST_F(repository_test, a_store_serves_within_the_memory_budget_it_was_given)
 
 	repository::rocksdb_repository small("/tmp/asyncdb_small", 16 * 1024 * 1024);
 
-	small.create_table(table::valid_table("a_table", std::vector<std::string>()));
+	small.create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 	small.write_record("a_table", record::valid_record("1", "one"));
 
 	EXPECT_EQ("one", small.read_record("a_table", "1").value_or(""));
@@ -707,7 +756,7 @@ TEST_F(repository_test, a_transfer_the_process_before_it_left_behind_goes_when_t
 TEST_F(repository_test, a_file_of_keys_is_what_a_store_gives_records_up_on)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 	repository->write_record("a_table", record::valid_record("2", "two"));
@@ -770,7 +819,7 @@ TEST_F(repository_test, says_where_a_table_would_be_cut_up)
 	// files a split is read off rather than sitting in memory where it cannot be seen.
 	repository::rocksdb_repository splitting("/tmp/asyncdb_split", 16 * 1024 * 1024);
 
-	splitting.create_table(table::valid_table("a_table", std::vector<std::string>()));
+	splitting.create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	for (size_t i = 0; i < 320; i++)
 	{
@@ -816,7 +865,7 @@ TEST_F(repository_test, a_table_that_is_not_worth_cutting_up_is_cut_up_no_ways)
 TEST_F(repository_test, the_pieces_of_a_share_are_every_record_and_no_record_twice)
 {
 	create_table("a_table");
-	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	repository->write_record("a_table", record::valid_record("1", "one"));
 	repository->write_record("a_table", record::valid_record("2", "two"));

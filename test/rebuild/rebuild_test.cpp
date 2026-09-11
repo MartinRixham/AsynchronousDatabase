@@ -11,6 +11,7 @@
 #include "record/record.h"
 #include "router/api_error.h"
 #include "table/table.h"
+#include "table/schema.h"
 #include "url/url.h"
 #include "../cluster/fake_cluster.h"
 #include "../repository/fake_repository.h"
@@ -34,15 +35,14 @@ namespace
 
 	router::response tables(const std::vector<std::string> &names)
 	{
-		boost::json::array listed;
+		table::schema named;
 
 		for (size_t i = 0; i < names.size(); i++)
 		{
-			listed.push_back(table::valid_table(names[i], std::vector<std::string>()).json);
+			named.create(table::valid_table(names[i], std::vector<std::string>()), record::version { 1, 1 });
 		}
 
-		return router::json_response(
-			boost::beast::http::status::ok, boost::json::object { { "tables", listed } });
+		return router::json_response(boost::beast::http::status::ok, named.json());
 	}
 
 	// A file as the node being read from would have answered with, which is that node's own store
@@ -52,7 +52,7 @@ namespace
 	{
 		repository::fake_repository source;
 
-		source.create_table(table::valid_table("account", std::vector<std::string>()));
+		source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
 		for (size_t i = 0; i < keys.size(); i++)
 		{
@@ -91,7 +91,7 @@ TEST(rebuild_test, rebuilds_nothing_when_the_store_already_holds_a_table)
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
 	nodes.answer(peer, tables({ "account" }));
 

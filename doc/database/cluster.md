@@ -268,6 +268,32 @@ stops two different creates of one name from being applied on two nodes at once,
 each refusing the other's and neither backing down. Table operations are rare
 and tables are dozens, so there is nothing to gain by spreading them.
 
+### The schema is one record, and every name in it carries a version
+
+The store holds the whole schema as **one record**: every name it has heard of,
+each at the version it was last written at, and a name that was dropped stays in
+it as a **tombstone**. A create and a delete are stamped by the node that ordered
+them exactly as a write to a record is, and the stamp travels to every node, so
+one create is one version across the cluster rather than a version apiece.
+
+The tombstone is what makes an absence mean something. A node holding a table
+that no peer has is either a node that missed the delete or a peer that missed
+the create, and nothing in the table itself tells the two apart — so without one,
+a pass can only ever add. With one, the peer answers *"that name is gone as of
+version 41.7"*, and a node holding it live at 41.2 knows which of the two it is.
+
+**Per name, and never one version for the schema.** A node that missed one
+operation and applied the next would carry a schema version as high as a node
+that applied both, and adopting the newer of two such schemas would drop tables
+that were never deleted. That is a replication log, and there is none here —
+records are ordered per key for the same reason.
+
+**A live entry never drops a column family.** Two nodes can hold one table at two
+versions: a create carried to a node that had missed it is stamped again, and so
+is one re-declared against a leader that never had it. Taking the later document
+is right; taking the later *table* would throw away the records of a table the
+cluster still has. Only a tombstone drops anything.
+
 ## What a write and a read do
 
 A write travels in two hops, and the term is what tells them apart — a write
@@ -390,6 +416,7 @@ versions for as long as neither of those happens.
 | `GET` `/table/{table}/key` | Asked of **one zone** — this node's own — and the pages merged back into key order |
 | `GET /table/{table}/file` | Answered out of **this node's own store**, and never forwarded: what is being asked for is what this node holds |
 | `GET /table/{table}/split` | The same: where this node would cut a walk of its own table up |
+| `GET /schema` | The whole schema out of **this node's own store** — every name it has heard of, the dropped ones included, each with its version. Between nodes, not for clients |
 | `GET /health` | Answered where it is asked, and names the nodes and zones it can see |
 
 Nodes keep their connections to each other open between requests, so a forwarded
@@ -593,15 +620,16 @@ it ends.
   deliberately, at a quiet moment, and with the keys rewritten afterwards.
 - **A table is created on every node that is a member at the time.** A node that
   was not one misses it, and what puts it right is the pass that moves records:
-  it reads the schema from a node that has it and creates what this node lacks,
-  before it asks for a record of anything. **It never drops a table**, so a
-  delete a node missed is still one to run again. Declaring the tables a service
+  it reads the schema from a node that has it and takes every name that node
+  holds at a later version, before it asks for a record of anything. A delete the
+  node missed goes the same way, because the name it missed the delete of is
+  still in the other nodes' schema as a tombstone. Declaring the tables a service
   needs at every start up, which is [what `PUT /table/{table}` is
   for](/database/tables#create-a-table), remains the way to be sure.
 - **An operation on every node that one node refuses fails the request**, after
   every other node has carried it out — they are all asked at once, so one
-  refusing does not stop the rest. Creating a table, deleting a table and deleting
-  a range are all idempotent, so the remedy is to run the request again.
+  refusing does not stop the rest. Creating a table and deleting one are both
+  idempotent, so the remedy is to run the request again.
 - **A term is remembered in memory, not on disk.** A node that restarts has
   forgotten which terms it has applied, so it accepts the first write it is sent
   afterwards whatever term ordered it. A node that restarts has also lost its

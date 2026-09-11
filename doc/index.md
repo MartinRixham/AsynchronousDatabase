@@ -56,7 +56,8 @@ main.cpp → server::server → server::session → router::router → repositor
 and router across every connection. `server::session` is one connection: it reads asynchronously, hands
 the request to the router, writes the response and loops while the connection is kept alive.
 `router::router` matches the routes above by hand. `repository::repository` is a pure-virtual seam whose
-RocksDB implementation stores tables under `TABLE_<name>` keys.
+RocksDB implementation keeps the whole schema in one `SCHEMA` record and each table's records in a
+column family of its own.
 
 Validation failures are treated as values rather than exceptions: an invalid table carries an `error`
 object that the router turns into a `400`. Exceptions are reserved for genuine infrastructure failure.

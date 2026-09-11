@@ -19,13 +19,22 @@
 
 namespace
 {
-	const std::string table_prefix = "TABLE_";
+	// The whole schema, in one record of the default column family: every name the store has
+	// heard of, live or dropped, each at the version it was last written at. One record rather
+	// than one apiece is what lets a node ask another for the schema and take it whole.
+	const std::string schema_key = "SCHEMA";
+
+	// What a store written before the schema was one record holds a table document under. Nothing
+	// reads one — a store holding them is refused — but a store with no format at all is told
+	// apart by them.
+	const std::string old_table_prefix = "TABLE_";
 
 	// What says the values in this store carry a version. A store written before they did holds
 	// neither this nor a version on any value, and its values cannot be told from versioned ones.
 	const std::string format_key = "FORMAT";
 
-	const std::string format_version = "2";
+	// 1 is the schema in one versioned record, which is the only format there has ever been.
+	const std::string format_version = "1";
 
 	// Beside the table documents in the default column family, and named so that it is no table's
 	// document: what a block of write counts has been reserved up to.
@@ -209,6 +218,7 @@ repository::rocksdb_repository::rocksdb_repository(const std::string &directory,
 	try
 	{
 		check_format();
+		read_tables();
 	}
 	catch (...)
 	{
@@ -234,13 +244,17 @@ void repository::rocksdb_repository::check_format()
 		return;
 	}
 
-	// A store with a table in it and no format is one written before records carried a version.
-	// Reading it would take the first bytes of every value for a version that was never written.
+	// A store with anything in it and no format is one written before the store said what format
+	// it was, which is before records carried a version: reading it would take the first bytes of
+	// every value for a version that was never written. What says there is something in it is a
+	// schema — this format's, or the document per table that came before it.
+	std::string schema;
 	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(rocksdb::ReadOptions()));
 
-	it->Seek(table_prefix);
+	it->Seek(old_table_prefix);
 
-	if (it->Valid() && it->key().starts_with(table_prefix))
+	if (database->Get(rocksdb::ReadOptions(), schema_key, &schema).ok() ||
+		(it->Valid() && it->key().starts_with(old_table_prefix)))
 	{
 		throw storage_error(
 			"storage_error",
@@ -312,7 +326,7 @@ void repository::rocksdb_repository::close_handles()
 	handles.clear();
 }
 
-void repository::rocksdb_repository::create_table(const table::table &table)
+void repository::rocksdb_repository::create_table(const table::table &table, const record::version &stamp)
 {
 	if (!table.is_valid)
 	{
@@ -321,60 +335,95 @@ void repository::rocksdb_repository::create_table(const table::table &table)
 
 	std::unique_lock<std::shared_mutex> lock(handle_mutex);
 
-	if (handles.find(table.name) == handles.end())
-	{
-		rocksdb::ColumnFamilyHandle *handle = NULL;
-
-		written(
-			database->CreateColumnFamily(family_options, table.name, &handle),
-			"Creating table \"" + table.name + "\"");
-
-		handles.insert({ table.name, handle });
-	}
-
-	written(
-		database->Put(rocksdb::WriteOptions(), table_prefix + table.name, boost::json::serialize(table.json)),
-		"Writing table \"" + table.name + "\"");
+	open_family(table.name);
+	tables.create(table, stamp);
+	write_tables();
 }
 
-// The table documents are in the default column family, which is open for the life of the store
-// and named by no handle, so reading one takes no lock. Guarding it would put every table read
-// behind the exclusive lock a table create holds.
+// The schema is parsed once and held, so these are memory reads behind the lock that a write to it
+// takes exclusively. Every record request asks whether the table is there, which is what makes the
+// cost of reading and parsing a record for each of them worth not paying.
 std::set<table::table> repository::rocksdb_repository::list_tables() const
 {
-	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(rocksdb::ReadOptions()));
-	std::set<table::table> tables;
+	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 
-	for (it->Seek(table_prefix); it->Valid() && it->key().starts_with(table_prefix); it->Next())
-	{
-		tables.insert(table::to_table(it->value().ToString()));
-	}
-
-	return tables;
+	return tables.tables();
 }
 
 bool repository::rocksdb_repository::has_table(const std::string &table_name) const
 {
-	std::string value;
+	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 
-	return database->Get(rocksdb::ReadOptions(), table_prefix + table_name, &value).ok();
+	return tables.has(table_name);
 }
 
 table::table repository::rocksdb_repository::read_table(const std::string &table_name) const
 {
-	std::string value;
+	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 
-	if (!database->Get(rocksdb::ReadOptions(), table_prefix + table_name, &value).ok())
-	{
-		return table::invalid_table("table_not_found", "No table named \"" + table_name + "\".");
-	}
-
-	return table::to_table(value);
+	return tables.read(table_name);
 }
 
-void repository::rocksdb_repository::delete_table(const std::string &table_name)
+void repository::rocksdb_repository::delete_table(const std::string &table_name, const record::version &stamp)
 {
 	std::unique_lock<std::shared_mutex> lock(handle_mutex);
+
+	drop_family(table_name);
+
+	// The tombstone is written whether or not this node had the table, because what it says is
+	// that the name is gone as of this version — which is the answer a node that missed the
+	// create needs as much as one that took it.
+	tables.remove(table_name, stamp);
+	write_tables();
+}
+
+table::schema repository::rocksdb_repository::read_schema() const
+{
+	std::shared_lock<std::shared_mutex> lock(handle_mutex);
+
+	return tables;
+}
+
+size_t repository::rocksdb_repository::merge_schema(const table::schema &named)
+{
+	std::unique_lock<std::shared_mutex> lock(handle_mutex);
+	std::vector<table::schema::change> changed = tables.merge(named);
+
+	for (size_t i = 0; i < changed.size(); i++)
+	{
+		if (changed[i].live)
+		{
+			open_family(changed[i].name);
+		}
+		else
+		{
+			drop_family(changed[i].name);
+		}
+	}
+
+	write_tables();
+
+	return changed.size();
+}
+
+void repository::rocksdb_repository::open_family(const std::string &table_name)
+{
+	if (handles.find(table_name) != handles.end())
+	{
+		return;
+	}
+
+	rocksdb::ColumnFamilyHandle *handle = NULL;
+
+	written(
+		database->CreateColumnFamily(family_options, table_name, &handle),
+		"Creating table \"" + table_name + "\"");
+
+	handles.insert({ table_name, handle });
+}
+
+void repository::rocksdb_repository::drop_family(const std::string &table_name)
+{
 	std::map<std::string, rocksdb::ColumnFamilyHandle *>::iterator handle = handles.find(table_name);
 
 	if (handle == handles.end())
@@ -386,10 +435,51 @@ void repository::rocksdb_repository::delete_table(const std::string &table_name)
 
 	database->DestroyColumnFamilyHandle(handle->second);
 	handles.erase(handle);
+}
 
+void repository::rocksdb_repository::read_tables()
+{
+	std::string held;
+
+	if (database->Get(rocksdb::ReadOptions(), schema_key, &held).ok())
+	{
+		tables = table::to_schema(held);
+	}
+
+	// A column family the schema does not name is a table whose two writes — the family and the
+	// record naming it — did not both land. The record is what the cluster agrees on, so it is
+	// what the families are made to match.
+	std::set<std::string> named = tables.names();
+	std::vector<std::string> orphaned;
+
+	for (std::map<std::string, rocksdb::ColumnFamilyHandle *>::const_iterator it = handles.begin();
+		it != handles.end();
+		++it)
+	{
+		if (it->first != rocksdb::kDefaultColumnFamilyName && named.find(it->first) == named.end())
+		{
+			orphaned.push_back(it->first);
+		}
+	}
+
+	for (size_t i = 0; i < orphaned.size(); i++)
+	{
+		drop_family(orphaned[i]);
+	}
+
+	for (std::set<std::string>::const_iterator it = named.begin(); it != named.end(); ++it)
+	{
+		open_family(*it);
+	}
+}
+
+// The document carries a version for each name in it, so the record itself needs none: a schema
+// version would be one number vouching for operations this node may never have applied.
+void repository::rocksdb_repository::write_tables()
+{
 	written(
-		database->Delete(rocksdb::WriteOptions(), table_prefix + table_name),
-		"Deleting table \"" + table_name + "\"");
+		database->Put(rocksdb::WriteOptions(), schema_key, boost::json::serialize(tables.json())),
+		"Writing the schema");
 }
 
 void repository::rocksdb_repository::write_record(const std::string &table_name, const record::record &record)

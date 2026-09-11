@@ -12,6 +12,7 @@
 #include "cluster/partition.h"
 #include "repository/repository.h"
 #include "table/table.h"
+#include "table/schema.h"
 #include "progress/patience.h"
 
 namespace transfer
@@ -58,11 +59,12 @@ namespace transfer
 		bool refused = false;
 	};
 
-	// The tables a zone has, as the first of its nodes to answer names them — every node holds
-	// every table, so one answer is the whole schema. It is what a node asks for before it asks
-	// for a record, because a record can only be written where its table is. Nothing when no node
-	// of the zone answered, which is a zone to ask nothing else of.
-	std::optional<std::vector<table::table>> tables(
+	// The schema a zone has, as the first of its nodes to answer holds it — every node holds every
+	// table, so one answer is the whole of it. It is what a node asks for before it asks for a
+	// record, because a record can only be written where its table is, and it carries the names
+	// the cluster has dropped as well as the ones it has. Nothing when no node of the zone
+	// answered, which is a zone to ask nothing else of.
+	std::optional<table::schema> tables(
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
 		progress::patience &waiting);

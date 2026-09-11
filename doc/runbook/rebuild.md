@@ -218,17 +218,26 @@ curl -s http://asyncdb-1:8080/health | jq '.nodes'
 
 ## The one hazard
 
-**A table delete that lands during a rebuild can bring the table back.** A
-rebuild reads the schema before it reads a record, and the node running one is
-not yet in the membership, so a delete carried to every node in that window is
-not carried to it: it creates the table it read a moment before, and comes up
-holding one the cluster dropped. No pass takes it away again, because a reconcile
-never drops a table.
+**A table delete that lands during a rebuild is taken back by the next pass, not
+lost.** A rebuild reads the schema before it reads a record, and the node running
+one is not yet in the membership, so a delete carried to every node in that
+window is not carried to it: it comes up holding a table the cluster dropped.
+What corrects it is the [tombstone](/database/cluster#the-schema-is-one-record-and-every-name-in-it-carries-a-version) —
+the name stays in every other node's schema, stamped at the version the delete
+was ordered in, and the first reconcile pass that reads a peer's schema sees the
+table held live at an earlier version and drops it.
 
-Records cannot come back the same way — nothing erases one but dropping its
-table — so the remedy is the table delete itself, run again once the node is in
-the membership. It is the same reason the docs say to grow a cluster at a quiet
-moment.
+Records cannot come back at all: nothing erases one but dropping its table.
+
+**What no pass can see is a table dropped and created again while a node was away
+for both.** Its column family holds the first incarnation's records; the schema
+it reads names the table live at a later version, and a live entry never drops a
+column family — deliberately, because the same thing happens when one create is
+stamped twice, and dropping on that would take the records of a table the cluster
+still has. So the node keeps the old records under the new table. It is narrow —
+both operations inside one absence — and the remedy is the delete run once more
+with the node in the membership. It is the same reason the docs say to grow a
+cluster at a quiet moment.
 
 ## When ownership moves
 
@@ -251,13 +260,16 @@ Fetching alone is a store that only grows and a stale value waiting for the next
 membership change.
 
 **The schema comes first.** A record can only be written where its table is, so a
-pass reads the tables from a node that has them before it asks for any records,
-and creates the ones this node lacks. It is the only thing that puts a table on a
-node that missed the create — the rebuild copies them too, but the rebuild runs
-on an empty store alone. **It never drops one**: a table here that no other node
-names is a delete this node missed or a node that is wrong about the schema, and
-dropping a table takes its records with it, so it is left standing and the delete
-is run again instead.
+pass reads the schema from a node that has it before it asks for any records, and
+takes every name that node holds at a later version than this one does. It is the
+only thing that puts a table on a node that missed the create — the rebuild
+copies them too, but the rebuild runs on an empty store alone.
+
+**What drops a table here is a tombstone and nothing else.** A name the peer says
+nothing at all about is a node that is wrong about the schema rather than a
+delete this node missed, and dropping a table takes its records with it, so it is
+left standing. A name the peer holds as a tombstone stamped after the create this
+node holds *is* the delete this node missed, and that one goes.
 
 **Both halves ask for a file, and neither asks about a record at a time.** The
 fetch asks each node for

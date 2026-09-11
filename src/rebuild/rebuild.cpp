@@ -1,5 +1,6 @@
 #include <atomic>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -69,21 +70,23 @@ namespace
 		progress::patience &waiting)
 	{
 		restored taken;
-		std::optional<std::vector<table::table>> tables = transfer::tables(nodes, zone, waiting);
+		std::optional<table::schema> tables = transfer::tables(nodes, zone, waiting);
 
 		if (!tables)
 		{
 			return taken;
 		}
 
-		for (size_t i = 0; i < tables->size(); i++)
-		{
-			repository.create_table((*tables)[i]);
-		}
+		// The store is empty, so the merge is the whole schema taken as it stands — the names the
+		// cluster has dropped included, which is what keeps this node from declaring one of them
+		// again the moment a peer's answer is a moment old.
+		repository.merge_schema(*tables);
 
-		for (size_t i = 0; i < tables->size(); i++)
+		std::set<std::string> named = tables->names();
+
+		for (std::set<std::string>::const_iterator it = named.begin(); it != named.end(); ++it)
 		{
-			const std::string &name = (*tables)[i].name;
+			const std::string &name = *it;
 
 			for (size_t j = 0; j < zone.size(); j++)
 			{

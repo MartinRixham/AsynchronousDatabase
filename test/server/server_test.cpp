@@ -496,7 +496,7 @@ TEST(server_reconcile_test, reconciles_a_store_this_node_came_back_to)
 	{
 		repository::rocksdb_repository repository("/tmp/asyncdb");
 
-		repository.create_table(table::valid_table("account", std::vector<std::string>()));
+		repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 	}
 
 	cluster::fake_cluster nodes(

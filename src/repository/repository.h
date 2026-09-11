@@ -12,6 +12,7 @@
 #include "record/record.h"
 #include "scan/scan.h"
 #include "table/table.h"
+#include "table/schema.h"
 #include "storage_error.h"
 
 namespace repository
@@ -72,7 +73,11 @@ namespace repository
 	class repository
 	{
 	public:
-		virtual void create_table(const table::table &table) = 0;
+		// **The schema is one record, and a table is one versioned entry in it.** A create and a
+		// delete are stamped the way a write to a record is, by the node that ordered them, which
+		// is what lets a pass tell a table this node missed the create of from one the cluster
+		// dropped while it was away.
+		virtual void create_table(const table::table &table, const record::version &stamp) = 0;
 
 		virtual std::set<table::table> list_tables() const = 0;
 
@@ -80,7 +85,16 @@ namespace repository
 
 		virtual table::table read_table(const std::string &table_name) const = 0;
 
-		virtual void delete_table(const std::string &table_name) = 0;
+		virtual void delete_table(const std::string &table_name, const record::version &stamp) = 0;
+
+		// The schema as this node holds it, tombstones and all. It is what a node hands another
+		// node, and what `GET /schema` answers.
+		virtual table::schema read_schema() const = 0;
+
+		// Takes the entries of `named` that stand later than this node's own for their name,
+		// making a column family for a table that arrived and dropping the one a tombstone took
+		// away. What comes back is how many names changed.
+		virtual size_t merge_schema(const table::schema &named) = 0;
 
 		virtual void write_record(const std::string &table_name, const record::record &record) = 0;
 

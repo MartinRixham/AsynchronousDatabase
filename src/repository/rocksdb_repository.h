@@ -38,6 +38,12 @@ namespace repository
 
 		std::map<std::string, rocksdb::ColumnFamilyHandle *> handles;
 
+		// The schema as the store holds it, parsed once and kept. Every record request asks
+		// whether the table is there, and reading one record out of RocksDB and parsing it for
+		// each of them is a cost the schema does not have to pay: it changes only where it is
+		// written, and it is written under the same lock the handles are.
+		table::schema tables;
+
 		mutable std::shared_mutex handle_mutex;
 
 		std::string instance_name;
@@ -61,6 +67,19 @@ namespace repository
 		// be read as a version and a value that were never written.
 		void check_format();
 
+		// The schema record read into `tables`, once, as the store is opened.
+		void read_tables();
+
+		// `tables` written back to its record. The caller holds the handle lock, because what it
+		// is writing down is what it has just changed.
+		void write_tables();
+
+		// The column family a table's records live in, made or dropped so that the families match
+		// the schema. The caller holds the handle lock.
+		void open_family(const std::string &table_name);
+
+		void drop_family(const std::string &table_name);
+
 		// Every column family handle given back, which the destructor cannot do for a constructor
 		// that threw.
 		void close_handles();
@@ -76,7 +95,7 @@ namespace repository
 
 		rocksdb_repository &operator=(const rocksdb_repository &) = delete;
 
-		void create_table(const table::table &table) override;
+		void create_table(const table::table &table, const record::version &stamp) override;
 
 		std::set<table::table> list_tables() const override;
 
@@ -84,7 +103,11 @@ namespace repository
 
 		table::table read_table(const std::string &table_name) const override;
 
-		void delete_table(const std::string &table_name) override;
+		void delete_table(const std::string &table_name, const record::version &stamp) override;
+
+		table::schema read_schema() const override;
+
+		size_t merge_schema(const table::schema &named) override;
 
 		void write_record(const std::string &table_name, const record::record &record) override;
 
