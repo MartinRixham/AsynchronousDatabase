@@ -145,8 +145,12 @@ ssm_all()
 	for id in "$@"; do
 		aws ssm wait command-executed --command-id "$sent" --instance-id "$id" 2> /dev/null
 
+		# --output text ends what it prints with a newline of its own, and what a node said ended
+		# with one already, so the last byte is a line no node wrote — an empty answer to whatever
+		# was asked, and a file that is not empty for a node that said nothing at all.
 		aws ssm get-command-invocation --command-id "$sent" --instance-id "$id" \
-			--query 'StandardOutputContent' --output text 2> /dev/null > "$work/answer.$id"
+			--query 'StandardOutputContent' --output text 2> /dev/null \
+			| head -c -1 > "$work/answer.$id"
 
 		[ -s "$work/answer.$id" ] || silent=$((silent + 1))
 	done
