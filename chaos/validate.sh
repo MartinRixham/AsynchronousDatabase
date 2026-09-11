@@ -24,7 +24,7 @@ passed=0
 failed=0
 
 all="node-stops zone-lost scan-loses-a-node etcd-unreachable node-latency disk-fills"
-all="$all nodes-added nodes-removed zone-retired etcd-quorum-lost"
+all="$all containers-restart nodes-added nodes-removed zone-retired etcd-quorum-lost"
 
 for name in ${CHAOS_EXPERIMENTS:-$all}; do
 	printf '\n-- %s\n' "$name"

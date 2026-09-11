@@ -169,7 +169,7 @@ testing:
 make create-stack            # or the stack a build stood up
 make create-chaos-stack      # chaos/chaos.yaml: the permission to inject a fault
 chaos/validate.sh            # every experiment's preflight, nothing applied — seconds
-chaos/run.sh                 # all ten experiments, in order
+chaos/run.sh                 # all eleven experiments, in order
 make delete-chaos-stack
 ```
 
@@ -208,10 +208,10 @@ fails one.
   resize the tier come after every fault that only breaks it, because they are the only ones that
   change what the deployment *is*; `etcd-quorum-lost` is last, because it is the only one that
   leaves the cluster having been wrong about itself, and the pipeline deletes the stack next.
-- **Four of the ten inject through `ssm:SendCommand`** and the `AWS-RunShellScript` document,
+- **Five of the eleven inject through `ssm:SendCommand`** and the `AWS-RunShellScript` document,
   which needs the private subnets' [route out](#release): `node-latency` installs `tc` from the
   distribution repositories, so what it depends on is an instance being able to install a package
-  while it is under test. All four send the script `fault_script` builds — write the removal down,
+  while it is under test. Four of the five send the script `fault_script` builds — write the removal down,
   arm a detached timer, install, sleep, remove — and none of them waits that sleep out: `heal`
   takes the fault away over a second Run Command, and the timer is for the run that died holding
   it. `scan-loses-a-node` and `etcd-unreachable` install their rule in the **`DOCKER-USER`** chain,
@@ -222,7 +222,19 @@ fails one.
   hears rather than of whichever one the load balancer picked. The other three (`ec2:StopInstances`
   twice, and a network acl on one zone's subnet) need nothing of the instances, which is why they
   are first. `chaos/README.md` is the page.
-- **Three of the ten inject with a stack update**, because the shape of the database tier is two
+- **`containers-restart` is the fifth, and the only fault here that stands for no time at all**:
+  `kill -9` on every container's own init at once, from the host, several rounds of it, while a
+  client is writing. There is nothing for `fault_script` to hold and nothing for `heal` to take
+  away — `docker run --restart always` is what brings a container back, and that the container
+  came back by itself is one of the assertions. It is the only experiment whose fault is allowed
+  to cost nothing: the store is a volume that outlives the container, so a node returns at the
+  address it had, owning what it owned. Every write the cluster acknowledged has to read back what
+  was written, no copy of a key may answer a different value from another copy, and **a restart is
+  not a rebuild** — an empty store is the only thing that triggers one, so a rebuild in the log
+  since the first kill is a node that came back to an empty directory. `ssm_all` in
+  `chaos/harness.sh` is what sends one kill to every instance at once, because six sends in turn
+  are a rolling restart and not this fault.
+- **Three of the eleven inject with a stack update**, because the shape of the database tier is two
   parameters of `cloudformation.yaml` and nothing else: `Zones` is how many copies of the keyspace
   there are — a zone holds exactly one — and `Nodes` is how many ways a zone splits the copy it
   holds. `zone-retired` takes the replication factor from three to two and back, `nodes-added`

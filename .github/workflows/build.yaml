@@ -150,11 +150,11 @@ jobs:
         include:
           - stack: asyncdb-one
             suites: 'true'
-            experiments: node-stops zone-lost
+            experiments: zone-lost containers-restart
           - stack: asyncdb-two
             experiments: etcd-unreachable nodes-added
           - stack: asyncdb-three
-            experiments: nodes-removed zone-retired
+            experiments: node-stops nodes-removed zone-retired
           - stack: asyncdb-four
             experiments: scan-loses-a-node node-latency disk-fills etcd-quorum-lost
 

@@ -12,12 +12,12 @@ rewrites the version's image in ECR. The other half of CI is
 `.github/workflows/pull-request.yaml`, which is
 [two jobs and no AWS at all](#the-pull-request-build).
 
-**Four stacks, because the chaos suite is the pipeline.** Forty of the sixty-odd
-minutes the suite would take on one stack are `chaos/run.sh`, and half of that is
-the three experiments that resize the tier and wait for instances to launch.
+**Four stacks, because the chaos suite is the pipeline.** Most of the hour the
+suite would take on one stack is `chaos/run.sh`, and twenty minutes of that is the
+three experiments that resize the tier and wait for instances to launch.
 Nothing about them is parallel on one stack — an experiment has the cluster to
 itself by design — so the way to run them at once is to have several clusters, and
-[the shares](#the-shares) carry about ten minutes of experiments each.
+[the shares](#the-shares) carry about twelve minutes of experiments each.
 
 ```
               push to main or master                     concurrency: build-and-push
@@ -309,15 +309,18 @@ rather than a category:
 
 | Share | Runs | About |
 | --- | --- | --- |
-| `asyncdb-one` | the API, browser and load suites, then `node-stops`, `zone-lost` | 23 min |
+| `asyncdb-one` | the API, browser and load suites, then `zone-lost`, `containers-restart` | 23 min |
 | `asyncdb-two` | `etcd-unreachable`, `nodes-added` | 23 min |
-| `asyncdb-three` | `nodes-removed`, `zone-retired` | 23 min |
+| `asyncdb-three` | `node-stops`, `nodes-removed`, `zone-retired` | 23 min |
 | `asyncdb-four` | `scan-loses-a-node`, `node-latency`, `disk-fills`, `etcd-quorum-lost` | 23 min |
 
 The suites are a lump of their own — about four minutes — so the share carrying
-them carries two of the shorter experiments beside it, and `nodes-added`, which is
-the longest thing in the suite at nine and a half, is most of the second share on
-its own.
+them carries `containers-restart` and the shortest of the faults beside it, and
+`nodes-added`, which is the longest thing in the suite at nine and a half, is most
+of the second share on its own. `containers-restart` is the one entry in that
+balance that has not been measured against a deployed stack: it is three kills of
+six containers with a settle between them, and the passes that follow the last of
+them, which the other timings here put somewhere near eight minutes.
 
 Ordering still matters *inside* a share — `etcd-quorum-lost` last, because it is
 the only one that leaves a cluster wrong about itself — but not across them: a
@@ -333,7 +336,7 @@ and both are measured:
 | `create-stack`, waiting for six nodes to lead every partition, and the teardown | **8m** — fixed, per stack, whatever it then runs. The claims settle in a pass or two of the membership thread, which is seconds after the sixth node registers |
 | `nodes-added`, the longest experiment | **9m30** — one experiment, one cluster, not divisible |
 
-Forty minutes of experiments and four of suites over four stacks is about ten
+Fifty minutes of experiments and four of suites over four stacks is about twelve
 minutes of work a share, against eight of standing the cluster up and taking it
 down — so **a fifth stack saves two or three minutes and pays a whole VPC, a load
 balancer and nine instances for them**, and thirteen, one an experiment, finishes

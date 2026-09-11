@@ -47,6 +47,7 @@ checks=0
 failures=0
 standing=0
 probe=
+writer=
 
 # ---------------------------------------------------------------------------- the stack
 
@@ -112,6 +113,44 @@ ssm_run()
 
 	aws ssm get-command-invocation --command-id "$command" --instance-id "$id" \
 		--query 'StandardOutputContent' --output text 2> /dev/null
+}
+
+# ssm_all <command> <instance>... — the same command on every instance in one send, with what each
+# of them said left in $work/answer.<instance>. Non-zero when one of them said nothing at all,
+# which is a node that could not be asked and never a node that answered nothing.
+#
+# ssm_run in a loop is the same command a wait apart, and a wait is most of a minute over six
+# nodes: what one send buys is a fault that lands everywhere within a second or two of itself
+# rather than a rolling one, and an answer from every node about one moment rather than six.
+#
+# It is every instance or none. send-command refuses a batch that names one instance it does not
+# know, and taking that one out of the batch — which is right for a question, and every_node_whole
+# does it — is wrong for a fault: a kill that quietly skipped a node is a weaker fault reported as
+# the whole one.
+ssm_all()
+{
+	local command=$1 id sent silent=0
+	shift
+
+	jq -n --arg c "$command" '{ commands: [ $c ] }' > "$work/command.json"
+
+	rm -f "$work"/answer.*
+
+	sent=$(aws ssm send-command --instance-ids "$@" \
+		--document-name AWS-RunShellScript \
+		--parameters "file://$work/command.json" \
+		--query 'Command.CommandId' --output text 2> /dev/null) || return 1
+
+	for id in "$@"; do
+		aws ssm wait command-executed --command-id "$sent" --instance-id "$id" 2> /dev/null
+
+		aws ssm get-command-invocation --command-id "$sent" --instance-id "$id" \
+			--query 'StandardOutputContent' --output text 2> /dev/null > "$work/answer.$id"
+
+		[ -s "$work/answer.$id" ] || silent=$((silent + 1))
+	done
+
+	[ "$silent" = 0 ]
 }
 
 # The base image is the ECS-optimised AMI, which runs an agent container of its own, so the asyncdb
@@ -729,6 +768,51 @@ stop_probe()
 	kill -- "-$probe" 2> /dev/null
 	wait "$probe" 2> /dev/null
 	probe=
+}
+
+# The other probe: a client **writing** for as long as the fault lasts, with the status of every
+# one of those writes kept in $work/written, a line of `<n> <status>` each. It is the only way to
+# make the claim a read probe cannot — a write answered 2xx was taken by every copy of the key, so
+# it has to still be there when the fault is over — and a read probe would call that a pass while
+# never having asked for anything the fault could have lost.
+#
+# The keys are `probe-<stamp>-<n>` and each carries `<stamp>-<n>` as its value, so what a key
+# should hold is worked out from its name and never looked up. **Each key is written once and never
+# again**: a key written twice could read back either value with nothing wrong, and a check that
+# cannot fail is worse than no check. The prefix is its own, because write_check's keys are
+# `w-<stamp>-<n>` and two probes sharing a name is one of them overwriting what the other asserts.
+start_writes()
+{
+	local stamp=$1
+
+	rm -f "$work/written"
+
+	(
+		i=0
+
+		while :; do
+			i=$((i + 1))
+
+			printf '%s %s\n' "$i" "$(status --request PUT --data "$stamp-$i" \
+				--header 'Content-Type: application/octet-stream' \
+				"$base/table/$table/key/probe-$stamp-$i")" >> "$work/written"
+
+			# A writer as fast as curl can be started is a readback of thousands of keys, and
+			# what this is measuring is whether a write survived rather than how many there were.
+			sleep 0.2
+		done
+	) &
+
+	writer=$!
+}
+
+stop_writes()
+{
+	[ -n "$writer" ] || return 0
+
+	kill -- "-$writer" 2> /dev/null
+	wait "$writer" 2> /dev/null
+	writer=
 }
 
 # probe_report <description> — what the probe saw, reported and never asserted on. A read during
@@ -1542,6 +1626,7 @@ cleanup()
 	local status=$?
 
 	stop_probe
+	stop_writes
 
 	# The fault is taken away here as well as by the experiment, because an experiment that died
 	# holding one never reached its own fault_stop. It is a no-op when the fault has already

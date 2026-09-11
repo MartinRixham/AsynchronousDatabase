@@ -18,6 +18,7 @@ broke came back, and an assertion that did not hold is a non-zero exit — which
 | `etcd-unreachable` | [etcd cannot be reached](../doc/runbook/membership.md) — one node, cluster of one | A `DOCKER-USER` rule rejecting what the container sends to port 2379 |
 | `node-latency` | [A node that is up but wrong](../doc/runbook/nodes.md), [threads are all waiting](../doc/runbook/nodes.md) | A `netem` qdisc delaying everything the host sends into the VPC |
 | `disk-fills` | [RocksDB returned an error](../doc/runbook/storage.md), [the disk is filling](../doc/runbook/storage.md) | `fallocate` over what is left of the root volume |
+| `containers-restart` | [The container has stopped](../doc/runbook/nodes.md), [what recovers by itself](../doc/runbook/index.md) | `SIGKILL` to every container's own process at once, three times over |
 | `nodes-added` | [Growing a cluster](../doc/runbook/storage.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update taking the tier to **nine** instances, and back to six |
 | `nodes-removed` | [No rebalancing](../doc/runbook/storage.md) | A stack update taking the tier to **three** instances, and back to six |
 | `zone-retired` | [Fewer zones than the deployment has](../doc/runbook/membership.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update giving the group **two** subnets instead of three, and `ec2:StopInstances` on what is left in the third |
@@ -29,6 +30,7 @@ hold.
 
 The order is the order they run in, and it is not arbitrary. The three that need nothing of the
 instances themselves come first, because they run against a stack whose agent answers nobody. The
+five that go in through the agent follow. The
 three that resize the tier come after every fault that only breaks it, because they are the only
 ones that change what the deployment *is*: a run that dies inside one leaves a stack of a different
 shape rather than a cluster short of a node. `etcd-quorum-lost` is last because it is the only one
@@ -85,13 +87,14 @@ chaos/node-stops.sh
 
 ### What it costs
 
-**Forty minutes for all ten, and the resizes are twenty of it.** Measured:
+**About fifty minutes for all eleven, and the resizes are twenty of it.** Measured:
 
 | | |
 | --- | --- |
 | `nodes-added` | 9.5 min |
 | `zone-retired` | 6 min |
 | `nodes-removed` | 5 min |
+| `containers-restart` | three kills of six containers, a settle between them and the passes after the last — **not yet measured against a deployed stack**, and near eight minutes by the timings around it |
 | the other seven, between them | 20 min |
 
 `nodes-added` is the longest because nine instances are three launches and a rebuild apiece, and
@@ -108,8 +111,8 @@ that says nothing about this system.
 That arithmetic is why [the pipeline runs four stacks at once](../doc/pipeline/index.md#the-shares)
 rather than one: nothing here is parallel on a single stack, because an experiment has the cluster
 to itself by design. Standing a cluster up and tearing it down is eight minutes a share whatever it
-then runs, so the ten are spread to land the four shares within a minute or two of each other rather
-than to fill three of them and leave a fourth long.
+then runs, so the eleven are spread to land the four shares within a minute or two of each other
+rather than to fill three of them and leave a fourth long.
 
 They also cost money for as long as they run: `nodes-added` is nine database instances rather than
 six for the length of it. Nothing is left behind — every one of them puts the shape back, and the
@@ -170,8 +173,8 @@ seconds here rather than by a full run.
 
 ## The faults that go in through SSM
 
-Four of the seven carry their fault onto the instance with `ssm:SendCommand` and the
-`AWS-RunShellScript` document, and they run by default like the other three. `node-latency`
+Five of them carry their fault onto the instance with `ssm:SendCommand` and the
+`AWS-RunShellScript` document, and they run by default like the rest. `node-latency`
 installs `tc` from the distribution's own repositories, which
 [the route out](../doc/deployment/network.md#the-route-out) is what makes reachable: an
 egress-only internet gateway is a route to the internet that opens outwards only and over IPv6
@@ -223,6 +226,70 @@ waiting.
 `node-latency` needs none of that chain, because `tc` shapes the host's own device and a
 container's traffic leaves through it like anything else. Its qdisc goes on whatever the default
 route names, which is not `eth0` on an instance of this generation.
+
+### The kill is a kill, and it comes from the host
+
+`containers-restart` sends no rule anywhere. What it runs on each instance is `kill -9` on the
+container's own init, found through `docker inspect`, and then a wait for that node's API port to
+answer again. Neither half of that is incidental:
+
+- **From the host, because a container cannot kill itself.** The kernel drops a signal a PID
+  namespace sends its own init unless the init handles it, so a `kill -9 1` over `docker exec`
+  does nothing at all.
+- **`kill -9` and not `docker kill`.** `docker run --restart always` is the whole of the recovery
+  here and the experiment asserts it — nothing in the script starts a container — so the exit has
+  to be one the daemon reads as the process dying rather than as a stop it was asked for, which it
+  may record as manual and not restart. A process killed from the host is the first of those
+  whatever the daemon's rule about the second is, and it is also the failure the runbook
+  describes: [a container that exited comes back at
+  once](../doc/runbook/index.md#what-recovers-by-itself).
+- **The wait is on the port and not on `docker ps`.** A node listens only once it has opened the
+  store and joined the cluster, so a round that waits for an answer is a round whose next kill
+  lands on a node that was serving rather than on one that was still starting.
+
+The kills of one round go out in **one** Run Command rather than six, because six sends in turn
+are six kills a wait apart — a rolling restart, which is a fault the cluster is built to ride out
+one node at a time and not the one this asserts on. `ssm_all` in [`harness.sh`](harness.sh) is
+that send, and it is every instance or none: Systems Manager refuses a batch naming an instance it
+does not know, and a kill that quietly skipped a node would be a weaker fault reported as the
+whole one.
+
+### The one experiment that is allowed to cost nothing
+
+Every other fault here takes something away and the assertions are about what is left.
+`containers-restart` takes nothing: a container is a process, the store is a volume that outlives
+it, and a node comes back at the address it already had, owning the partitions it already owned.
+So the numbers after the kills have to be the numbers before them, and the experiment is written
+as five claims that each say what losing them would mean:
+
+| Asserted | Losing it is |
+| --- | --- |
+| Every write the cluster acknowledged reads back what was written | A 2xx that was not durable. A write is answered only once every copy has taken it, and every copy of it was then killed with the write ahead log unflushed |
+| Every seeded record is still there, at the value written before the kills | A store that did not outlive its container, or one that came back older than it was |
+| No copy of a key answers a different value from another copy | Divergence. It is the one question the [holdings](#the-two-invariants-they-assert) cannot put: a key set says which records a zone has, never what is in them |
+| Every key the cluster acknowledged is in every zone, and in one store of it | Records moving when no ownership did. The membership came back naming the same six addresses |
+| Every partition is led again, and no node holds less than it owns | A cluster that registered without becoming one. Every claim in the cluster is held on a node's own lease, so killing every node frees all 256 |
+
+**A restart is not a rebuild**, and that is asserted too: an empty store is the only thing that
+triggers one, so a node whose volume outlived its container reads nothing from anybody. A rebuild
+line in `docker logs` since the first kill would mean a node came back to an empty directory,
+which is the one way a kill here could cost a copy.
+
+What it deliberately does **not** assert is the resizes' invariant that every zone holds the *same*
+keys, and the reason is the writer. A write is answered only once every copy has taken it, but a
+write that is **refused** may still have been taken by one of them — the copies are written beside
+each other rather than in turn — and killing a leader mid-write is how that happens. Nothing in the
+cluster puts the missing copies of such a record back: there is no read repair, no anti-entropy,
+and a reconcile pass moves the records whose owner moved, which after this fault is none of them.
+That is [a copy that missed a write](../doc/runbook/index.md#what-recovers-by-itself) not
+recovering by itself, which the runbook already says. Measured against a two zone cluster killed
+twice over: twenty-seven keys apart, every one of them a write the client was told had failed, and
+no fewer three minutes later. So the count is printed and the assertion is made over the keys the
+cluster acknowledged, which is the claim that holds.
+
+The writer is what the first of those needs and no other experiment has: a client writing
+throughout, each key once and never again, recording which writes were acknowledged. A key written
+twice could read back either value with nothing wrong, and then the check would say nothing.
 
 ## The faults that are a stack update
 
@@ -375,7 +442,7 @@ As in [`perf/`](../perf).
 
 | Variable | Is | Default |
 | --- | --- | --- |
-| `CHAOS_EXPERIMENTS` | Which experiments, in what order | all seven |
+| `CHAOS_EXPERIMENTS` | Which experiments, in what order | all eleven |
 | `CHAOS_STACK` | The stack under test | `asyncdb` |
 | `CHAOS_URL` | The address to drive, instead of the stack's `Url` output | |
 | `CHAOS_TABLE` | The table the suite seeds and reads | `chaos` |
