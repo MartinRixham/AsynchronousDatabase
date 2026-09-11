@@ -327,8 +327,7 @@ TEST_F(repository_test, a_record_larger_than_the_budget_is_a_page_of_its_own)
 {
 	create_table("a_table");
 
-	repository->write_record(
-		"a_table", record::valid_record("1", std::string(scan::max_page_bytes + 1, 'v')));
+	repository->write_record("a_table", record::valid_record("1", std::string(scan::max_page_bytes + 1, 'v')));
 	repository->write_record("a_table", record::valid_record("2", "small"));
 
 	scan::page page = repository->scan_records("a_table", whole_table());
@@ -653,7 +652,7 @@ TEST_F(repository_test, a_store_written_before_records_carried_a_version_is_refu
 		}
 
 		std::vector<rocksdb::ColumnFamilyHandle *> handles;
-		rocksdb::DB *database = NULL;
+		std::unique_ptr<rocksdb::DB> database;
 
 		ASSERT_TRUE(rocksdb::DB::Open(options, "/tmp/asyncdb", families, &handles, &database).ok());
 		ASSERT_TRUE(database->Delete(rocksdb::WriteOptions(), "FORMAT").ok());
@@ -662,8 +661,6 @@ TEST_F(repository_test, a_store_written_before_records_carried_a_version_is_refu
 		{
 			database->DestroyColumnFamilyHandle(handles[i]);
 		}
-
-		delete database;
 	}
 
 	EXPECT_THROW(repository::rocksdb_repository("/tmp/asyncdb"), repository::storage_error);
@@ -774,9 +771,7 @@ TEST_F(repository_test, a_file_of_keys_is_what_a_store_gives_records_up_on)
 	// never here is not a tombstone either.
 	EXPECT_FALSE(other_repository->read_record("a_table", "1").has_value());
 	EXPECT_TRUE(other_repository->read_record("a_table", "3").has_value());
-	EXPECT_EQ(
-		keys(other_repository->scan_records("a_table", whole_table())),
-		(std::vector<std::string> { "3" }));
+	EXPECT_EQ(keys(other_repository->scan_records("a_table", whole_table())), (std::vector<std::string> { "3" }));
 }
 
 // The budget is what the walk read, so a walk that is not reading values covers far more of a table
@@ -821,8 +816,7 @@ TEST_F(repository_test, says_where_a_table_would_be_cut_up)
 
 	for (size_t i = 0; i < 320; i++)
 	{
-		splitting.write_record(
-			"a_table", record::valid_record(std::to_string(10000 + i), std::string(32 * 1024, 'x')));
+		splitting.write_record("a_table", record::valid_record(std::to_string(10000 + i), std::string(32 * 1024, 'x')));
 	}
 
 	// A memtable full is a flush scheduled and not a flush done, so the answer is waited for rather

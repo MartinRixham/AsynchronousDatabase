@@ -18,26 +18,6 @@ namespace
 	// there is no pass to shut down and nothing waiting on it to finish.
 	const std::atomic<bool> running(true);
 
-	router::request table_request()
-	{
-		router::request request;
-
-		request.method = boost::beast::http::verb::get;
-		request.path = std::vector<std::string> { "table" };
-
-		return request;
-	}
-
-	std::string field(const boost::json::object &object, const std::string &name)
-	{
-		if (!object.contains(name) || !object.at(name).is_string())
-		{
-			return "";
-		}
-
-		return std::string(object.at(name).as_string());
-	}
-
 	// What a rebuild took from one node or from one zone: whether the whole of it was read, and how
 	// many of its records this node now holds.
 	struct restored
@@ -46,49 +26,6 @@ namespace
 
 		size_t records = 0;
 	};
-
-	std::optional<std::vector<table::table>> read_tables(
-		const cluster::cluster &nodes,
-		const std::vector<std::string> &zone,
-		progress::patience &waiting)
-	{
-		for (size_t i = 0; i < zone.size(); i++)
-		{
-			if (waiting.spent())
-			{
-				return std::nullopt;
-			}
-
-			router::response answer = nodes.send(zone[i], table_request());
-
-			if (answer.status != boost::beast::http::status::ok ||
-				!answer.json.contains("tables") || !answer.json.at("tables").is_array())
-			{
-				DEBUG("Node " + zone[i] + " did not name its tables for a rebuild.");
-
-				continue;
-			}
-
-			const boost::json::array &listed = answer.json.at("tables").as_array();
-			std::vector<table::table> tables;
-
-			for (size_t j = 0; j < listed.size(); j++)
-			{
-				if (!listed[j].is_object() || field(listed[j].as_object(), "name").empty())
-				{
-					continue;
-				}
-
-				tables.push_back(table::to_table(boost::json::serialize(listed[j])));
-			}
-
-			waiting.renew();
-
-			return tables;
-		}
-
-		return std::nullopt;
-	}
 
 	restored copy_table(
 		repository::repository &repository,
@@ -132,7 +69,7 @@ namespace
 		progress::patience &waiting)
 	{
 		restored taken;
-		std::optional<std::vector<table::table>> tables = read_tables(nodes, zone, waiting);
+		std::optional<std::vector<table::table>> tables = transfer::tables(nodes, zone, waiting);
 
 		if (!tables)
 		{

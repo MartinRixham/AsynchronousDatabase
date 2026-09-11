@@ -592,10 +592,13 @@ it ends.
   and a *write* lands on the new owner and leaves the old one holding a value
   that is now stale. Growing a cluster is therefore still a thing to do
   deliberately, at a quiet moment, and with the keys rewritten afterwards.
-- **A node that joins has no tables.** Tables are created on every node that is a
-  member at the time. Declare the tables a service needs at every start up, which
-  is [what `PUT /table/{table}` is for](/database/tables#create-a-table), and a
-  new node catches up on the next declaration.
+- **A table is created on every node that is a member at the time.** A node that
+  was not one misses it, and what puts it right is the pass that moves records:
+  it reads the schema from a node that has it and creates what this node lacks,
+  before it asks for a record of anything. **It never drops a table**, so a
+  delete a node missed is still one to run again. Declaring the tables a service
+  needs at every start up, which is [what `PUT /table/{table}` is
+  for](/database/tables#create-a-table), remains the way to be sure.
 - **An operation on every node that one node refuses fails the request**, after
   every other node has carried it out — they are all asked at once, so one
   refusing does not stop the rest. Creating a table, deleting a table and deleting

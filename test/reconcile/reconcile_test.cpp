@@ -65,6 +65,21 @@ namespace
 		return router::file_response(taken.file, taken.records, next.empty() ? "" : base64::encode(next));
 	}
 
+	// The schema as a node names it, which is the first thing a pass asks any node for: a table
+	// this node is missing is one it would refuse every write to.
+	router::response named(const std::vector<std::string> &names)
+	{
+		boost::json::array listed;
+
+		for (size_t i = 0; i < names.size(); i++)
+		{
+			listed.push_back(table::valid_table(names[i], std::vector<std::string>()).json);
+		}
+
+		return router::json_response(
+			boost::beast::http::status::ok, boost::json::object { { "tables", listed } });
+	}
+
 	// A file of records, which is what a node answers a fetch with.
 	router::response records(const std::vector<std::string> &keys, const std::string &next = "")
 	{
@@ -312,7 +327,7 @@ TEST(reconcile_test, clears_down_a_record_the_owner_in_its_own_zone_holds)
 	// The copy in this node's own zone is the first this node would ask, which is how replicas
 	// orders them.
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer_in_turn(mate, { records({}), holds({ "a" }) });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "a" }) });
 
 	// The fetch half asks every node of every zone, and a pass any of them would not answer is a
 	// pass that is not settled whatever the clear down did.
@@ -377,7 +392,7 @@ TEST(reconcile_test, asks_the_owner_once_for_a_share_rather_than_once_for_every_
 	nodes.copies("d", { mate, peer, other });
 	nodes.copies("e", { mate, peer, other });
 
-	nodes.answer_in_turn(mate, { records({}), holds({ "a", "b", "c", "d", "e" }) });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "a", "b", "c", "d", "e" }) });
 
 	reconcile::outcome done = reconciled(repository, nodes, running);
 
@@ -425,7 +440,7 @@ TEST(reconcile_test, fetches_what_it_gained_and_clears_down_what_it_lost)
 	nodes.copies("gained", { self, peer, other });
 	nodes.copies("gone", { mate, peer, other });
 
-	nodes.answer_in_turn(mate, { records({ "gained" }), holds({ "gone" }) });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({ "gained" }), holds({ "gone" }) });
 	nodes.answer(peer, records({}));
 	nodes.answer(other, records({}));
 
@@ -488,7 +503,7 @@ TEST(reconcile_test, a_refused_fetch_does_not_stop_the_clear_down)
 
 	// The owner in this node's own zone answers, and the two further zones answer nothing.
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer_in_turn(mate, { records({}), holds({ "gone" }) });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "gone" }) });
 
 	reconcile::outcome done = reconciled(repository, nodes, running);
 
@@ -509,7 +524,7 @@ TEST(reconcile_test, keeps_going_while_the_files_keep_arriving)
 	nodes.copies("b", { self, peer, other });
 
 	// Two files, each of them longer than the whole patience of the half that asks for them.
-	nodes.answer_in_turn(mate, { records({ "a" }, "a"), records({ "b" }) });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({ "a" }, "a"), records({ "b" }) });
 	nodes.slow(mate, std::chrono::milliseconds(700));
 
 	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
@@ -528,7 +543,7 @@ TEST(reconcile_test, clears_down_what_it_lost_after_a_fetch_that_took_a_long_tim
 	cluster::fake_cluster nodes(self, three_zones());
 
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer_in_turn(mate, { records({}), holds({ "gone" }) });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "gone" }) });
 
 	// Longer than the patience of either half, so a clock the two halves shared would be spent
 	// before the clear down began.
@@ -574,7 +589,7 @@ TEST(reconcile_test, asks_for_the_next_file_from_the_key_the_one_before_it_reach
 	nodes.copies("a", { self, peer, other });
 	nodes.copies("b", { self, peer, other });
 
-	nodes.answer_in_turn(mate, { records({ "a" }, "a"), records({ "b" }) });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({ "a" }, "a"), records({ "b" }) });
 
 	reconcile::outcome done = reconciled(repository, nodes, running);
 
@@ -584,8 +599,8 @@ TEST(reconcile_test, asks_for_the_next_file_from_the_key_the_one_before_it_reach
 
 	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
 
-	ASSERT_LE(2u, sent.size());
-	EXPECT_NE(std::string::npos, sent[1].second.query.find("from=" + url::encode(base64::encode("a"))));
+	ASSERT_LE(3u, sent.size());
+	EXPECT_NE(std::string::npos, sent[2].second.query.find("from=" + url::encode(base64::encode("a"))));
 }
 
 TEST(reconcile_test, walks_a_store_larger_than_one_page)
@@ -596,7 +611,7 @@ TEST(reconcile_test, walks_a_store_larger_than_one_page)
 	nodes.copies("a", { mate, peer, other });
 	nodes.copies("b", { mate, peer, other });
 	nodes.copies("c", { mate, peer, other });
-	nodes.answer_in_turn(mate, { records({}), holds({ "a", "b", "c" }) });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "a", "b", "c" }) });
 
 	reconcile::outcome done = reconciled(repository, nodes, running, 1);
 
@@ -690,4 +705,68 @@ TEST(reconcile_test, gives_up_a_record_the_node_that_owns_it_holds_at_the_same_v
 
 	EXPECT_EQ(1u, done.cleared);
 	EXPECT_FALSE(repository.read_record("account", "gone").has_value());
+}
+
+// Nothing else in the cluster puts a table on a node that missed the create: the rebuild that
+// copies them runs on an empty store alone, and a node that came back to one it was left with
+// would refuse every write to that table for the keys it owns.
+TEST(reconcile_test, declares_a_table_the_rest_of_the_cluster_has)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.answer(mate, named({ "account" }));
+
+	reconciled(repository, nodes, running);
+
+	EXPECT_TRUE(repository.has_table("account"));
+}
+
+// And it is declared before the tables are read, so the records of a table this pass learned about
+// are the records this pass fetches.
+TEST(reconcile_test, fills_a_table_it_declared_in_the_same_pass)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { self, peer, other });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({ "a" }) });
+
+	reconcile::outcome done = reconciled(repository, nodes, running);
+
+	EXPECT_EQ(1u, done.fetched);
+	EXPECT_EQ("value of a", repository.read_record("account", "a").value_or(""));
+}
+
+// A pass declares a table and never drops one. A table here that no other node names is a delete
+// this node missed or a node that is wrong about the schema, and dropping a table takes its records
+// with it — so it is left standing and the delete is run again instead.
+TEST(reconcile_test, keeps_a_table_no_other_node_names)
+{
+	repository::fake_repository repository = store({});
+
+	repository.create_table(table::valid_table("kept", std::vector<std::string>()));
+
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.answer(mate, named({ "account" }));
+
+	reconciled(repository, nodes, running);
+
+	EXPECT_TRUE(repository.has_table("kept"));
+}
+
+// A pass that has been told to stop asks nobody for anything, the schema included.
+TEST(reconcile_test, a_pass_that_is_no_longer_running_asks_for_no_tables)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes(self, three_zones());
+	const std::atomic<bool> stopped(false);
+
+	nodes.answer(mate, named({ "account" }));
+
+	reconciled(repository, nodes, stopped);
+
+	EXPECT_FALSE(repository.has_table("account"));
+	EXPECT_TRUE(nodes.sent().empty());
 }

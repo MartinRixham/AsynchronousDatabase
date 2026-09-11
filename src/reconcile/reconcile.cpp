@@ -162,6 +162,43 @@ namespace
 		return found;
 	}
 
+	// The tables a node of this cluster has that this one does not. **A pass creates them and never
+	// drops one**: a table here that no peer named is a delete this node missed or a peer that is
+	// wrong about the schema, and only one of those is worth acting on — where a table this node
+	// is missing is every write to it refused for the keys this node owns.
+	size_t declare_tables(
+		repository::repository &repository,
+		const cluster::cluster &nodes,
+		const std::vector<std::vector<std::string>> &zones,
+		progress::patience &waiting)
+	{
+		for (size_t zone = 0; zone < zones.size(); zone++)
+		{
+			std::optional<std::vector<table::table>> named = transfer::tables(nodes, zones[zone], waiting);
+
+			if (!named)
+			{
+				continue;
+			}
+
+			size_t declared = 0;
+
+			for (size_t i = 0; i < named->size(); i++)
+			{
+				if (!repository.has_table((*named)[i].name))
+				{
+					repository.create_table((*named)[i]);
+
+					declared++;
+				}
+			}
+
+			return declared;
+		}
+
+		return 0;
+	}
+
 	// **What makes the delete safe is that the owner said what it holds.** A key is given up only
 	// when the node that owns it in this node's own zone answers with that key in a file of its
 	// own, which is the same promise a record at a time made and one question for a share of them.
@@ -239,6 +276,22 @@ reconcile::outcome reconcile::reconcile(
 		return done;
 	}
 
+	// A half apiece, and each of them is patience rather than a deadline: a half still being sent
+	// records is a half to leave alone, because the pass after this one would start it again from
+	// the beginning.
+	progress::patience fetching(seconds);
+
+	// Before the tables are read, so that a table this pass declares is a table this pass also
+	// fills: nothing else in the cluster puts one here. The rebuild that copies them runs on an
+	// empty store alone, so a node that missed a create while it was out of the membership has no
+	// other way back to the schema the rest of the cluster is on.
+	size_t declared = running ? declare_tables(repository, nodes, zones, fetching) : 0;
+
+	if (declared > 0)
+	{
+		DEBUG("Declared " + std::to_string(declared) + " tables the rest of the cluster has.");
+	}
+
 	std::set<table::table> tables = repository.list_tables();
 
 	// Read once, because every file of every table of every node is asked for against it and the
@@ -252,11 +305,6 @@ reconcile::outcome reconcile::reconcile(
 	// A share this pass was refused is one it knows nothing about, where a share it walked and
 	// deferred is one it knows the owner has not taken over yet. Both leave the pass unsettled.
 	bool refused = false;
-
-	// A half apiece, and each of them is patience rather than a deadline: a half still being sent
-	// records is a half to leave alone, because the pass after this one would start it again from
-	// the beginning.
-	progress::patience fetching(seconds);
 
 	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
 	{

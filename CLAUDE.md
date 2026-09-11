@@ -615,6 +615,13 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   up on rather than one to hand over, and leaves a key it has nothing for alone, so a pass does not
   write a tombstone for every record it never held. That is why a file of keys alone carries the
   versions in place of the values.
+- **A pass reads the schema before it reads a record.** `transfer::tables` asks the nodes of a
+  zone in turn for `GET /table` and takes the first answer, and both `rebuild::rebuild` and
+  `reconcile::reconcile` go through it. The reconcile pass creates the tables this node lacks and
+  **never drops one**: nothing else puts a table on a node that missed the create, because the
+  rebuild runs on an empty store alone, while a table dropped here on a peer's say so takes its
+  records with it. A table a node is missing is every write to it refused for the keys that node
+  owns, which is what makes it worth a round trip a pass.
 - **Records move when ownership moves, and only then.** A membership change redraws the split inside
   a zone without moving a record, so `reconcile::reconcile` does: it **fetches** what this node now
   owns and holds nothing for, from every other node, and **clears down** what it no longer owns.

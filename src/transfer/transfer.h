@@ -4,11 +4,14 @@
 #include <atomic>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "cluster/cluster.h"
 #include "cluster/partition.h"
 #include "repository/repository.h"
+#include "table/table.h"
 #include "progress/patience.h"
 
 namespace transfer
@@ -54,6 +57,15 @@ namespace transfer
 
 		bool refused = false;
 	};
+
+	// The tables a zone has, as the first of its nodes to answer names them — every node holds
+	// every table, so one answer is the whole schema. It is what a node asks for before it asks
+	// for a record, because a record can only be written where its table is. Nothing when no node
+	// of the zone answered, which is a zone to ask nothing else of.
+	std::optional<std::vector<table::table>> tables(
+		const cluster::cluster &nodes,
+		const std::vector<std::string> &zone,
+		progress::patience &waiting);
 
 	// Asks a node for its share of a table and hands every file to `take`, over several key ranges
 	// at once and asking for the next file of each while the last one is still being taken in.

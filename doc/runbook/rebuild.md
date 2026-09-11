@@ -247,6 +247,15 @@ Clearing down alone is a shrink that loses records rather than staling them.
 Fetching alone is a store that only grows and a stale value waiting for the next
 membership change.
 
+**The schema comes first.** A record can only be written where its table is, so a
+pass reads the tables from a node that has them before it asks for any records,
+and creates the ones this node lacks. It is the only thing that puts a table on a
+node that missed the create — the rebuild copies them too, but the rebuild runs
+on an empty store alone. **It never drops one**: a table here that no other node
+names is a delete this node missed or a node that is wrong about the schema, and
+dropping a table takes its records with it, so it is left standing and the delete
+is run again instead.
+
 **Both halves ask for a file, and neither asks about a record at a time.** The
 fetch asks each node for
 [a file of the partitions this node now holds](/database/cluster#moving-a-share-of-a-table),
