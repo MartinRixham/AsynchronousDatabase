@@ -247,6 +247,18 @@ Ordering is all it changes. The operation still goes to every node, because a
 record can only be written where its table is, and it is still idempotent, so
 running it again is still the remedy for a node that refused.
 
+**A delete is carried out on every node even where the leader has no such
+table**, which is what makes running it again a remedy for a delete and not only
+for a create. The leader drops its own copy before it orders the others, so the
+delete that repairs a node which refused the first one is a delete of a table the
+leader no longer has: stopping at its own `404` would leave that node holding the
+table for good. The client is still answered `404 table_not_found` — unless a
+node refuses again, and then it is that refusal that comes back, which is the
+signal to run it once more. A node that
+[came up short of its share](/runbook/rebuild#a-node-that-came-up-short) answers
+`503 node_incomplete` instead and orders nothing: an absence it cannot vouch for
+is no grounds to drop a table everywhere.
+
 **One key for all of them, rather than one per table name**, because what a
 create is valid against is every *other* table: `parse_table` refuses a
 dependency that names no table, and two nodes creating tables at once are two

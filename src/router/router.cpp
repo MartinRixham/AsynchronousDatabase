@@ -760,7 +760,14 @@ router::response router::router::delete_table(const request &request, const std:
 			return empty_response(boost::beast::http::status::no_content);
 		}
 
-		return table_not_found(name);
+		if (incomplete)
+		{
+			return node_incomplete();
+		}
+
+		std::optional<response> refused = nodes.send_all(order.peers, carried(request, order.term));
+
+		return refused ? *refused : table_not_found(name);
 	}
 
 	repository.delete_table(name);

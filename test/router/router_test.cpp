@@ -1592,6 +1592,54 @@ TEST(router_cluster_test, refuse_a_deletion_forwarded_to_the_leader_of_a_table_t
 	forwarded.forwarded = true;
 
 	EXPECT_EQ(error_code(router.route(forwarded)), "table_not_found");
+}
+
+// The leader deletes its own copy before it carries the order out, so a delete that one node
+// refused is a table the leader no longer has: the order goes out again rather than stopping at
+// the leader's own 404, which is what makes running the request again the remedy for a delete as
+// well as for a create.
+TEST(router_cluster_test, carry_a_delete_of_a_table_that_is_not_here_to_the_other_nodes)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, here, 41);
+
+	EXPECT_EQ(error_code(router.route(del("/table/account"))), "table_not_found");
+
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, there);
+	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
+	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+}
+
+// A node that refused the order is still holding the table, so what the client is told is the
+// refusal it has to run the request again for and not that the table is gone.
+TEST(router_cluster_test, report_a_node_that_refuses_a_delete_of_a_table_that_is_not_here)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, here, 41);
+	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
+
+	EXPECT_EQ(error_code(router.route(del("/table/account"))), "storage_error");
+}
+
+// A node that came up short of its share may hold none of the tables, and an absence it cannot
+// vouch for is no grounds to order every other node to delete what it cannot see.
+TEST(router_cluster_test, refuse_to_delete_a_table_this_node_cannot_say_is_missing)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, here, 41);
+	router.is_incomplete(true);
+
+	EXPECT_EQ(error_code(router.route(del("/table/account"))), "node_incomplete");
 	EXPECT_TRUE(nodes.sent().empty());
 }
 
