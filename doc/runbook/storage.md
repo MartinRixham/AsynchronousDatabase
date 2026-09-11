@@ -195,9 +195,9 @@ declaration rather than on an operator noticing.
 
 ## The disk is filling
 
-Nothing here caps or watches the size of the store. Values are up to 16 MiB, a
-range delete is a `DeleteRange` and does not free space until compaction runs,
-and the root volume is 30 GB shared with everything else on the instance.
+Nothing here caps or watches the size of the store. Values are up to 16 MiB,
+nothing but dropping a table frees space, and the root volume is 30 GB shared
+with everything else on the instance.
 
 ```bash
 df -h /
@@ -225,9 +225,9 @@ needs room for an SST — not on the first write after `df` reads 100%. A node
 whose disk filled a moment ago is a node still answering `200` to writes it will
 not be able to keep making room for.
 
-**Do:** delete what is not needed — a table, or a range — and let compaction
-catch up. Dropping a table frees the most, because the column family goes with
-it. Watch for
+**Do:** drop a table that is not needed. That is the only thing here that frees
+space, and it frees all of the table's: the column family goes with it, so there
+is nothing to wait for a compaction over. Watch for
 [the stall](#writes-are-stalled) clearing afterwards rather than assuming it
 did.
 

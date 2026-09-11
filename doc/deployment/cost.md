@@ -446,9 +446,7 @@ scan, and "small" is a few hundred bytes of headers and JSON.
 | `GET /table/{t}/key/{k}` | nobody, unless the key is not here | none, or small on a miss | V | V × $0.09/GB |
 | `HEAD /table/{t}/key/{k}` | nobody, unless the key is not here | none, or small on a miss | small | LCU only |
 | `PUT /table/{t}/key/{k}` | the **leader**, then the copy in every zone | 2.6 × V | small | V × $0.051/GB |
-| `DELETE /table/{t}/key/{k}` | the **leader**, then the copy in every zone | 2.6 × small | small | LCU only |
 | `GET /table/{t}/key` | one **zone**, this node's own | none | P | P × $0.09/GB |
-| `DELETE /table/{t}/key` | **every** node | 4 × small | small | LCU only |
 | `PUT`/`DELETE` `/table/{t}` | **every** node | 4 × small | small | LCU only |
 | `GET /table`, `GET /table/{t}` | nobody | none | small | LCU only |
 | `GET /health` | nobody | none | small | LCU only |

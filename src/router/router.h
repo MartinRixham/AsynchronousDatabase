@@ -137,10 +137,6 @@ namespace router
 
 		zone_answer scan_zone(const request &request, const scan::range &range, const std::vector<std::string> &zone);
 
-		response delete_records(const request &request, const std::string &name);
-
-		std::optional<response> broadcast(const request &request);
-
 		std::set<std::string> table_names() const;
 
 	};

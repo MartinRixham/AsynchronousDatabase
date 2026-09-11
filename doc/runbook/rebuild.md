@@ -218,14 +218,17 @@ curl -s http://asyncdb-1:8080/health | jq '.nodes'
 
 ## The one hazard
 
-**A delete that lands during a rebuild can bring a record back.** There are no
-tombstones: a record deleted after the source zone was read and before it is
-written back is written back anyway, and the delete is undone.
+**A table delete that lands during a rebuild can bring the table back.** A
+rebuild reads the schema before it reads a record, and the node running one is
+not yet in the membership, so a delete carried to every node in that window is
+not carried to it: it creates the table it read a moment before, and comes up
+holding one the cluster dropped. No pass takes it away again, because a reconcile
+never drops a table.
 
-The window is smaller than it looks, because the rebuilding node is not in the
-membership — a delete during that window is not routed to it, and it is only the
-*source* zone's view going stale that matters. But it is real, and it is the same
-reason the docs say to grow a cluster at a quiet moment.
+Records cannot come back the same way — nothing erases one but dropping its
+table — so the remedy is the table delete itself, run again once the node is in
+the membership. It is the same reason the docs say to grow a cluster at a quiet
+moment.
 
 ## When ownership moves
 

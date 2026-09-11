@@ -13,10 +13,8 @@ Every endpoint, status code, error code and limit in one place.
 | `GET` | `/table/{table}/key/{key}` | [Read a record](/database/records#read-a-record) |
 | `HEAD` | `/table/{table}/key/{key}` | Existence and size of a record |
 | `PUT` | `/table/{table}/key/{key}` | [Write a record](/database/records#write-a-record) |
-| `DELETE` | `/table/{table}/key/{key}` | [Delete a record](/database/records#delete-a-record) |
-| | `/table/{table}/key/{key}/{sort}` | The same four, of a record with a [sort key](/database/records#partition-keys-and-sort-keys) |
+| | `/table/{table}/key/{key}/{sort}` | The same three, of a record with a [sort key](/database/records#partition-keys-and-sort-keys) |
 | `GET` | `/table/{table}/key` | [Scan a range](/database/scans) |
-| `DELETE` | `/table/{table}/key` | [Delete a range](/database/tables#delete-a-range) |
 | `GET` | `/table/{table}/file` | One node asking another for [its share of a table](/database/cluster#moving-a-share-of-a-table), as records or as `values=false` keys. Between nodes, not for clients |
 | `GET` | `/table/{table}/split` | Where the node being read would [cut a walk of its table up](/database/cluster#several-pieces-at-once), so that several pieces of it can be read at once. Between nodes, not for clients |
 | `GET` | `/health` | Liveness, whether writes are stalled, whether the node [holds less than it owns](/runbook/rebuild), whether it can order a write at all, [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) and how many partitions this node leads. `503` rather than `200` is a node that can order no write, and the document is the same either way — [reading it](/runbook/#health) |
@@ -45,7 +43,7 @@ status — is what a client should branch on.
 | `invalid_key_encoding` | 400 | A key in the path does not percent-decode to valid UTF-8 |
 | `key_too_large` | 413 | Over 4 KiB |
 | `value_too_large` | 413 | Over 16 MiB |
-| `invalid_range` | 400 | A range whose `from` is not below its `to`, or a range delete with no bounds |
+| `invalid_range` | 400 | A range whose `from` is not below its `to` |
 | `invalid_cursor` | 400 | A cursor this instance did not issue, or a file resumed at something that is not base64 |
 | `invalid_partitions` | 400 | A [file](/database/cluster#moving-a-share-of-a-table) asked for with something that is not a set of this cluster's partitions |
 | `write_stalled` | 503 | RocksDB is applying back pressure |

@@ -134,16 +134,6 @@ std::optional<std::string> repository::fake_repository::read_record(
 	return std::string(record::value_of(records.at(table_name).at(key)));
 }
 
-void repository::fake_repository::delete_record(const std::string &table_name, const std::string &key)
-{
-	std::lock_guard<std::mutex> lock(*mutex);
-
-	if (holds(table_name))
-	{
-		records[table_name].erase(key);
-	}
-}
-
 scan::page repository::fake_repository::scan_records(const std::string &table_name, const scan::range &range) const
 {
 	std::lock_guard<std::mutex> lock(*mutex);
@@ -400,31 +390,6 @@ size_t repository::fake_repository::clear_records(const std::string &table_name,
 	}
 
 	return cleared;
-}
-
-void repository::fake_repository::delete_records(const std::string &table_name, const scan::range &range)
-{
-	std::lock_guard<std::mutex> lock(*mutex);
-
-	if (!holds(table_name))
-	{
-		return;
-	}
-
-	std::map<std::string, std::string> &table_records = records[table_name];
-	std::map<std::string, std::string>::iterator it = table_records.begin();
-
-	while (it != table_records.end())
-	{
-		if (is_in_range(it->first, range))
-		{
-			it = table_records.erase(it);
-		}
-		else
-		{
-			++it;
-		}
-	}
 }
 
 uint64_t repository::fake_repository::next_count()

@@ -182,11 +182,9 @@ fi
 
 expect_writes 30 "every write is taken once there is room for it"
 
-# And the megabytes go, now that there is a store to take the delete: the disk they would be on
-# next is the one this experiment just filled.
-for i in $(seq 1 30); do
-	status --request DELETE "$base/table/$table/key/full-$i" > /dev/null
-	status --request DELETE "$base/table/$table/key/small-$i" > /dev/null
-done
+# And the megabytes go with the table, which is the only thing that erases a record: the disk they
+# would be on next is the one this experiment just filled. Every experiment seeds the table for
+# itself, so the one after this creates it again.
+status --request DELETE "$base/table/$table" > /dev/null
 
 verdict

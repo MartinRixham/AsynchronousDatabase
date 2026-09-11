@@ -423,15 +423,6 @@ std::optional<std::string> repository::rocksdb_repository::read_record(
 	return std::string(record::value_of(value));
 }
 
-void repository::rocksdb_repository::delete_record(const std::string &table_name, const std::string &key)
-{
-	std::shared_lock<std::shared_mutex> lock(handle_mutex);
-
-	written(
-		database->Delete(rocksdb::WriteOptions(), table_handle(table_name), key),
-		"Deleting a record from \"" + table_name + "\"");
-}
-
 scan::page repository::rocksdb_repository::scan_records(const std::string &table_name, const scan::range &range) const
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
@@ -815,43 +806,6 @@ size_t repository::rocksdb_repository::clear_records(const std::string &table_na
 	}
 
 	return cleared;
-}
-
-void repository::rocksdb_repository::delete_records(const std::string &table_name, const scan::range &range)
-{
-	std::shared_lock<std::shared_mutex> lock(handle_mutex);
-	rocksdb::ColumnFamilyHandle *handle = table_handle(table_name);
-	std::string what = "Deleting a range of \"" + table_name + "\"";
-
-	if (range.has_to)
-	{
-		written(database->DeleteRange(rocksdb::WriteOptions(), handle, range.from, range.to), what);
-
-		return;
-	}
-
-	rocksdb::ReadOptions options;
-	rocksdb::Slice lower(range.from);
-
-	if (range.has_from)
-	{
-		options.iterate_lower_bound = &lower;
-	}
-
-	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(options, handle));
-
-	it->SeekToLast();
-	check(it->status(), what);
-
-	if (!it->Valid())
-	{
-		return;
-	}
-
-	std::string last = it->key().ToString();
-
-	written(database->DeleteRange(rocksdb::WriteOptions(), handle, range.from, last), what);
-	written(database->Delete(rocksdb::WriteOptions(), handle, last), what);
 }
 
 // Every write goes through here rather than through check() alone. A write that failed for want of

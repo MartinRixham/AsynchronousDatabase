@@ -196,17 +196,13 @@ TEST_F(repository_test, two_tables_may_hold_the_same_key)
 	EXPECT_EQ(repository->read_record("second_table", "a key"), "second value");
 }
 
-TEST_F(repository_test, write_read_and_delete_a_record)
+TEST_F(repository_test, write_and_read_a_record)
 {
 	create_table("a_table");
 
 	repository->write_record("a_table", record::valid_record("a key", "a value"));
 
 	EXPECT_EQ(repository->read_record("a_table", "a key"), "a value");
-
-	repository->delete_record("a_table", "a key");
-
-	EXPECT_EQ(repository->read_record("a_table", "a key"), std::nullopt);
 }
 
 TEST_F(repository_test, an_empty_value_is_a_value)
@@ -373,44 +369,6 @@ TEST_F(repository_test, scan_keys_without_their_values)
 
 	EXPECT_EQ(page.records[0].key, "a key");
 	EXPECT_EQ(page.records[0].value, "");
-}
-
-TEST_F(repository_test, delete_a_range_of_records)
-{
-	create_table("a_table");
-
-	repository->write_record("a_table", record::valid_record("1", "one"));
-	repository->write_record("a_table", record::valid_record("2", "two"));
-	repository->write_record("a_table", record::valid_record("3", "three"));
-
-	scan::range range = whole_table();
-
-	range.from = "1";
-	range.has_from = true;
-	range.to = "3";
-	range.has_to = true;
-
-	repository->delete_records("a_table", range);
-
-	EXPECT_EQ(keys(repository->scan_records("a_table", whole_table())), (std::vector<std::string> { "3" }));
-}
-
-TEST_F(repository_test, delete_a_range_that_runs_to_the_last_key)
-{
-	create_table("a_table");
-
-	repository->write_record("a_table", record::valid_record("1", "one"));
-	repository->write_record("a_table", record::valid_record("2", "two"));
-	repository->write_record("a_table", record::valid_record("3", "three"));
-
-	scan::range range = whole_table();
-
-	range.from = "2";
-	range.has_from = true;
-
-	repository->delete_records("a_table", range);
-
-	EXPECT_EQ(keys(repository->scan_records("a_table", whole_table())), (std::vector<std::string> { "1" }));
 }
 
 TEST_F(repository_test, writes_are_not_stalled)

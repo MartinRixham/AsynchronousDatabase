@@ -438,7 +438,7 @@ TEST(router_test, a_value_is_kept_as_the_bytes_it_was_given)
 	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "{\"firstName\":\"Eleanor\"");
 }
 
-TEST(router_test, delete_a_record)
+TEST(router_test, refuse_to_delete_a_record)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
@@ -449,19 +449,9 @@ TEST(router_test, delete_a_record)
 
 	router::response response = router.route(del("/table/account/key/4821"));
 
-	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
-	EXPECT_EQ(router.route(get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
-}
-
-TEST(router_test, deleting_a_record_that_is_not_there_is_a_no_op)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
-
-	create_table(router, "account");
-
-	EXPECT_EQ(router.route(del("/table/account/key/4821")).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(response.status, boost::beast::http::status::method_not_allowed);
+	EXPECT_EQ(error_code(response), "method_not_allowed");
+	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "Eleanor Whitmore");
 }
 
 TEST(router_test, overwrite_a_record)
@@ -714,7 +704,7 @@ TEST(router_test, fail_to_scan_a_table_that_is_not_there)
 	EXPECT_EQ(error_code(router.route(get("/table/account/key"))), "table_not_found");
 }
 
-TEST(router_test, delete_a_range)
+TEST(router_test, refuse_to_delete_a_range)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
@@ -727,24 +717,9 @@ TEST(router_test, delete_a_range)
 
 	router::response response = router.route(del("/table/account/key?prefix=user%3A"));
 
-	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
-	EXPECT_EQ(keys(router.route(get("/table/account/key"))), (std::vector<std::string> { "order:1" }));
-}
-
-TEST(router_test, refuse_to_delete_a_range_that_names_no_range)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
-
-	create_table(router, "account");
-	write_record(router, "account", "4821", "Eleanor Whitmore");
-
-	router::response response = router.route(del("/table/account/key"));
-
-	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
-	EXPECT_EQ(error_code(response), "invalid_range");
-	EXPECT_EQ(keys(router.route(get("/table/account/key"))).size(), 1);
+	EXPECT_EQ(response.status, boost::beast::http::status::method_not_allowed);
+	EXPECT_EQ(error_code(response), "method_not_allowed");
+	EXPECT_EQ(keys(router.route(get("/table/account/key"))).size(), 3);
 }
 
 TEST(router_test, a_method_that_is_not_a_method_of_the_route)
@@ -896,23 +871,6 @@ TEST(router_cluster_test, write_a_record_to_the_node_that_owns_the_key)
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 }
 
-TEST(router_cluster_test, delete_a_record_on_the_node_that_owns_the_key)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	nodes.forget();
-	nodes.owns("4821", there);
-
-	router::response response = router.route(del("/table/account/key/4821"));
-
-	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
-}
-
 // The node that was sent the request is the node that answers it, whatever it makes of the
 // membership, so two nodes that disagree for a moment cannot bounce a request between them.
 TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
@@ -987,27 +945,6 @@ TEST(router_cluster_test, write_a_record_to_every_copy_when_this_node_holds_none
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 	EXPECT_EQ(nodes.sent().size(), 2u);
-}
-
-TEST(router_cluster_test, delete_a_record_from_every_node_that_holds_a_copy)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	write_record(router, "account", "4821", "a value");
-	nodes.forget();
-	nodes.copies("4821", { here, there, elsewhere });
-
-	router::response response = router.route(del("/table/account/key/4821"));
-
-	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
-	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
-
-	ASSERT_EQ(nodes.sent().size(), 2u);
-	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
-	EXPECT_EQ(nodes.sent()[1].second.method, boost::beast::http::verb::delete_);
 }
 
 // A copy that refuses is a record that is not in every zone, and saying so is what lets the client
@@ -1441,25 +1378,6 @@ TEST(router_cluster_test, apply_a_forwarded_write_ordered_in_the_term_that_stand
 	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
 	EXPECT_TRUE(nodes.sent().empty());
-}
-
-// A delete is a write like any other, and it is ordered by the same node.
-TEST(router_cluster_test, order_a_delete_through_the_leader)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	nodes.forget();
-	nodes.copies("4821", { here, partner });
-	nodes.led_by("4821", there, 41);
-
-	EXPECT_EQ(router.route(del("/table/account/key/4821")).status, boost::beast::http::status::no_content);
-
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
-	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
 }
 
 namespace
@@ -2243,37 +2161,6 @@ TEST(router_cluster_test, fail_to_scan_when_no_zone_answers)
 	EXPECT_EQ(nodes.sent().size(), 2u);
 }
 
-TEST(router_cluster_test, delete_a_range_on_every_node)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	write_record(router, "account", "a", "1");
-	nodes.forget();
-
-	router::response response = router.route(del("/table/account/key?prefix=a"));
-
-	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
-	EXPECT_TRUE(repository.read_record("account", "a") == std::nullopt);
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
-	EXPECT_EQ(nodes.sent()[0].second.query, "limit=100&values=true&reverse=false&from=a&to=b");
-}
-
-TEST(router_cluster_test, fail_to_delete_a_range_a_node_refuses)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	nodes.answer(there, router::error_response("write_stalled", "Writes are stalled."));
-
-	EXPECT_EQ(error_code(router.route(del("/table/account/key?prefix=a"))), "write_stalled");
-}
-
 TEST(router_cluster_test, name_the_nodes_of_the_cluster_in_the_health_of_the_instance)
 {
 	repository::fake_repository repository;
@@ -2580,20 +2467,6 @@ TEST(router_test, a_partition_key_and_a_key_sorting_under_it_are_different_recor
 
 	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "the account");
 	EXPECT_EQ(router.route(get("/table/account/key/4821/2019")).text, "a year of it");
-}
-
-TEST(router_test, delete_a_record_of_two_parts)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
-
-	create_table(router, "account");
-	router.route(put("/table/account/key/4821/2019", "Eleanor Whitmore"));
-
-	EXPECT_EQ(router.route(del("/table/account/key/4821/2019")).status, boost::beast::http::status::no_content);
-	EXPECT_EQ(router.route(get("/table/account/key/4821/2019")).status, boost::beast::http::status::not_found);
-	EXPECT_EQ(router.route(get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
 }
 
 // The two halves are one key with a zero byte between them, so the two ways of writing it down

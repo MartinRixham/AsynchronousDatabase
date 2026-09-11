@@ -46,8 +46,6 @@ namespace repository
 
 		std::optional<std::string> read_record(const std::string &table_name, const std::string &key) const override;
 
-		void delete_record(const std::string &table_name, const std::string &key) override;
-
 		scan::page scan_records(const std::string &table_name, const scan::range &range) const override;
 
 		std::vector<std::string> split_points(const std::string &table_name, size_t ways) const override;
@@ -57,8 +55,6 @@ namespace repository
 		size_t import_records(const std::string &table_name, const std::string &file) override;
 
 		size_t clear_records(const std::string &table_name, const std::string &file) override;
-
-		void delete_records(const std::string &table_name, const scan::range &range) override;
 
 		uint64_t next_count() override;
 

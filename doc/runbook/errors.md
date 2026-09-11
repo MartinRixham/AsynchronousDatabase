@@ -31,10 +31,10 @@ same list read the other way round: what to *do* about each one.
 | everything else 4xx | 400, 413 | No | The request is wrong and will stay wrong |
 | `unavailable` | 500, 502, 504 | **Yes** | nginx's, not the server's — the database is not up yet, or [its disk is full](/runbook/storage#the-disk-is-filling) |
 
-Every write in this API is idempotent — a key and a value, a key that is gone, a
-table with its options, a range that is deleted — so **running the whole request
-again is always safe**, and it is the documented remedy for every failure a
-write can be given.
+Every write in this API is idempotent — a key and a value, a table with its
+options, a table that is gone — so **running the whole request again is always
+safe**, and it is the documented remedy for every failure a write can be
+given.
 
 ## `503 no_leader`
 
@@ -191,9 +191,9 @@ These need a client change, not an operator:
 | `dependency_not_found` | Names a table that does not exist — which is what keeps the graph free of dangling edges |
 | `invalid_key_encoding` | The key does not percent-decode to valid UTF-8 |
 | `key_too_large` / `value_too_large` | Over 4 KiB / 16 MiB |
-| `invalid_range` | `from` is not below `to`, or a range delete with no bounds |
+| `invalid_range` | `from` is not below `to` |
 | `table_exists` | The table exists with *different* options. The same options again are a `200` |
-| `method_not_allowed` | Something other than GET, HEAD, PUT or DELETE |
+| `method_not_allowed` | A method the route does not have — something other than GET, HEAD, PUT or DELETE at all, or a DELETE of a record or a range, which only a table has |
 | `invalid_path` | A path segment that is `..`, or a target that does not begin with `/` |
 
 `dependency_not_found` on a table that plainly exists is the cluster case again:

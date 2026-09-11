@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "a5f7d3c1-9b26-4c7a-9d51-3e0a1f7c8b40",
 		"name": "asyncdb",
-		"description": "The key journeys of the asyncdb HTTP/JSON API, in the order a client lives them: declare the table graph, write and read records, scan and page a range, delete a range, drop the table. Folders 1 to 7 run against one instance; folder 8 runs against the three of docker-compose.\n\nRun the whole collection with the runner or with newman — the requests depend on the ones before them, and folder 0 makes a re-run start from a clean table.\n\nEvery assertion is drawn from doc/database, which is the spec: the codes are the documented codes, the statuses the documented statuses.",
+		"description": "The key journeys of the asyncdb HTTP/JSON API, in the order a client lives them: declare the table graph, write and read records, scan and page a range, find that a record cannot be erased, drop the table. Folders 1 to 7 run against one instance; folder 8 runs against the three of docker-compose.\n\nRun the whole collection with the runner or with newman — the requests depend on the ones before them, and folder 0 makes a re-run start from a clean table.\n\nEvery assertion is drawn from doc/database, which is the spec: the codes are the documented codes, the statuses the documented statuses.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -652,7 +652,7 @@
 		},
 		{
 			"name": "3 · The record lifecycle",
-			"description": "One key, one value, and the four operations most clients will ever use. A value is bytes the service never looks at, the empty value is a value, and a missing key is told from it by the status code.",
+			"description": "One key, one value, and the three operations most clients will ever use. A value is bytes the service never looks at, the empty value is a value, and a missing key is told from it by the status code. Nothing here erases a record: a value that should not be read again is overwritten, and the key stays until the table goes.",
 			"item": [
 				{
 					"name": "Write a record",
@@ -1024,10 +1024,19 @@
 					"response": []
 				},
 				{
-					"name": "Delete the largest value",
+					"name": "Overwrite the largest value",
 					"request": {
-						"method": "DELETE",
-						"header": [],
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain; charset=utf-8"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "small again"
+						},
 						"url": {
 							"raw": "{{baseUrl}}/table/{{table}}/key/postman-largest",
 							"host": [
@@ -1047,7 +1056,8 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
-									"// Folder 5 scans the whole table, and 16 MiB of it is a scan nobody needs.",
+									"// Folder 5 scans the whole table, and 16 MiB of it is a scan nobody needs. There is no",
+									"// delete of a record, so what makes it small again is a write.",
 									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
 								]
 							}
@@ -1133,7 +1143,7 @@
 					"response": []
 				},
 				{
-					"name": "Delete the record",
+					"name": "A record cannot be deleted",
 					"request": {
 						"method": "DELETE",
 						"header": [],
@@ -1156,7 +1166,10 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
-									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+									"pm.test(\"405 method_not_allowed: the only thing that erases a record is dropping its table\", function () {",
+									"    pm.response.to.have.status(405);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"method_not_allowed\");",
+									"});"
 								]
 							}
 						}
@@ -1164,7 +1177,7 @@
 					"response": []
 				},
 				{
-					"name": "It is gone",
+					"name": "It is still there",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -1187,39 +1200,9 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
-									"pm.test(\"404\", function () { pm.response.to.have.status(404); });"
-								]
-							}
-						}
-					],
-					"response": []
-				},
-				{
-					"name": "Deleting it again is still 204",
-					"request": {
-						"method": "DELETE",
-						"header": [],
-						"url": {
-							"raw": "{{baseUrl}}/table/{{table}}/key/{{key}}",
-							"host": [
-								"{{baseUrl}}"
-							],
-							"path": [
-								"table",
-								"{{table}}",
-								"key",
-								"{{key}}"
-							]
-						}
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"type": "text/javascript",
-								"exec": [
-									"pm.test(\"204: a delete is a no op, not a read before a write\", function () {",
-									"    pm.response.to.have.status(204);",
+									"pm.test(\"200 with the value the refused delete left alone\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.text()).to.eql(\"{\\\"firstName\\\":\\\"Eleanor\\\",\\\"lastName\\\":\\\"Whitmore\\\"}\");",
 									"});"
 								]
 							}
@@ -2594,44 +2577,11 @@
 			]
 		},
 		{
-			"name": "6 · Delete a range",
-			"description": "An operator action: one range tombstone instead of a delete per key. It takes the same range parameters as a scan, and refuses a request that names no range at all — deleting every record in a table is deleting the table.",
+			"name": "6 · Records cannot be erased",
+			"description": "There is no delete of a key and no delete of a range: both are 405, and a table is dropped whole or not at all. What that buys is a store with no tombstones in it — nothing a scan has to read again until a compaction takes it away.",
 			"item": [
 				{
-					"name": "A range delete that names no range",
-					"request": {
-						"method": "DELETE",
-						"header": [],
-						"url": {
-							"raw": "{{baseUrl}}/table/{{table}}/key",
-							"host": [
-								"{{baseUrl}}"
-							],
-							"path": [
-								"table",
-								"{{table}}",
-								"key"
-							]
-						}
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"type": "text/javascript",
-								"exec": [
-									"pm.test(\"400 invalid_range\", function () {",
-									"    pm.response.to.have.status(400);",
-									"    pm.expect(pm.response.json().error.code).to.eql(\"invalid_range\");",
-									"});"
-								]
-							}
-						}
-					],
-					"response": []
-				},
-				{
-					"name": "Delete the prefix",
+					"name": "A delete of a range is not a method of the route",
 					"request": {
 						"method": "DELETE",
 						"header": [],
@@ -2659,7 +2609,10 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
-									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+									"pm.test(\"405 method_not_allowed\", function () {",
+									"    pm.response.to.have.status(405);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"method_not_allowed\");",
+									"});"
 								]
 							}
 						}
@@ -2667,7 +2620,41 @@
 					"response": []
 				},
 				{
-					"name": "The range is empty",
+					"name": "Nor is a delete of one key",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/table/{{table}}/key/postman-outside",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"table",
+								"{{table}}",
+								"key",
+								"postman-outside"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"405 method_not_allowed\", function () {",
+									"    pm.response.to.have.status(405);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"method_not_allowed\");",
+									"});"
+								]
+							}
+						}
+					],
+					"response": []
+				},
+				{
+					"name": "The range folder 5 seeded is still whole",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -2695,11 +2682,11 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
-									"pm.test(\"200 with no records and no cursor\", function () {",
+									"pm.test(\"200 with every record the refused deletes left alone\", function () {",
 									"    pm.response.to.have.status(200);",
-									"    const body = pm.response.json();",
-									"    pm.expect(body.records).to.eql([]);",
-									"    pm.expect(body.next).to.be.undefined;",
+									"    const prefix = pm.variables.get(\"scanPrefix\");",
+									"    const keys = pm.response.json().records.map(function (record) { return record.key; });",
+									"    pm.expect(keys).to.eql([ prefix + \"1\", prefix + \"2\", prefix + \"3\", prefix + \"4\" ]);",
 									"});"
 								]
 							}
@@ -2708,7 +2695,7 @@
 					"response": []
 				},
 				{
-					"name": "A key outside the range survived it",
+					"name": "And so is the key outside it",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -2731,7 +2718,7 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
-									"pm.test(\"200, the tombstone covered the range and nothing else\", function () {",
+									"pm.test(\"200\", function () {",
 									"    pm.response.to.have.status(200);",
 									"    pm.expect(pm.response.text()).to.eql(\"not in the range\");",
 									"});"
@@ -3353,7 +3340,7 @@
 					"response": []
 				},
 				{
-					"name": "A range delete reaches every node",
+					"name": "A range delete is refused wherever it is sent",
 					"request": {
 						"method": "DELETE",
 						"header": [],
@@ -3381,7 +3368,10 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
-									"pm.test(\"204\", function () { pm.response.to.have.status(204); });"
+									"pm.test(\"405 method_not_allowed\", function () {",
+									"    pm.response.to.have.status(405);",
+									"    pm.expect(pm.response.json().error.code).to.eql(\"method_not_allowed\");",
+									"});"
 								]
 							}
 						}
@@ -3389,7 +3379,7 @@
 					"response": []
 				},
 				{
-					"name": "And the range is empty everywhere",
+					"name": "And every node's share is still there",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -3417,9 +3407,11 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
-									"pm.test(\"200 with no records\", function () {",
+									"pm.test(\"200 with the records of every node\", function () {",
 									"    pm.response.to.have.status(200);",
-									"    pm.expect(pm.response.json().records).to.eql([]);",
+									"    const prefix = pm.variables.get(\"scanPrefix\");",
+									"    const keys = pm.response.json().records.map(function (record) { return record.key; });",
+									"    pm.expect(keys).to.eql([ prefix + \"1\", prefix + \"2\", prefix + \"3\" ]);",
 									"});"
 								]
 							}

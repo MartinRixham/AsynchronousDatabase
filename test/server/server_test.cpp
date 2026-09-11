@@ -334,29 +334,14 @@ TEST_F(server_test, scan_request)
 	EXPECT_FALSE(next_body.contains("next"));
 }
 
-TEST_F(server_test, delete_a_record)
+TEST_F(server_test, refuse_to_delete_a_record)
 {
 	request("PUT", "/table/account", "{}");
 	request("PUT", "/table/account/key/4821", "Eleanor Whitmore");
 
-	result response = request("DELETE", "/table/account/key/4821", "");
-
-	EXPECT_EQ(response.code, 204);
-	EXPECT_EQ(get("/table/account/key/4821").code, 404);
-}
-
-TEST_F(server_test, delete_a_range)
-{
-	request("PUT", "/table/account", "{}");
-	request("PUT", "/table/account/key/user%3A4821", "Eleanor Whitmore");
-	request("PUT", "/table/account/key/order%3A1", "an order");
-
-	EXPECT_EQ(request("DELETE", "/table/account/key?prefix=user%3A", "").code, 204);
-	EXPECT_EQ(request("DELETE", "/table/account/key", "").code, 400);
-
-	boost::json::object body = boost::json::parse(get("/table/account/key").body).as_object();
-
-	EXPECT_EQ(body.at("records").as_array().size(), 1);
+	EXPECT_EQ(request("DELETE", "/table/account/key/4821", "").code, 405);
+	EXPECT_EQ(request("DELETE", "/table/account/key?prefix=user%3A", "").code, 405);
+	EXPECT_EQ(get("/table/account/key/4821").body, "Eleanor Whitmore");
 }
 
 TEST_F(server_test, delete_a_table)

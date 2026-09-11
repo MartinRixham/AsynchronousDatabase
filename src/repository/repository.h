@@ -86,8 +86,6 @@ namespace repository
 
 		virtual std::optional<std::string> read_record(const std::string &table_name, const std::string &key) const = 0;
 
-		virtual void delete_record(const std::string &table_name, const std::string &key) = 0;
-
 		virtual scan::page scan_records(const std::string &table_name, const scan::range &range) const = 0;
 
 		// One file of the records of a table that belong to the partitions named. This is how a
@@ -116,8 +114,6 @@ namespace repository
 		// key the file carries and this store has nothing for is left alone rather than deleted,
 		// or a pass would write a tombstone for every record it never held.
 		virtual size_t clear_records(const std::string &table_name, const std::string &file) = 0;
-
-		virtual void delete_records(const std::string &table_name, const scan::range &range) = 0;
 
 		// The count for the next write this node orders, which rises for as long as the store
 		// lives. It is handed out in blocks reserved on disk rather than one at a time, so a write

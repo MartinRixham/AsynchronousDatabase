@@ -115,8 +115,8 @@ between two pages are visible to the second page and not the first. So:
 - A record inserted behind the cursor is missed.
 - A record inserted ahead of it appears, even though it did not exist when the
   scan began.
-- A record deleted ahead of the cursor is gone, though an earlier page might
-  have promised it.
+- A record overwritten ahead of the cursor is answered with its new value,
+  though an earlier page would have answered the old one.
 
 Within one page the view is consistent, because one iterator serves it. Across
 pages it is not, and the API offers nothing that makes it so. A client that

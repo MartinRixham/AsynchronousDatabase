@@ -380,11 +380,6 @@ router::response router::router::route_table(const request &request, const std::
 
 router::response router::router::route_range(const request &request, const std::string &name)
 {
-	if (request.method == boost::beast::http::verb::delete_)
-	{
-		return delete_records(request, name);
-	}
-
 	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
 	{
 		return method_not_allowed(request.method);
@@ -506,6 +501,12 @@ router::response router::router::route_record(
 	const std::string &partition,
 	const std::string &sort)
 {
+	if (request.method != boost::beast::http::verb::put && request.method != boost::beast::http::verb::get
+		&& request.method != boost::beast::http::verb::head)
+	{
+		return method_not_allowed(request.method);
+	}
+
 	std::string key = record::compose_key(partition, sort);
 	record::record record = request.method == boost::beast::http::verb::put
 		? record::parse_record(key, request.body)
@@ -525,7 +526,7 @@ router::response router::router::route_record(
 
 	cluster::placement where = request.forwarded ? cluster::placement() : nodes.replicas(record.key);
 
-	if (request.method == boost::beast::http::verb::put || request.method == boost::beast::http::verb::delete_)
+	if (request.method == boost::beast::http::verb::put)
 	{
 		if (request.term != 0)
 		{
@@ -580,11 +581,6 @@ router::response router::router::route_record(
 			replicas_of(request, where, record.key));
 	}
 
-	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
-	{
-		return method_not_allowed(request.method);
-	}
-
 	if (!where.local)
 	{
 		return read_record(request, where.nodes);
@@ -626,14 +622,7 @@ router::response router::router::write_record(
 {
 	if (where.local)
 	{
-		if (request.method == boost::beast::http::verb::put)
-		{
-			repository.write_record(name, record);
-		}
-		else
-		{
-			repository.delete_record(name, record.key);
-		}
+		repository.write_record(name, record);
 	}
 
 	// Every copy at once, so the thread serving the write waits for the slowest of them rather
@@ -900,42 +889,6 @@ router::router::zone_answer router::router::scan_zone(
 	}
 
 	return answered;
-}
-
-router::response router::router::delete_records(const request &request, const std::string &name)
-{
-	if (!repository.has_table(name))
-	{
-		return table_not_found(name);
-	}
-
-	scan::range range = scan::parse_range(request.query, repository.instance());
-
-	if (!range.is_valid)
-	{
-		return error_response(range.code, range.message);
-	}
-
-	if (!range.has_from && !range.has_to)
-	{
-		return error_response("invalid_range", "A range delete has to name a range.");
-	}
-
-	repository.delete_records(name, range);
-
-	std::optional<response> failure = broadcast(forwarded_range(request, range));
-
-	return failure ? *failure : empty_response(boost::beast::http::status::no_content);
-}
-
-std::optional<router::response> router::router::broadcast(const request &request)
-{
-	if (request.forwarded)
-	{
-		return std::nullopt;
-	}
-
-	return nodes.send_all(nodes.peers(), request);
 }
 
 std::set<std::string> router::router::table_names() const

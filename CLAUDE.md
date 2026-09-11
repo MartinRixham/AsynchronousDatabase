@@ -487,7 +487,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   reader loads it without excluding the thread that replaces it; and `placements.h` answers
   `replicas` once a partition rather than once a key, which is what a pass walking a million keys
   asks through.
-- **`repository::repository`** is the pure-virtual seam, over tables, records, scans, range deletes and
+- **`repository::repository`** is the pure-virtual seam, over tables, records, scans and
   the **files a node's share of a table travels in** — `export_records` writes one and `import_records`
   takes one. It is `cluster::partition_set` that says which records a file carries, so the seam includes
   `cluster/partition.h`: what a store is asked to walk for is a set of partitions, and the hashing that
@@ -517,6 +517,12 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 - `record::parse_record` enforces the limits (4 KiB of key, 16 MiB of value) and that a key is valid
   UTF-8. A value is never looked at — every string is a value, and the empty one is told from a missing
   key by the status code, which is why `read_record` returns a `std::optional`.
+- **Nothing erases a record but dropping its table.** There is no delete of a key and no delete of
+  a range: `DELETE` is a method of `/table/{table}` alone, and `method_not_allowed` everywhere under
+  `/key`. So the store holds no tombstone a read has to cross, the only walk that deletes anything
+  is the reconcile clear down, and a value that should not be read again is overwritten. The seam
+  carries no record delete either — what `repository` has is `clear_records`, which is a pass
+  handing a share over and not an operation the API reaches.
 - **A key is a partition key and a sort key, composed into one key the store holds.**
   `record::compose_key` is `partition + '\0' + sort`, and the separator is dropped when the sort key
   is empty, so a key of one part is those bytes and no more. It is the **first** zero byte that
@@ -525,7 +531,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   nothing to reject. The 4 KiB is over the whole composed key. **The separator sorts below every
   other byte**, so a partition key's records are together in the store, in sort key order, and
   before every key the partition key is a prefix of.
-- `scan::range` is the parsed query of a scan or a range delete, and a cursor is base64 of
+- `scan::range` is the parsed query of a scan, and a cursor is base64 of
   `{ "k": last key, "s": instance }`; the instance is what makes a cursor this instance did not issue
   refusable.
 - **A page is bounded in bytes as well as in records** — `scan::max_page_bytes`, 8 MiB of keys and

@@ -1,6 +1,6 @@
 # Records
 
-One key, one value. These are the four operations most clients will ever use.
+One key, one value. These are the three operations most clients will ever use.
 
 ## Keys and values
 
@@ -67,7 +67,6 @@ that is not: a slash *inside* either half is `%2F`, as it always was.
 
 ```http
 GET /table/transaction/key/4821/2026-09-10T09%3A14%3A22Z
-DELETE /table/transaction/key/4821/2026-09-10T09%3A14%3A22Z
 ```
 
 ### One key, written two ways
@@ -141,11 +140,13 @@ There is no `POST` to a table and no server-generated key. Keys carry meaning in
 an ordered store — they decide what a scan can answer — so the API will not
 invent one.
 
-## Delete a record
+## There is no way to erase one key
 
-```http
-DELETE /table/account/key/4821
-```
+`DELETE` on a key is `405 method_not_allowed`, and so is `DELETE` on a range of
+them. **The only thing that erases a record is
+[deleting its table](/database/tables#delete-a-table)**, which takes every
+record in it.
 
-`204 No Content`, whether or not the key was there — a key that is gone is a key
-that is gone.
+A value that should no longer be read is overwritten rather than removed —
+with the empty string, or with whatever a client reads as absent. The key stays,
+and a scan still answers it.

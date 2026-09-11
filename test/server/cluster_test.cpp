@@ -315,15 +315,6 @@ TEST_F(cluster_test, a_value_larger_than_one_packet_survives_the_hop)
 	EXPECT_EQ(get(stranger("4821"), "/table/account/key/4821").body, value);
 }
 
-TEST_F(cluster_test, a_record_is_deleted_on_the_node_that_owns_its_key)
-{
-	request(first, "PUT", "/table/account", "{}");
-	request(first, "PUT", "/table/account/key/4821", "a value");
-
-	EXPECT_EQ(request(stranger("4821"), "DELETE", "/table/account/key/4821", "").code, 204);
-	EXPECT_EQ(get(first, "/table/account/key/4821").code, 404);
-}
-
 TEST_F(cluster_test, the_size_of_a_record_is_answered_by_the_node_that_owns_it)
 {
 	request(first, "PUT", "/table/account", "{}");
@@ -422,27 +413,6 @@ TEST_F(cluster_test, a_scan_is_paged_across_the_nodes)
 	EXPECT_EQ(paged.size(), 20u);
 }
 
-TEST_F(cluster_test, a_range_is_deleted_on_every_node)
-{
-	request(first, "PUT", "/table/account", "{}");
-
-	for (size_t i = 0; i < 20; i++)
-	{
-		request(first, "PUT", "/table/account/key/row-" + std::to_string(i), "a value");
-	}
-
-	EXPECT_EQ(request(second, "DELETE", "/table/account/key?prefix=row-1", "").code, 204);
-
-	std::vector<std::string> left = keys(get(first, "/table/account/key"));
-
-	for (size_t i = 0; i < left.size(); i++)
-	{
-		EXPECT_NE(left[i].rfind("row-1", 0), 0u);
-	}
-
-	EXPECT_EQ(left.size(), 9u);
-}
-
 TEST_F(cluster_test, a_table_is_deleted_on_every_node)
 {
 	request(first, "PUT", "/table/account", "{}");
@@ -474,18 +444,6 @@ TEST_F(cluster_test, a_record_is_written_to_the_node_in_every_zone)
 	// this is both nodes saying they hold the record themselves.
 	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
 	EXPECT_EQ(request(second, "GET", "/table/account/key/4821", "", true).body, "a value");
-}
-
-TEST_F(cluster_test, a_record_is_deleted_in_every_zone)
-{
-	zone_the_cluster();
-
-	request(first, "PUT", "/table/account", "{}");
-	request(first, "PUT", "/table/account/key/4821", "a value");
-
-	EXPECT_EQ(request(second, "DELETE", "/table/account/key/4821", "").code, 204);
-	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).code, 404);
-	EXPECT_EQ(request(second, "GET", "/table/account/key/4821", "", true).code, 404);
 }
 
 // The copies are the same key twice, and a scan of the cluster answers it once.

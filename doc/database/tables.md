@@ -87,26 +87,13 @@ DELETE /table/account
 `204 No Content`, and the data is gone with the column family — no tombstones,
 no wait for compaction. `404 Not Found` if there was no such table.
 
-This is the only cheap way to delete a lot of data. Deleting the records of a
-table one by one, or over a range, leaves tombstones behind
-([delete a range](#delete-a-range)).
+**This is the only way to erase a record.** There is no delete of a key and no
+delete of a range: both are `405 method_not_allowed`, and a table is dropped
+whole or not at all. A record that should no longer be read is
+[overwritten](/database/records#there-is-no-way-to-erase-one-key), and a table
+whose records are meant to go away is one that can be dropped and created again.
 
-### Delete a range
-
-```http
-DELETE /table/account/key?prefix=user:2019
-```
-
-Deletes every record in the range in one operation, as a RocksDB range
-tombstone rather than a delete per key. `204 No Content`.
-
-Two one to know before using it:
-
-- Range tombstones make reads that cross them slower, because every read in the
-  range has to consult the tombstone. A table that accumulates many of them
-  wants a compaction, or wants to have been a table that could be dropped
-  whole.
-
-It takes the same range parameters as a [scan](/database/scans#the-range), and
-refuses a request that names no range at all — deleting every record in a table
-is `DELETE /table/{table}` and then creating it again.
+What that buys is a store with no tombstones in it: a delete per key, or a range
+tombstone over many of them, is read again by every scan that crosses it until a
+compaction takes it away, and there is no key here that a read has to consult a
+tombstone for.

@@ -337,7 +337,7 @@ are not are worth naming so that nobody looks here for them:
 | [The store will not open](../doc/runbook/storage.md) | Two processes over one directory is a host-local lock conflict, not an infrastructure fault |
 | [A node in no zone](../doc/runbook/membership.md) | A metadata read that failed at boot. A configuration fault |
 | [`invalid_cursor`, `stale_leader`, `table_not_found`](../doc/runbook/errors.md) | Client-level. That is what [`api/`](../api) asserts |
-| [A delete during a rebuild](../doc/runbook/rebuild.md) | Terminating the instance is easy; the racing delete needs a harness timed against it |
+| [A table delete during a rebuild](../doc/runbook/rebuild.md) | Terminating the instance is easy; the racing delete needs a harness timed against it |
 | [Everything about the release](../doc/runbook/deployment.md) | The version gate, the stack that will not create, the tag that never published. Not runtime faults |
 
 Two things it covers and reports rather than asserts. The first is that **a full disk breaks the

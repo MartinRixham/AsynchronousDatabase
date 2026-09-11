@@ -292,9 +292,9 @@ request, and the copies that took it keep what they took. Because they were all
 asked at once, a copy that refused was asked beside the others and not ahead of
 them: the refusal reported is the first in the order the zones are named, whichever
 of them answered first. Writing a record is
-idempotent, a key and a value or a key that is gone, so **the remedy is to run
-the request again**, which is the remedy for a table create or a range delete
-that one node refused as well.
+idempotent — a key and a value, written twice or once — so **the remedy is to
+run the request again**, which is the remedy for a table create that one node
+refused as well.
 
 A partition nothing leads yet has nowhere to order a write:
 
@@ -383,12 +383,11 @@ versions for as long as neither of those happens.
 
 | Endpoint | In a cluster |
 | --- | --- |
-| `PUT`/`DELETE` `/table/{table}/key/{key}` | Ordered by the node **leading the key's partition**, which writes the copy in every zone. Every copy has to take it |
+| `PUT` `/table/{table}/key/{key}` | Ordered by the node **leading the key's partition**, which writes the copy in every zone. Every copy has to take it |
 | `GET`/`HEAD` `/table/{table}/key/{key}` | Answered by one copy: this node when it holds one, else the nearest that answers. A key this node holds nothing for is asked of the other copies |
 | `PUT`/`DELETE` `/table/{table}` | Ordered by the node **leading the tables**, and carried out on **every** node from there: a record can only be written where its table is |
 | `GET` `/table`, `GET /table/{table}` | Answered where they are asked. Every node holds every table |
 | `GET` `/table/{table}/key` | Asked of **one zone** — this node's own — and the pages merged back into key order |
-| `DELETE` `/table/{table}/key` | Carried out on every node, because every node holds a share of the range |
 | `GET /table/{table}/file` | Answered out of **this node's own store**, and never forwarded: what is being asked for is what this node holds |
 | `GET /table/{table}/split` | The same: where this node would cut a walk of its own table up |
 | `GET /health` | Answered where it is asked, and names the nodes and zones it can see |
