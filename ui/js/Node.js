@@ -47,7 +47,17 @@ export default class Node {
 
 	status = new Text(() => this.health?.status ?? "not answering");
 
-	writes = new Text(() => this.health?.write_stalled ? "stalled" : "flowing");
+	// A node that can order no write takes none at all, whatever the store underneath it is
+	// doing, so it is the first of the three this line can say.
+	writes = new Text(() => {
+
+		if (this.health?.unled) {
+
+			return "unled";
+		}
+
+		return this.health?.write_stalled ? "stalled" : "flowing";
+	});
 
 	// A node holding less than it owns serves what it has and answers health like any other, so
 	// this is the field that says what the status cannot.

@@ -116,6 +116,11 @@ namespace
 			return 0;
 		}
 
+		bool is_unled() const override
+		{
+			return false;
+		}
+
 		bool accept(const std::string &, int64_t) override
 		{
 			return true;

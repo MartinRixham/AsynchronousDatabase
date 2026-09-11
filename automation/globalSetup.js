@@ -34,15 +34,22 @@ export default async function globalSetup(config) {
 	}
 }
 
+// A node that can order no write answers this 503 rather than 200, and it is still a node that
+// answered: waiting the whole minute out for it would report an instance that is not there instead
+// of an instance that cannot take the writes a journey starts with. What is waited for is a health
+// document, whatever status carried it.
 async function answers(context) {
 
 	try {
 
-		return (await context.get("asyncdb/health")).ok();
+		const response = await context.get("asyncdb/health");
+
+		return typeof (await response.json()).status == "string";
 	}
 	catch {
 
-		// Nothing listening yet, which is what the wait is for.
+		// Nothing listening yet, or nginx answering its own error document for a database that has
+		// not opened RocksDB, which is what the wait is for.
 		return false;
 	}
 }

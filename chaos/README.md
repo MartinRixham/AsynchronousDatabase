@@ -114,10 +114,14 @@ than to fill three of them and leave a fourth long.
 They also cost money for as long as they run: `nodes-added` is nine database instances rather than
 six for the length of it. Nothing is left behind — every one of them puts the shape back, and the
 suite stops if it did not. The faults themselves are minutes; the waiting is the
-deployment's own timings — a ten second lease, a sixty second load balancer health check, a
+deployment's own timings — a ten second lease, a load balancer health check of two ten second
+intervals either way, a
 [thirty second deregistration delay](../doc/deployment/database.md#the-load-balancer), a two
 hundred second grace period — and `CHAOS_SETTLE` and `CHAOS_RECOVERY` are how much of each is
-allowed for.
+allowed for. A node that can order no write takes itself out of the load balancer a lease after
+its membership fell short, so the faults that isolate one rather than stop it wait for that as
+well: `zone-lost` waits for writes to come back rather than asserting them outright, because
+until the check has failed twice the load balancer is still choosing a node that refuses them.
 
 ## The permission to break things
 

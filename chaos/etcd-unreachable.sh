@@ -66,20 +66,29 @@ fault_start || { verdict; exit 1; }
 await_node "$isolated" '(.nodes | length) == 1' "$settle" \
 	"the isolated node reports a membership of one, which is how this is recognised"
 
+# And a membership of one is a node that can order no write, so a lease later it says so on the
+# only channel the load balancer reads. It goes on serving the keys it holds and answering its
+# peers, neither of which arrives this way.
+await_node "$isolated" '.unled' "$settle" \
+	"the isolated node reports itself unled, which is what takes it out of the load balancer"
+
 # From the other five it is a node that stopped renewing, so it is gone within a lease. A sample
 # that hits the isolated node itself is the one that has no nodes field, and both answers are
 # the state this is looking for.
 await '((.nodes | length) == 5) or ((.nodes | length) == 1)' "$settle" \
 	"the other nodes dropped it from the membership when its lease ran out"
 
-# The half of the runbook page that is a warning rather than a description. Nothing took this
-# node out of service, so the load balancer is still routing to it, and what it answers for a
-# key it has never held is a 404 rather than a question asked of the copies that have it.
+# The half of the runbook page that is a warning rather than a description, and the window it
+# lives in. The node takes itself out of service, but only the health check carries that and the
+# load balancer routes to it until the check has failed twice — and what it answers meanwhile for
+# a key it has never held is a 404 rather than a question asked of the copies that have it. How
+# many of these reads fall inside that window is the check's interval and not a claim about the
+# database, so it is counted and never asserted on.
 missed=$(read_check 60)
 printf '  ---- %s of 60 reads answered something other than 2xx\n' "$missed"
 
 [ "$missed" -gt 0 ] \
-	&& echo "  ---- a node that has lost etcd but is still taking client traffic, exactly as documented"
+	&& echo "  ---- a node that has lost etcd and is still being chosen, exactly as documented"
 
 fault_stop
 

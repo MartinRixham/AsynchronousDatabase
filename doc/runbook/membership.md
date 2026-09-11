@@ -58,6 +58,10 @@ means:
   [the image sets](/database/reference#the-cluster) — **refuses every write**
   with `no_leader` rather than taking it with no leader and no copies;
 - it asks nobody for a scan, so a scan answers only what it holds;
+- a lease after that membership fell to one, `/health` answers `503` with
+  `unled` set, which is what takes the node **out of the load balancer**: it
+  goes on serving the keys it holds and answering its peers, neither of which
+  arrives that way;
 - `/health` names **one** node, itself, in a `zones` of one zone, which is how
   this is recognised. Not *no* `nodes`: an absent `nodes` is
   [an instance that stands alone](/database/cluster#what-each-endpoint-does-in-a-cluster),
@@ -67,11 +71,20 @@ means:
 Reading on and refusing to write is the safe way to be wrong: an isolated node
 goes on serving what it holds, so one broken etcd is not a broken database, and
 the writes that would have been written nowhere else are the half it gives up.
-**What is left is wrong answers rather than wrong data.** A node still taking
-client traffic answers `404` for keys it has never held and serves what it last
-held for the rest, and neither is a `5xx` the load balancer or a client can tell
-apart from an absence. Nothing it answers is repaired by anything; what it
-missed, it misses.
+**What is left is wrong answers rather than wrong data, for as long as the node
+is still being chosen.** A node still taking client traffic answers `404` for
+keys it has never held and serves what it last held for the rest, and neither is
+a `5xx` the load balancer or a client can tell apart from an absence. Nothing it
+answers is repaired by anything; what it missed, it misses. The `unled` health
+check is what closes that window — a lease, and then as many failed checks as
+the target group asks for — and it is the only thing that does: a node in this
+state is up, answering and wrong, which is invisible to everything else.
+
+**When it is every node, nothing is taken out.** A target group with no healthy
+target left in it is one the load balancer sends to all of them, so etcd lost
+altogether is a cluster that goes on serving what it holds rather than a cluster
+nothing can reach. That is [etcd has lost quorum](#etcd-has-lost-quorum), and it
+is the load balancer's behaviour rather than this database's.
 
 **And nothing takes it out of service for you.** The load balancer's health check
 is `/asyncdb/health`, which answers `200` whatever the membership says — `status`

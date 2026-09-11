@@ -309,7 +309,7 @@ jobs:
         set +e
 
         echo "The membership the load balancer answers with:"
-        curl -fsS --max-time 10 "$URL/asyncdb/health" | jq .
+        curl -sS --max-time 10 "$URL/asyncdb/health" | jq .
 
         aws ec2 describe-instances \
           --filters "Name=tag:aws:cloudformation:stack-name,Values=$STACK" \

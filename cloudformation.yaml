@@ -414,6 +414,13 @@ Resources:
       Protocol: HTTP
       TargetType: instance
       HealthCheckPath: /asyncdb/health
+      # A node that cannot order a write answers this 503, and how long it then goes on being sent
+      # requests is these three numbers and nothing else. The defaults are 30 seconds and five
+      # checks to come back, which is two and a half minutes of a node that is whole again being
+      # left out of the load balancer.
+      HealthCheckIntervalSeconds: 10
+      UnhealthyThresholdCount: 2
+      HealthyThresholdCount: 2
       TargetGroupAttributes:
         - Key: deregistration_delay.timeout_seconds
           Value: "30"

@@ -38,6 +38,8 @@ namespace cluster
 
 		std::map<std::string, int64_t> refused;
 
+		bool unled_node = false;
+
 		mutable std::vector<std::pair<std::string, router::request>> requests;
 
 		// A walk asks several nodes at once, so what it was asked and what it has answered are
@@ -75,6 +77,10 @@ namespace cluster
 		// A term this node has already applied a write of, so that anything older is refused.
 		void applied(const std::string &key, int64_t term);
 
+		// A node that has been unable to order a write for long enough to be taken out of the
+		// load balancer.
+		void unled();
+
 		// The membership is the one the test named, so there is nothing to join, nothing to read
 		// and nothing to leave.
 		void start() override;
@@ -96,6 +102,8 @@ namespace cluster
 		std::optional<leadership> leader(const std::string &key) const override;
 
 		size_t leads() const override;
+
+		bool is_unled() const override;
 
 		bool accept(const std::string &key, int64_t term) override;
 

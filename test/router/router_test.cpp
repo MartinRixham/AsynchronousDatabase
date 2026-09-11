@@ -143,6 +143,31 @@ TEST(router_test, health_says_whether_this_node_holds_less_than_it_owns)
 	EXPECT_EQ(response.json.at("incomplete"), true);
 }
 
+// The one thing in this document a load balancer can read, which is why it is the status and not
+// only a field: a node taking no writes goes on holding what it holds and answering its peers, so
+// nothing else about it says to stop choosing it.
+TEST(router_test, health_refuses_the_check_of_a_node_that_can_order_no_write)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	EXPECT_EQ(router.route(get("/health")).json.at("unled"), false);
+	EXPECT_EQ(router.route(get("/health")).status, boost::beast::http::status::ok);
+
+	alone.unled();
+
+	router::response response = router.route(get("/health"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
+	EXPECT_EQ(response.json.at("unled"), true);
+
+	// And the document is still the document, because the status is for the load balancer and the
+	// fields are for whoever is reading the node.
+	EXPECT_EQ(response.json.at("status"), "ok");
+	EXPECT_EQ(response.json.at("write_stalled"), false);
+}
+
 TEST(router_test, list_no_tables)
 {
 	repository::fake_repository repository;

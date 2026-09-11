@@ -81,6 +81,12 @@ fault_start || { verdict; exit 1; }
 
 # A node that cannot read a membership does not report one. That is the whole diagnosis, and it
 # is what tells this apart from a node that is merely slow.
+#
+# It is still asked through the load balancer, and that is the one thing here that rests on the
+# load balancer's own behaviour rather than on this database's: every node can order a write no
+# more than any other, so every node fails its health check, and a target group with nothing
+# healthy left in it is one the load balancer sends to all of them. Losing etcd altogether is a
+# cluster that goes on serving what it holds, and not a cluster nothing can reach.
 await '(.nodes | length) == 1' "$settle" \
 	"every node fell back to a membership of one, which is itself"
 

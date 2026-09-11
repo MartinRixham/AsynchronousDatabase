@@ -19,7 +19,7 @@ Every endpoint, status code, error code and limit in one place.
 | `DELETE` | `/table/{table}/key` | [Delete a range](/database/tables#delete-a-range) |
 | `GET` | `/table/{table}/file` | One node asking another for [its share of a table](/database/cluster#moving-a-share-of-a-table), as records or as `values=false` keys. Between nodes, not for clients |
 | `GET` | `/table/{table}/split` | Where the node being read would [cut a walk of its table up](/database/cluster#several-pieces-at-once), so that several pieces of it can be read at once. Between nodes, not for clients |
-| `GET` | `/health` | Liveness, whether writes are stalled, whether the node [holds less than it owns](/runbook/rebuild), [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) and how many partitions this node leads |
+| `GET` | `/health` | Liveness, whether writes are stalled, whether the node [holds less than it owns](/runbook/rebuild), whether it can order a write at all, [the nodes and zones of the cluster](/database/cluster#what-each-endpoint-does-in-a-cluster) and how many partitions this node leads. `503` rather than `200` is a node that can order no write, and the document is the same either way — [reading it](/runbook/#health) |
 
 ## Errors
 
@@ -78,7 +78,7 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 | `ASYNCDB_ETCD` | Where etcd answers. One base URL, or every member of the etcd cluster separated by commas. Unset is one instance on its own |
 | `ASYNCDB_NODE` | This node as the other nodes reach it. Unset is one instance on its own |
 | `ASYNCDB_ZONE` | The availability zone this node is in. Every zone holds [one copy of every record](/database/cluster#one-copy-in-every-zone). Unset is one zone, which is one copy |
-| `ASYNCDB_UNLED_WRITES` | Whether an instance that [leads nothing](/database/cluster#what-a-write-and-a-read-do) takes a write anyway. Default true, which is the lone instance writing what it is given; `false` refuses the write with `no_leader` unless a leader claimed in etcd ordered it, and is what the image sets |
+| `ASYNCDB_UNLED_WRITES` | Whether an instance that [leads nothing](/database/cluster#what-a-write-and-a-read-do) takes a write anyway. Default true, which is the lone instance writing what it is given; `false` refuses the write with `no_leader` unless a leader claimed in etcd ordered it, and is what the image sets. It is also what makes `/health` answer `503` once a node has been unable to order a write for a lease, so that a load balancer stops choosing it |
 
 | Variable | Is |
 | --- | --- |

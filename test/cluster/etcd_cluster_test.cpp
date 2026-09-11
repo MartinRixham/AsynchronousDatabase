@@ -807,6 +807,83 @@ TEST(etcd_cluster_test, lead_nobody_when_the_instance_stands_alone_and_a_write_m
 	EXPECT_FALSE(led->known);
 }
 
+// What the load balancer is told, and the whole reason it is told anything: a node refusing every
+// write is one that should stop being chosen, and a health check it answers regardless is one
+// nothing ever takes it out on.
+TEST(etcd_cluster_test, report_itself_unled_once_it_has_stood_alone_for_a_lease)
+{
+	http::fake_client http;
+	cluster::config config;
+
+	config.node = one;
+	config.unled_writes = false;
+	config.lease_seconds = 0;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	EXPECT_TRUE(cluster.is_unled());
+}
+
+// The lease is what makes it a state rather than a moment: a membership that fell to one on the
+// last pass is a slow answer from etcd as often as it is a node that has lost the others, and by
+// the time a lease has run out the rest of the cluster has dropped this node anyway.
+TEST(etcd_cluster_test, report_itself_led_until_it_has_stood_alone_for_a_lease)
+{
+	http::fake_client http;
+	cluster::config config;
+
+	config.node = one;
+	config.unled_writes = false;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	EXPECT_FALSE(cluster.is_unled());
+}
+
+TEST(etcd_cluster_test, report_itself_led_while_it_stands_in_a_membership)
+{
+	http::fake_client http;
+	cluster::config config = configuration(one, "a");
+
+	config.unled_writes = false;
+	config.lease_seconds = 0;
+
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	EXPECT_FALSE(cluster.is_unled());
+
+	cluster.stop();
+}
+
+// The lone instance every test and `cmk run` serve: it takes the writes it is given, so there is
+// nothing for it to be taken out of the load balancer for.
+TEST(etcd_cluster_test, report_itself_led_when_a_write_needs_no_leader)
+{
+	http::fake_client http;
+	cluster::config config;
+
+	config.node = one;
+	config.lease_seconds = 0;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	EXPECT_FALSE(cluster.is_unled());
+}
+
 // A cluster whose leaders cannot be read from etcd is a partition that is led by nobody, which is
 // a write with nowhere to be ordered rather than one that races.
 TEST(etcd_cluster_test, lead_nothing_that_etcd_does_not_answer_for)

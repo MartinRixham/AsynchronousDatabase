@@ -164,6 +164,16 @@ std::optional<cluster::leadership> cluster::fake_cluster::leader(const std::stri
 	return led == leaders.end() ? std::optional<leadership>() : led->second;
 }
 
+void cluster::fake_cluster::unled()
+{
+	unled_node = true;
+}
+
+bool cluster::fake_cluster::is_unled() const
+{
+	return unled_node;
+}
+
 size_t cluster::fake_cluster::leads() const
 {
 	return std::count_if(

@@ -84,8 +84,10 @@ stop_probe
 probe_report "while the zone was going away"
 
 # The point of the whole design: a read needs one copy, and two remain.
-# A node the fault cut off is still in the load balancer: /health answers 200 whatever its
-# membership says, so nothing deregisters it, and it answers for keys it does not hold. That is
+# A node the fault cut off is still in the load balancer for as long as the health check takes to
+# notice: it holds a membership of one, so it can order no write and says so, but the acl leaves
+# its own zone alone and the load balancer node there goes on reaching it until it has failed the
+# check twice. Until then it answers for keys it does not hold, which is
 # doc/runbook/membership.md's own warning happening — so what is asserted here is the runbook's
 # actual claim, that a record survives any one zone, and the 404s from the isolated side are
 # reported beside it.
@@ -93,8 +95,11 @@ expect_readable 60 5 "every seeded record can still be read with a zone gone"
 printf '  ---- reads with a zone gone: %s\n' "$(codes)"
 expect "$(scan_status)" 200 "a scan falls back to a zone that is whole"
 
-# And a write needs every copy of the membership as it now stands, which is two.
-expect_writes 20 "every write is taken by the two zones that are left"
+# And a write needs every copy of the membership as it now stands, which is two. It is waited for
+# rather than asserted outright, because the isolated side refuses a write before the load
+# balancer has stopped choosing it: what is claimed here is that the writes come back, and how
+# long that takes is the health check's interval rather than anything this database does.
+await_writes 20 "$settle" "every write is taken by the two zones that are left"
 
 # The isolated nodes are still reachable over Run Command: the interface endpoints they go
 # through have an interface in their own subnet, the fault is between zones, and the acl leaves

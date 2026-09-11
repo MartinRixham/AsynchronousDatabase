@@ -305,7 +305,15 @@ ordered it — a table create or delete included, since the tables are led as we
 too small to claim anything, no etcd reached or this node alone registered in it, answers
 `no_leader` rather than writing what nobody ordered. It defaults to true, which is the lone instance
 every test and `cmk run` serve, and the `Dockerfile` sets it false, because a container is a node of
-a cluster and one on its own there has lost the others. The four are read in one place,
+a cluster and one on its own there has lost the others. **It is also what takes such a node out of
+the load balancer**: `cluster::is_unled()` is that same membership having been too small for longer
+than a lease, and `/health` reports it as `unled` and answers `503` rather than `200` — the document
+unchanged, because the status is for the load balancer and the fields are for whoever is reading the
+node. A lease is what makes it a state and not a moment, a membership that just fell to one being a
+slow answer from etcd as often as a node that has lost the others. Nothing replaces the instance
+over it, the group's health check being `EC2`; and a target group with nothing healthy left in it is
+one the load balancer sends to all of them, so etcd lost altogether is a cluster that goes on
+serving what it holds. The four are read in one place,
 `cluster::from_environment()` in `cluster/etcd_cluster.h`, which fills a `cluster::config`: the
 endpoints, this node and its zone, that flag, and beside them the tunables nothing sets from
 outside — a ten second membership lease, the `/asyncdb/node/` and `/asyncdb/leader/` prefixes,

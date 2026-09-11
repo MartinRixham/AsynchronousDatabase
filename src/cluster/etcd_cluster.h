@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -86,6 +87,12 @@ namespace cluster
 
 		std::map<size_t, leadership> leader_list;
 
+		// When this node stopped standing in a membership large enough to claim a leader, and the
+		// epoch while it stands in one. A membership that has just fallen to one is often one
+		// about to come back — a slow answer from etcd, a peer restarting — so what is reported
+		// outside is the state that outlasted a lease rather than the state of the last pass.
+		std::atomic<std::chrono::steady_clock::time_point> unled_since;
+
 		// The partitions this node holds a claim on and should no longer lead, as the pass before
 		// this one found them. A claim is given up on the second pass that finds it rather than the
 		// first, so a membership read a moment out of date is not a partition left with no leader.
@@ -132,6 +139,8 @@ namespace cluster
 		std::optional<leadership> leader(const std::string &key) const override;
 
 		size_t leads() const override;
+
+		bool is_unled() const override;
 
 		bool accept(const std::string &key, int64_t term) override;
 

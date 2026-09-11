@@ -367,6 +367,7 @@ a membership settle:
   "status": "ok",
   "write_stalled": false,
   "incomplete": false,
+  "unled": false,
   "nodes": [ "http://asyncdb-1:8080", "http://asyncdb-2:8080" ],
   "zones": {
     "eu-west-2a": [ "http://asyncdb-1:8080" ],

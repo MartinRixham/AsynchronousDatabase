@@ -298,7 +298,7 @@ There is also no `UpdatePolicy`, so
 | Resource | Is |
 | --- | --- |
 | `ApplicationLoadBalancer` | Named `${AWS::StackName}-alb`, `internet-facing`, in the three public subnets — [the only thing in them](/deployment/network) — in `ALBSecurityGroup`. The name is the stack's because a load balancer name is unique to a region, and [the pipeline stands up four stacks at once](/pipeline/#the-shares) |
-| `ALBTargetGroup` | HTTP, port 80, `TargetType: instance`, health check `GET /asyncdb/health`, thirty second deregistration delay |
+| `ALBTargetGroup` | HTTP, port 80, `TargetType: instance`, health check `GET /asyncdb/health` every ten seconds, two checks either way, thirty second deregistration delay |
 | `ALBListener` | HTTP on port 80, one default action forwarding to the target group |
 
 Port 80 on an instance is nginx, so the target group is the UI and the
@@ -325,6 +325,23 @@ nginx serving `index.html` out of `/usr/share/nginx/html`, and it answers as soo
 as nginx is up whether or not there is a database behind it. The two are started
 together by the image's `CMD nginx & ./asyncdb` and nothing makes one wait for the
 other, so checking the static file would be checking the wrong process.
+
+**It also fails on a node that is answering.** A node in a membership too small
+to claim a leader refuses every write, and after a lease it says so here with a
+`503` — [`unled`](/runbook/#health). That is the only way a load balancer can be
+told, and without it an isolated node is chosen for as long as the fault lasts:
+up, answering, refusing every write and answering `404` for keys it has never
+held. **Ten seconds and two checks** is how long that lasts — the defaults are
+thirty seconds and five checks to come back, which is two and a half minutes of
+a node that is whole again being left out. The group's health check is
+[`EC2`](/runbook/deployment#the-group-does-not-replace-a-failed-application), so
+nothing replaces the instance over it; it is taken out of service and put back
+when it answers `200` again.
+
+A target group with **no** healthy target left in it is one the load balancer
+sends to all of them, so etcd lost altogether — where every node is in that
+state at once — is a cluster that goes on serving reads rather than one nothing
+can reach.
 
 **Deregistration is thirty seconds, and not the five minutes it defaults to.** A
 draining target is a running instance: it goes on renewing its etcd lease

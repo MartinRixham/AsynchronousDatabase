@@ -88,6 +88,12 @@ namespace cluster
 
 		virtual size_t leads() const = 0;
 
+		// Whether nothing should be sent to this node: it cannot order a write, and has not been
+		// able to for a lease, by which time the rest of the cluster has dropped it. A node that
+		// refuses every write and answers every health check is one the load balancer goes on
+		// choosing, so the refusal is reported where the load balancer can read it.
+		virtual bool is_unled() const = 0;
+
 		virtual bool accept(const std::string &key, int64_t term) = 0;
 
 		virtual router::response send(const std::string &node, const router::request &request) const = 0;

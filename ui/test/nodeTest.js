@@ -71,6 +71,17 @@ describe("node", () => {
 		expect((await bound(client)).writes().text()).toBe("stalled");
 	});
 
+	// A node in a membership too small to claim a leader orders no write, so it takes none —
+	// which is a different thing from a store pushing back, and says so.
+	test("writes that nothing can order", async () => {
+
+		const client = new DatabaseClient();
+
+		client.setHealth({ status: "ok", write_stalled: false, incomplete: false, unled: true });
+
+		expect((await bound(client)).writes().text()).toBe("unled");
+	});
+
 	// A node holding less than it owns serves what it has and answers health like any other.
 	test("a store that is short of what the node owns", async () => {
 

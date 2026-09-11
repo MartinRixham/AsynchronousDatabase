@@ -758,6 +758,16 @@ result()
 	fi
 }
 
+# The document /health answers, whatever status it came with. A node that can order no write
+# answers 503 so that the load balancer stops choosing it, and that is a node this suite still has
+# to read a membership out of — which --fail would throw away along with the body. What --fail was
+# keeping out is kept out by asking for a document instead: the nginx in front of the database
+# answers its own error document, and anything that does not parse is nothing here.
+health_document()
+{
+	curl --silent --max-time 10 "${1:-$base}/health" | jq --exit-status . 2> /dev/null
+}
+
 # Every sample has to match, and a sample that did not answer never does: the load balancer
 # picks a different instance each time, so a predicate that holds for eight samples is one that
 # holds for the cluster rather than for whichever node answered first.
@@ -766,7 +776,7 @@ health_matches()
 	local i answer
 
 	for (( i = 0; i < ${2:-8}; i++ )); do
-		answer=$(curl --fail --silent --max-time 10 "$base/health") || return 1
+		answer=$(health_document) || return 1
 		echo "$answer" | jq --exit-status "$1" > /dev/null 2>&1 || return 1
 	done
 }
@@ -777,7 +787,7 @@ health_matches()
 # balanced them over the subnets, which is the whole of how a copy is split.
 shape()
 {
-	curl --fail --silent --max-time 10 "$base/health" \
+	health_document \
 		| jq -c '[ (.nodes | length), (.zones | length), ([ .zones[] | length ] | unique) ]'
 }
 
@@ -825,7 +835,7 @@ await()
 	# same failure, and reporting the second as the first is how a stack deleted underneath a
 	# run reads as sixty broken assertions.
 	local last
-	last=$(curl --fail --silent --max-time 10 "$base/health")
+	last=$(health_document)
 
 	if [ -z "$last" ]; then
 		result 1 "$3 — $base/health did not answer at all"

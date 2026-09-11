@@ -227,10 +227,13 @@ router::response router::router::route(const request &request)
 			return method_not_allowed(request.method);
 		}
 
+		bool unled = nodes.is_unled();
+
 		boost::json::object health {
 			{ "status", "ok" },
 			{ "write_stalled", repository.is_write_stalled() },
-			{ "incomplete", incomplete.load() }
+			{ "incomplete", incomplete.load() },
+			{ "unled", unled }
 		};
 		std::vector<cluster::member> members = nodes.members();
 
@@ -268,7 +271,13 @@ router::response router::router::route(const request &request)
 			}
 		}
 
-		return json_response(boost::beast::http::status::ok, health);
+		// The document says what the process is doing and the status says whether to send it
+		// anything: a node that takes no writes is one a load balancer should stop choosing, and
+		// this is the only place it can be told. It goes on serving the keys it holds and
+		// answering its peers, which do not reach it this way.
+		return json_response(
+			unled ? boost::beast::http::status::service_unavailable : boost::beast::http::status::ok,
+			health);
 	}
 
 	if (path.empty() || path[0] != "table")

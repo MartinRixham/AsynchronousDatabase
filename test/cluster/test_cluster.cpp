@@ -132,6 +132,11 @@ size_t cluster::test_cluster::leads() const
 	return leader_node == self ? partition_count : 0;
 }
 
+bool cluster::test_cluster::is_unled() const
+{
+	return false;
+}
+
 bool cluster::test_cluster::accept(const std::string &, int64_t sent)
 {
 	return sent == 0 || sent >= term;

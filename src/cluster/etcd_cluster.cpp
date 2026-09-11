@@ -96,7 +96,8 @@ cluster::etcd_cluster::etcd_cluster(
 	configuration(cluster_config),
 	request_forwarder(forwarding),
 	etcd_client(etcd::client(http, cluster_config.endpoints, cluster_config.etcd_timeout_seconds)),
-	member_list(std::make_shared<const std::vector<member>>())
+	member_list(std::make_shared<const std::vector<member>>()),
+	unled_since(std::chrono::steady_clock::now())
 {
 }
 
@@ -313,6 +314,18 @@ size_t cluster::etcd_cluster::leads() const
 		leader_list.begin(),
 		leader_list.end(),
 		[](const std::pair<size_t, leadership> &led) { return led.second.local; });
+}
+
+bool cluster::etcd_cluster::is_unled() const
+{
+	std::chrono::steady_clock::time_point since = unled_since.load();
+
+	if (configuration.unled_writes || since == std::chrono::steady_clock::time_point())
+	{
+		return false;
+	}
+
+	return std::chrono::steady_clock::now() - since > std::chrono::seconds(configuration.lease_seconds);
 }
 
 bool cluster::etcd_cluster::accept(const std::string &key, int64_t term)
@@ -579,6 +592,15 @@ void cluster::etcd_cluster::read_members()
 		names.begin(),
 		names.end(),
 		[](const member &left, const member &right) { return left.node < right.node; });
+
+	if (names.size() > 1)
+	{
+		unled_since.store(std::chrono::steady_clock::time_point());
+	}
+	else if (unled_since.load() == std::chrono::steady_clock::time_point())
+	{
+		unled_since.store(std::chrono::steady_clock::now());
+	}
 
 	member_list.store(std::make_shared<const std::vector<member>>(std::move(names)));
 }
