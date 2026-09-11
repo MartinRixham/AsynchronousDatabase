@@ -15,6 +15,9 @@
 #include "server/server.h"
 #include "listening.h"
 #include "http/fake_http_client.h"
+#include "cluster/fake_cluster.h"
+#include "repository/rocksdb_repository.h"
+#include "table/table.h"
 
 size_t writer(void *ptr, size_t size, size_t nmemb, std::string *stream)
 {
@@ -494,4 +497,64 @@ TEST_F(server_test, a_file_of_records_says_what_it_carries_in_a_header)
 	// Nothing to resume at, because the walk reached the end of the table.
 	EXPECT_TRUE(http::header_of(answered, router::next_header).empty());
 	EXPECT_FALSE(answered.body.empty());
+}
+
+// A node that comes back to a store it was left with has a share on whichever node took it over
+// while it was away, and records here it no longer owns. Its membership does not move to say so —
+// the rebuild runs on an empty store alone — so joining is what runs the first pass.
+TEST(server_reconcile_test, reconciles_a_store_this_node_came_back_to)
+{
+	std::filesystem::remove_all("/tmp/asyncdb/");
+
+	// Written by the process before this one, and closed: RocksDB locks the directory the server
+	// is about to open.
+	{
+		repository::rocksdb_repository repository("/tmp/asyncdb");
+
+		repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	}
+
+	cluster::fake_cluster nodes(
+		"http://asyncdb-1:8080",
+		std::vector<std::string> { "http://asyncdb-1:8080", "http://asyncdb-2:8080" });
+	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, "/tmp/asyncdb");
+	boost::asio::ip::port_type port = database_server->port();
+	std::thread thread([server = database_server]() { server->serve(); });
+
+	server::wait_until_listening(port);
+
+	std::this_thread::sleep_for(server::reconcile_interval() + std::chrono::seconds(1));
+
+	database_server->close();
+	thread.join();
+
+	// The reconciling thread is joined by the destructor, so what it asked for is read once
+	// nothing is writing it.
+	database_server = nullptr;
+
+	EXPECT_FALSE(nodes.sent().empty());
+}
+
+// A store this node filled itself is a store that matches the membership it filled from, so there
+// is nothing for a pass to move and none is run.
+TEST(server_reconcile_test, reconciles_nothing_after_a_store_this_node_filled)
+{
+	std::filesystem::remove_all("/tmp/asyncdb/");
+
+	cluster::fake_cluster nodes(
+		"http://asyncdb-1:8080",
+		std::vector<std::string> { "http://asyncdb-1:8080", "http://asyncdb-2:8080" });
+	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, "/tmp/asyncdb");
+	boost::asio::ip::port_type port = database_server->port();
+	std::thread thread([server = database_server]() { server->serve(); });
+
+	server::wait_until_listening(port);
+
+	std::this_thread::sleep_for(server::reconcile_interval() + std::chrono::seconds(1));
+
+	database_server->close();
+	thread.join();
+	database_server = nullptr;
+
+	EXPECT_TRUE(nodes.sent().empty());
 }

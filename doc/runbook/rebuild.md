@@ -285,9 +285,17 @@ pass. What is left over when a pass is done is its `deferred` count.
   node already holds — the store keeps what it has and takes the rest. This node
   owns the key now, so every write since the ownership moved landed here, and what
   the file carries was written before it did.
-- **It is not triggered by anything but the membership.** A store that matches the
-  membership it was left with is never walked, so a node whose cluster does not
-  change never runs a pass at all.
+- **It is triggered by the membership, and by starting on a store this node did
+  not fill.** A store that matches the membership it was left with is never
+  walked, so a node whose cluster does not change never runs a pass at all. A
+  process that comes back to a store it was left with is the exception, and it
+  cannot be read off the membership: the share it owns moved to another node while
+  it was away and the records it no longer owns are still here, but the membership
+  it joins looks like the one it left. A start-up that ran no rebuild — and the
+  rebuild runs on an empty store alone — therefore runs a pass of its own. A
+  [lease that lapsed and came back](/runbook/membership#etcd-cannot-be-reached)
+  under a process that stayed up needs none: that node watched its own membership
+  fall to one and rise again, which is two changes.
 - **It is one tick behind, deliberately.** The membership is a moment; a pass runs
   on the tick after the change, not on the reading of it.
 - **It is not bounded by a count of tries.** A membership change buys twelve passes

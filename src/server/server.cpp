@@ -149,6 +149,10 @@ server::server::~server()
 
 void server::server::serve()
 {
+	// Read before the rebuild, which fills an empty store: what is here is what this node was
+	// left with, and a node that was left with something did not rebuild.
+	bool returning = !repository.list_tables().empty();
+
 	// A node that came back empty is filled from a zone that still holds its records, and filled
 	// *before* it registers: a node that is not registered is nobody's copy, so this holds up no
 	// write, where registering first would make every write to its partitions wait for it.
@@ -192,7 +196,7 @@ void server::server::serve()
 		reconciling = true;
 	}
 
-	reconciler = std::thread([this]() { reconcile(); });
+	reconciler = std::thread([this, returning]() { reconcile(returning); });
 
 	// The store is filled and the node has joined, so the port is opened to the connections that
 	// were refused while it was not ready to answer them.
@@ -281,7 +285,7 @@ void server::server::accept()
 		boost::beast::bind_front_handler(&server::on_accept, shared_from_this()));
 }
 
-void server::server::reconcile()
+void server::server::reconcile(bool returning)
 {
 	std::unique_lock<std::mutex> lock(reconcile_mutex);
 
@@ -289,7 +293,12 @@ void server::server::reconcile()
 	// with needs nothing done to it, and a node whose membership never moves — a test naming its
 	// own cluster, an instance standing alone — never runs a pass at all.
 	std::vector<cluster::member> seen = nodes.members();
-	int attempts = 0;
+
+	// A node that came back to a store it was left with is the exception, and it is not a
+	// membership this node can see the change in: the share it owns moved to another node while
+	// it was away, and the records it no longer owns are still here. The rebuild that would have
+	// caught it up runs on an empty store alone, so what answers this is the first pass.
+	int attempts = returning ? reconcile_attempts : 0;
 
 	while (!reconcile_wake.wait_for(lock, reconcile_interval(), [this]() { return !reconciling; }))
 	{
