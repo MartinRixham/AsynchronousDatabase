@@ -53,8 +53,10 @@ means:
 
 - it holds **every** key, so it answers every read out of its own store —
   including keys another node holds, for which it will answer `404`;
-- there is nothing to order, so it accepts **every** write locally, with no
-  leader and no copies;
+- a membership of one claims no leadership, so there is nothing to order a write
+  with, and `ASYNCDB_UNLED_WRITES=false` — which
+  [the image sets](/database/reference#the-cluster) — **refuses every write**
+  with `no_leader` rather than taking it with no leader and no copies;
 - it asks nobody for a scan, so a scan answers only what it holds;
 - `/health` names **one** node, itself, in a `zones` of one zone, which is how
   this is recognised. Not *no* `nodes`: an absent `nodes` is
@@ -62,12 +64,14 @@ means:
   one that was never given an `ASYNCDB_ETCD` to lose. A node that has lost etcd
   puts itself in the list, and a list of one is what that looks like.
 
-That is the safe way to be wrong on the reasoning that refusing to answer would
-turn one broken etcd into a broken database — but it is only safe while the node
-is *also* unreachable by clients. **A node that has lost etcd but is still taking
-client traffic is the one situation here that can silently diverge the data**,
-because the writes it accepts are written nowhere else and no leader ordered
-them.
+Reading on and refusing to write is the safe way to be wrong: an isolated node
+goes on serving what it holds, so one broken etcd is not a broken database, and
+the writes that would have been written nowhere else are the half it gives up.
+**What is left is wrong answers rather than wrong data.** A node still taking
+client traffic answers `404` for keys it has never held and serves what it last
+held for the rest, and neither is a `5xx` the load balancer or a client can tell
+apart from an absence. Nothing it answers is repaired by anything; what it
+missed, it misses.
 
 **And nothing takes it out of service for you.** The load balancer's health check
 is `/asyncdb/health`, which answers `200` whatever the membership says — `status`
@@ -87,7 +91,10 @@ below and it is a hand's work, not the load balancer's.
 3. Fix etcd — see below — and let the node re-register. It re-registers from
    scratch on the pass after a renewal fails rather than believing it is still a
    member, so nothing needs restarting.
-4. Rewrite anything written to it while it was isolated. Nothing reconciles it.
+4. Rewrite anything the cluster wrote to the keys it holds while it was
+   isolated. A [reconcile pass](/runbook/rebuild#when-ownership-moves) fetches a
+   key this node holds nothing for; a key it holds a stale value for is one it
+   already has, so nothing backfills it.
 
 Naming every etcd member in `ASYNCDB_ETCD` is what makes this rare: any member
 answers for the whole cluster, a member that does not answer is a reason to try

@@ -474,6 +474,23 @@ expect_writes()
 	fi
 }
 
+# refuse_writes <how many> <status> <description> — every write is refused, and with the one status
+# that is the refusal meant. A count of failures is not the assertion: a write that did not answer
+# at all, or one refused by a copy rather than for want of a leader, is a different incident and
+# would pass a check that only counted the writes the store did not take.
+refuse_writes()
+{
+	local refused
+	write_check "$1" > /dev/null
+	refused=$(grep -c "^$2$" "$work/codes")
+
+	if [ "$refused" = "$1" ]; then
+		result 0 "$3"
+	else
+		result 1 "$3 — $refused of $1 answered $2: $(codes)"
+	fi
+}
+
 # await_writes <how many> <timeout> <description> — every copy of a key takes a write again. A
 # write needs every copy, so this is the assertion that sees a node that has stopped answering its
 # peers and is still renewing its lease: the membership await waits on says nothing about that,

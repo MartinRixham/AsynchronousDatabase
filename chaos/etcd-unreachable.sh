@@ -7,12 +7,12 @@
 # A single database node has its path to etcd blackholed, and nothing else about it changes. It
 # reads no membership, so it puts itself in the list; a membership of one means it holds every
 # key, answers every read out of its own store — 404 included, for keys it has never seen — and
-# accepts every write with no leader and no copies.
+# leads nothing, so it refuses every write rather than taking one no leader ordered.
 #
-# The runbook calls that the safe way to be wrong, and then says why it is only safe while the
-# node is also unreachable by clients: nothing here takes it out of the load balancer, so it
-# goes on being routed to. This experiment is what shows that the two halves of the sentence are
-# both true, which is why it is worth running even though nothing about it fails.
+# The runbook calls that the safe way to be wrong, and then says what is left of it: nothing here
+# takes the node out of the load balancer, so it goes on being routed to and goes on answering
+# for keys it has never held. This experiment is what shows both halves, which is why it is worth
+# running even though nothing about it fails.
 #
 # It differs from etcd-quorum-lost.sh in the direction the fault points. There, etcd is broken
 # for everyone; here, one node is broken for etcd, and the rest of the cluster carries on

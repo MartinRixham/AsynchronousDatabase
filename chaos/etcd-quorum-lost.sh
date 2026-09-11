@@ -7,9 +7,10 @@
 #
 # Two of the three etcd members are stopped. The survivor answers reads and takes no writes, so
 # leases stop being renewed and every membership key expires — and a database node that can read
-# no membership puts itself in the list, holds every key, and accepts every write locally with
-# no leader and no copies. The runbook calls that the one situation here that can silently
-# diverge the data, and this is the experiment that shows it happening.
+# no membership puts itself in the list and believes it holds every key. It answers reads out of
+# its own store, for keys it has never held included, and refuses every write: a membership of one
+# leads nothing, and the image forbids a write nothing ordered. This is the experiment that shows
+# both halves, and that the refusal is what keeps the wrong reads from becoming wrong data.
 #
 # It is deliberately the last experiment in the suite. What it leaves behind is a cluster that
 # has been briefly wrong about itself, and the pipeline deletes the stack next.
@@ -83,20 +84,21 @@ fault_start || { verdict; exit 1; }
 await '(.nodes | length) == 1' "$settle" \
 	"every node fell back to a membership of one, which is itself"
 
-# The dangerous half, and the reason the runbook says to take an isolated node out of service:
-# a cluster of one has nothing to order a write with, so it takes the write.
-expect "$(write_check 10)" 0 \
-	"a node with no membership accepts every write locally, with no leader and no copies"
+# The half that would diverge the data, and does not: a cluster of one has nothing to order a
+# write with, and the image sets ASYNCDB_UNLED_WRITES=false, so the write is refused rather than
+# written where no leader ordered it and no copy has it.
+refuse_writes 10 503 \
+	"a node with no membership refuses every write with no_leader, rather than taking it alone"
 
-# And the visible half. A cluster of one believes it holds every key, so it answers for keys it
-# has never seen rather than asking the copies that have them. This is reported and not asserted
-# on: it is the documented behaviour, and how much of it a client sees is how the load balancer
-# happened to spread the reads.
+# The half that is still visible to a client. A cluster of one believes it holds every key, so it
+# answers for keys it has never seen rather than asking the copies that have them. This is reported
+# and not asserted on: it is the documented behaviour, and how much of it a client sees is how the
+# load balancer happened to spread the reads.
 missed=$(read_check 60)
 printf '  ---- %s of 60 reads of seeded records answered something other than 2xx\n' "$missed"
 
 [ "$missed" -gt 0 ] \
-	&& echo "  ---- that is the silent divergence doc/runbook/membership.md warns about"
+	&& echo "  ---- an isolated node answering for keys it has never held, as doc/runbook/membership.md describes"
 
 echo "  Waiting for the members to come back."
 

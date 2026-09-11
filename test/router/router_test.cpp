@@ -1551,6 +1551,25 @@ TEST(router_cluster_test, agree_to_a_forwarded_deletion_of_a_table_that_is_not_t
 	EXPECT_EQ(router.route(del("/table/account")).status, boost::beast::http::status::not_found);
 }
 
+// The client's own delete, forwarded to the node that leads the tables because it landed on one
+// that does not. It carries no term, so it is the request to order and not an order to apply, and
+// a table that is not there is a 404 for the client rather than the leader agreeing with itself.
+TEST(router_cluster_test, refuse_a_deletion_forwarded_to_the_leader_of_a_table_that_is_not_there)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.led_by(cluster::table_key, here, 41);
+
+	router::request forwarded = del("/table/account");
+
+	forwarded.forwarded = true;
+
+	EXPECT_EQ(error_code(router.route(forwarded)), "table_not_found");
+	EXPECT_TRUE(nodes.sent().empty());
+}
+
 // A table is a record of no partition, so what orders one is the leader of the tables, and a
 // create that lands anywhere else is sent there rather than carried out where it landed.
 TEST(router_cluster_test, create_a_table_through_the_node_that_leads_the_tables)

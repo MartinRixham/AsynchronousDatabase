@@ -650,7 +650,7 @@ router::router::ordering router::router::order_schema(const request &request)
 			};
 		}
 
-		return ordering();
+		return ordering { std::nullopt, {}, 0, true };
 	}
 
 	std::optional<cluster::leadership> lead = nodes.leader(cluster::table_key);
@@ -659,7 +659,8 @@ router::router::ordering router::router::order_schema(const request &request)
 	// tables the way it always has.
 	if (!lead)
 	{
-		return ordering { std::nullopt, request.forwarded ? std::vector<std::string>() : nodes.peers(), 0 };
+		return ordering {
+			std::nullopt, request.forwarded ? std::vector<std::string>() : nodes.peers(), 0, request.forwarded };
 	}
 
 	if (!lead->known)
@@ -745,7 +746,7 @@ router::response router::router::delete_table(const request &request, const std:
 
 	if (!repository.has_table(name))
 	{
-		if (request.forwarded)
+		if (order.carried)
 		{
 			return empty_response(boost::beast::http::status::no_content);
 		}

@@ -111,6 +111,12 @@ namespace router
 			std::vector<std::string> peers;
 
 			int64_t term = 0;
+
+			// Whether the node that ordered this sent it here, which is what tells the two hops
+			// a schema operation takes apart: a request forwarded *to* the leader carries no term
+			// and is the client's own, and one carried *from* it is an order to apply. Both arrive
+			// marked forwarded, so the flag alone cannot say which.
+			bool carried = false;
 		};
 
 		ordering order_schema(const request &request);
