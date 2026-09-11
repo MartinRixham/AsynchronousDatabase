@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <boost/json.hpp>
+#include <boost/lexical_cast/try_lexical_convert.hpp>
 #include <rocksdb/convenience.h>
 #include <rocksdb/filter_policy.h>
 #include <rocksdb/sst_file_reader.h>
@@ -19,6 +20,22 @@
 namespace
 {
 	const std::string table_prefix = "TABLE_";
+
+	// What says the values in this store carry a version. A store written before they did holds
+	// neither this nor a version on any value, and its values cannot be told from versioned ones.
+	const std::string format_key = "FORMAT";
+
+	const std::string format_version = "2";
+
+	// Beside the table documents in the default column family, and named so that it is no table's
+	// document: what a block of write counts has been reserved up to.
+	const std::string count_key = "COUNT";
+
+	// How many counts a reservation takes. A write is stamped out of the block held in memory, so
+	// this is how many writes there are between the two that cost a record of their own — and how
+	// many counts are given up when a process ends, which nothing but the size of the number
+	// limits.
+	constexpr uint64_t counts_per_reservation = 1024 * 1024;
 
 	const std::string transfer_prefix = "transfer";
 
@@ -186,6 +203,84 @@ repository::rocksdb_repository::rocksdb_repository(const std::string &directory,
 
 	std::filesystem::remove_all(transfer_directory, ignored);
 	std::filesystem::create_directories(transfer_directory);
+
+	// A constructor that throws is an object that is never destroyed, so the handles it opened are
+	// given back here rather than by the destructor that will not run.
+	try
+	{
+		check_format();
+	}
+	catch (...)
+	{
+		close_handles();
+
+		throw;
+	}
+}
+
+void repository::rocksdb_repository::check_format()
+{
+	std::string held;
+
+	if (database->Get(rocksdb::ReadOptions(), format_key, &held).ok())
+	{
+		if (held != format_version)
+		{
+			throw storage_error(
+				"storage_error",
+				ERROR("The store is format " + held + " and this build reads format " + format_version + "."));
+		}
+
+		return;
+	}
+
+	// A store with a table in it and no format is one written before records carried a version.
+	// Reading it would take the first bytes of every value for a version that was never written.
+	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(rocksdb::ReadOptions()));
+
+	it->Seek(table_prefix);
+
+	if (it->Valid() && it->key().starts_with(table_prefix))
+	{
+		throw storage_error(
+			"storage_error",
+			ERROR("The store predates record versions and has to be rebuilt from a node that has them."));
+	}
+
+	written(database->Put(rocksdb::WriteOptions(), format_key, format_version), "Writing the store format");
+}
+
+// Counts are reserved a block at a time so that stamping a write costs nothing, and the block is
+// written down before any of it is handed out — so a process that ends without warning gives up
+// the rest of its block rather than issuing counts the one after it will issue again.
+void repository::rocksdb_repository::reserve_counts()
+{
+	std::string held;
+	uint64_t reserved = 0;
+
+	if (database->Get(rocksdb::ReadOptions(), count_key, &held).ok())
+	{
+		boost::conversion::try_lexical_convert(held, reserved);
+	}
+
+	written(
+		database->Put(rocksdb::WriteOptions(), count_key, std::to_string(reserved + counts_per_reservation)),
+		"Reserving a block of write counts");
+
+	counts = reserved;
+	counts_reserved = reserved + counts_per_reservation;
+}
+
+uint64_t repository::rocksdb_repository::next_count()
+{
+	std::lock_guard<std::mutex> lock(count_mutex);
+
+	if (counts == counts_reserved)
+	{
+		reserve_counts();
+	}
+
+	return ++counts;
 }
 
 rocksdb::Options repository::rocksdb_repository::file_options() const
@@ -200,8 +295,13 @@ std::string repository::rocksdb_repository::transfer_name() const
 
 repository::rocksdb_repository::~rocksdb_repository()
 {
-	// Every column family has to be closed before the database is, and the database outlives this
-	// body because it is destroyed with the members afterwards.
+	close_handles();
+}
+
+// Every column family has to be closed before the database is, and the database outlives this
+// because it is destroyed with the members afterwards.
+void repository::rocksdb_repository::close_handles()
+{
 	for (std::map<std::string, rocksdb::ColumnFamilyHandle *>::iterator it = handles.begin();
 		it != handles.end();
 		++it)
@@ -297,7 +397,11 @@ void repository::rocksdb_repository::write_record(const std::string &table_name,
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 
 	written(
-		database->Put(rocksdb::WriteOptions(), table_handle(table_name), record.key, record.value),
+		database->Put(
+			rocksdb::WriteOptions(),
+			table_handle(table_name),
+			record.key,
+			record::compose_value(record.stamp, record.value)),
 		"Writing a record to \"" + table_name + "\"");
 }
 
@@ -316,7 +420,7 @@ std::optional<std::string> repository::rocksdb_repository::read_record(
 
 	check(status, "Reading a record from \"" + table_name + "\"");
 
-	return value;
+	return std::string(record::value_of(value));
 }
 
 void repository::rocksdb_repository::delete_record(const std::string &table_name, const std::string &key)
@@ -371,8 +475,13 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 
 		// Not asking for the value lets the iterator stay in the index blocks, which for a table
 		// of large values is the whole saving.
-		page.records.push_back(
-			record::valid_record(it->key().ToString(), range.values ? it->value().ToString() : ""));
+		record::record read = record::valid_record(
+			it->key().ToString(),
+			range.values ? std::string(record::value_of(it->value().ToStringView())) : "");
+
+		read.stamp = range.values ? record::version_of(it->value().ToStringView()) : record::version();
+
+		page.records.push_back(read);
 	}
 
 	check(it->status(), "Scanning \"" + table_name + "\"");
@@ -492,7 +601,14 @@ repository::extract repository::rocksdb_repository::export_records(
 
 		if (wanted.partitions.test(cluster::partition_of(key)))
 		{
-			check(writer.Put(it->key(), wanted.values ? it->value() : rocksdb::Slice()), what);
+			// A walk that is not carrying values carries the versions, which is the whole of what
+			// a node deciding whether to give a record up has to ask about.
+			rocksdb::Slice stored = it->value();
+			rocksdb::Slice carried = wanted.values
+				? stored
+				: rocksdb::Slice(stored.data(), std::min(stored.size(), record::version_size));
+
+			check(writer.Put(it->key(), carried), what);
 
 			taken.records++;
 		}
@@ -565,11 +681,16 @@ size_t repository::rocksdb_repository::import_records(const std::string &table_n
 		{
 			value.Reset();
 
-			if (database->Get(rocksdb::ReadOptions(), handle, it->key(), &value).ok())
+			if (!database->Get(rocksdb::ReadOptions(), handle, it->key(), &value).ok())
 			{
-				held++;
+				records++;
+
+				continue;
 			}
-			else
+
+			held++;
+
+			if (record::is_newer(it->value().ToStringView(), value.ToStringView()))
 			{
 				records++;
 			}
@@ -609,7 +730,11 @@ size_t repository::rocksdb_repository::import_records(const std::string &table_n
 	{
 		value.Reset();
 
-		if (!database->Get(rocksdb::ReadOptions(), handle, it->key(), &value).ok())
+		bool absent = !database->Get(rocksdb::ReadOptions(), handle, it->key(), &value).ok();
+
+		// An ingested file is written above what is already there, so a key it carries at a later
+		// version replaces the one held and a key it carries at an earlier one is left out of it.
+		if (absent || record::is_newer(it->value().ToStringView(), value.ToStringView()))
 		{
 			check(writer.Put(it->key(), it->value()), what);
 
@@ -666,6 +791,13 @@ size_t repository::rocksdb_repository::clear_records(const std::string &table_na
 		// Most of what the file carries was never here: it is everything the node that owns these
 		// partitions holds, and what this node is giving up is the fraction that just moved.
 		if (!database->Get(rocksdb::ReadOptions(), handle, it->key(), &value).ok())
+		{
+			continue;
+		}
+
+		// What is here was written after what the owner holds, so the owner is a copy behind
+		// rather than a copy to hand over to. The pass that fetches is what settles it.
+		if (record::is_newer(value.ToStringView(), it->value().ToStringView()))
 		{
 			continue;
 		}

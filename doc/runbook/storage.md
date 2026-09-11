@@ -105,6 +105,26 @@ directory. Causes, in order of likelihood:
 Anything else in that message — `Corruption`, an `IO error` that is not a lock —
 is a store that will not open again. Replace it.
 
+A different message is a store this build will not read rather than one RocksDB
+cannot:
+
+> `The store predates record versions and has to be rebuilt from a node that has them.`
+
+Records carry [the version they were written
+in](/database/cluster#every-record-carries-a-version) in front of their values,
+and a store written before they did holds values that are values all the way
+through. The two cannot be told apart by looking, so a store with tables in it
+and no note of its format is refused rather than read as versions that were never
+written. **Upgrading past this is therefore a rebuild and not a restart**: empty
+the volume and let the node fill itself from a zone that is already on the new
+build — which is what happens by itself wherever an instance is replaced rather
+than restarted, the root volume going with it. Do one node at a time, and never
+the last node of a zone.
+
+```bash
+docker stop asyncdb-1 && docker volume rm asyncdb-1-data
+```
+
 ```bash
 docker logs asyncdb-1 2>&1 | grep -i rocksdb
 docker inspect asyncdb-1 --format '{{range .Mounts}}{{println .Source " -> " .Destination}}{{end}}'

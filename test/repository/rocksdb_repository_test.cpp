@@ -429,6 +429,15 @@ namespace
 
 		return wanted;
 	}
+
+	record::record versioned(const std::string &key, const std::string &value, uint64_t term, uint64_t count)
+	{
+		record::record written = record::valid_record(key, value);
+
+		written.stamp = record::version { term, count };
+
+		return written;
+	}
 }
 
 // The whole of what a rebuild does, over the two stores rather than over the network: a share is
@@ -497,9 +506,8 @@ TEST_F(repository_test, an_export_of_a_table_holding_nothing_carries_nothing)
 	EXPECT_TRUE(taken.file.empty());
 }
 
-// What makes a fetch safe. The store being written to owns the key now, so every write since the
-// ownership moved landed there: the file was written by the node that used to own it and carries
-// the older of the two values.
+// Two copies of one write carry one version, which is a pair neither side can order — and what a
+// store does about a record it cannot order is keep the one it has.
 TEST_F(repository_test, a_store_keeps_what_it_holds_already_when_a_file_carries_that_key_too)
 {
 	create_table("a_table");
@@ -516,6 +524,149 @@ TEST_F(repository_test, a_store_keeps_what_it_holds_already_when_a_file_carries_
 
 	EXPECT_EQ("mine", other_repository->read_record("a_table", "1").value_or(""));
 	EXPECT_EQ("theirs", other_repository->read_record("a_table", "2").value_or(""));
+}
+
+// What catches a copy up. The record in the file was written after the one held, so the node
+// holding the older of the two was not there for that write, and this is the pass that gives it
+// to it.
+TEST_F(repository_test, a_store_takes_a_record_from_a_file_written_after_the_one_it_holds)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	repository->write_record("a_table", versioned("1", "theirs", 41, 9));
+	other_repository->write_record("a_table", versioned("1", "mine", 41, 4));
+
+	repository::extract taken = repository->export_records("a_table", every_partition());
+
+	EXPECT_EQ(1u, other_repository->import_records("a_table", taken.file));
+	EXPECT_EQ("theirs", other_repository->read_record("a_table", "1").value_or(""));
+}
+
+// And the other way round, which is what makes a fetch safe: a record written after the one a file
+// carries is one the file cannot undo, whoever owns the key now.
+TEST_F(repository_test, a_store_keeps_a_record_written_after_the_one_a_file_carries)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	repository->write_record("a_table", versioned("1", "theirs", 41, 4));
+	other_repository->write_record("a_table", versioned("1", "mine", 41, 9));
+
+	repository::extract taken = repository->export_records("a_table", every_partition());
+
+	EXPECT_EQ(0u, other_repository->import_records("a_table", taken.file));
+	EXPECT_EQ("mine", other_repository->read_record("a_table", "1").value_or(""));
+}
+
+// A store holding none of the keys a file carries takes the file as it stands, which is the path a
+// rebuild runs down. What that skips is the comparison, so the version has to travel in the file
+// itself rather than be applied as it is taken in.
+TEST_F(repository_test, a_file_taken_whole_carries_the_versions_it_was_written_with)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	repository->write_record("a_table", versioned("1", "one", 41, 9));
+
+	repository::extract taken = repository->export_records("a_table", every_partition());
+
+	EXPECT_EQ(1u, other_repository->import_records("a_table", taken.file));
+
+	// Written before what the store now holds, so it is refused — which it would not be if the
+	// file had been taken in with a version of its own.
+	other_repository->write_record("a_table", versioned("1", "older", 41, 8));
+
+	EXPECT_EQ("older", other_repository->read_record("a_table", "1").value_or(""));
+
+	repository->write_record("a_table", versioned("1", "newer", 41, 10));
+
+	repository::extract again = repository->export_records("a_table", every_partition());
+
+	EXPECT_EQ(1u, other_repository->import_records("a_table", again.file));
+	EXPECT_EQ("newer", other_repository->read_record("a_table", "1").value_or(""));
+}
+
+// The keys alone are what a node asks for when it is deciding whether to give a record up, and the
+// version is what it has to decide on — so a file carrying no values carries the versions.
+TEST_F(repository_test, a_store_keeps_a_record_the_node_that_owns_it_has_yet_to_catch_up_on)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()));
+
+	// The owner's copy, and the one being given up, which was written after it.
+	repository->write_record("a_table", versioned("1", "the owner\'s", 41, 4));
+	repository->write_record("a_table", versioned("2", "the owner\'s", 41, 9));
+
+	other_repository->write_record("a_table", versioned("1", "later", 41, 9));
+	other_repository->write_record("a_table", versioned("2", "earlier", 41, 4));
+
+	repository::share wanted = every_partition();
+
+	wanted.values = false;
+
+	repository::extract taken = repository->export_records("a_table", wanted);
+
+	EXPECT_EQ(1u, other_repository->clear_records("a_table", taken.file));
+	EXPECT_EQ("later", other_repository->read_record("a_table", "1").value_or(""));
+	EXPECT_FALSE(other_repository->read_record("a_table", "2").has_value());
+}
+
+// A count outlives the process that issued it, because a leader that keeps its claim across a
+// restart goes on stamping writes in the same term: a count that started again would be a version
+// this store had already used.
+TEST_F(repository_test, counts_rise_across_the_store_being_opened_again)
+{
+	uint64_t last = repository->next_count();
+
+	EXPECT_GT(repository->next_count(), last);
+
+	last = repository->next_count();
+	repository = nullptr;
+	repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
+
+	EXPECT_GT(repository->next_count(), last);
+}
+
+// A store written before records carried a version holds values that are values all the way
+// through, so opening one and reading the first bytes of each as a version would serve bytes
+// nobody wrote. There is nothing here that can turn one into the other, and refusing to open it
+// is what keeps it from being served.
+TEST_F(repository_test, a_store_written_before_records_carried_a_version_is_refused)
+{
+	create_table("a_table");
+	repository->write_record("a_table", record::valid_record("1", "one"));
+	repository = nullptr;
+
+	// Which is a store with a table in it and nothing saying what its values are.
+	{
+		rocksdb::Options options;
+		std::vector<std::string> names;
+
+		ASSERT_TRUE(rocksdb::DB::ListColumnFamilies(options, "/tmp/asyncdb", &names).ok());
+
+		std::vector<rocksdb::ColumnFamilyDescriptor> families;
+
+		for (size_t i = 0; i < names.size(); i++)
+		{
+			families.push_back(rocksdb::ColumnFamilyDescriptor(names[i], rocksdb::ColumnFamilyOptions()));
+		}
+
+		std::vector<rocksdb::ColumnFamilyHandle *> handles;
+		rocksdb::DB *database = NULL;
+
+		ASSERT_TRUE(rocksdb::DB::Open(options, "/tmp/asyncdb", families, &handles, &database).ok());
+		ASSERT_TRUE(database->Delete(rocksdb::WriteOptions(), "FORMAT").ok());
+
+		for (size_t i = 0; i < handles.size(); i++)
+		{
+			database->DestroyColumnFamilyHandle(handles[i]);
+		}
+
+		delete database;
+	}
+
+	EXPECT_THROW(repository::rocksdb_repository("/tmp/asyncdb"), repository::storage_error);
 }
 
 // A share larger than one file is several of them, resumed from the key the walk reached rather

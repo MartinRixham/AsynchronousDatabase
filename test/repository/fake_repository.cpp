@@ -117,7 +117,7 @@ void repository::fake_repository::write_record(const std::string &table_name, co
 		throw storage_error("table_not_found", "No table named \"" + table_name + "\".");
 	}
 
-	records[table_name][record.key] = record.value;
+	records[table_name][record.key] = record::compose_value(record.stamp, record.value);
 }
 
 std::optional<std::string> repository::fake_repository::read_record(
@@ -131,7 +131,7 @@ std::optional<std::string> repository::fake_repository::read_record(
 		return std::nullopt;
 	}
 
-	return records.at(table_name).at(key);
+	return std::string(record::value_of(records.at(table_name).at(key)));
 }
 
 void repository::fake_repository::delete_record(const std::string &table_name, const std::string &key)
@@ -195,8 +195,13 @@ scan::page repository::fake_repository::scan_records(const std::string &table_na
 
 		bytes += size;
 
-		page.records.push_back(
-			record::valid_record(keys[i], range.values ? table_records.at(keys[i]) : ""));
+		const std::string &stored = table_records.at(keys[i]);
+		record::record read = record::valid_record(
+			keys[i], range.values ? std::string(record::value_of(stored)) : "");
+
+		read.stamp = range.values ? record::version_of(stored) : record::version();
+
+		page.records.push_back(read);
 	}
 
 	return page;
@@ -283,7 +288,7 @@ repository::extract repository::fake_repository::export_records(
 		if (wanted.partitions.test(cluster::partition_of(it->first)))
 		{
 			append(taken.file, it->first);
-			append(taken.file, wanted.values ? it->second : "");
+			append(taken.file, wanted.values ? it->second : it->second.substr(0, record::version_size));
 
 			taken.records++;
 		}
@@ -335,11 +340,20 @@ size_t repository::fake_repository::import_records(const std::string &table_name
 			return taken;
 		}
 
-		// A key this store already holds is kept, which is what the real store does and what makes
-		// a fetch safe: what is here was written after the ownership moved and what is in the file
-		// was written before it.
-		if (table_records.try_emplace(*key, *value).second)
+		// A key this store holds at a later version is kept, which is what the real store does and
+		// what makes a fetch safe: the record here was written after the one the file carries.
+		std::map<std::string, std::string>::iterator held = table_records.find(*key);
+
+		if (held == table_records.end())
 		{
+			table_records.emplace(*key, *value);
+
+			taken++;
+		}
+		else if (record::is_newer(*value, held->second))
+		{
+			held->second = *value;
+
 			taken++;
 		}
 	}
@@ -371,8 +385,18 @@ size_t repository::fake_repository::clear_records(const std::string &table_name,
 		}
 
 		// A key the file carries and this store has nothing for is a record this node never held,
-		// which is nothing to give up.
-		cleared += table_records.erase(*key);
+		// which is nothing to give up — and one it holds at a later version is a copy the owner
+		// has yet to catch up on.
+		std::map<std::string, std::string>::iterator held = table_records.find(*key);
+
+		if (held == table_records.end() || record::is_newer(held->second, *value))
+		{
+			continue;
+		}
+
+		table_records.erase(held);
+
+		cleared++;
 	}
 
 	return cleared;
@@ -401,6 +425,13 @@ void repository::fake_repository::delete_records(const std::string &table_name, 
 			++it;
 		}
 	}
+}
+
+uint64_t repository::fake_repository::next_count()
+{
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	return ++counts;
 }
 
 bool repository::fake_repository::is_write_stalled() const

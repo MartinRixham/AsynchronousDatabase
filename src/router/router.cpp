@@ -31,13 +31,14 @@ namespace
 		return router::error_response("table_not_found", "No table named \"" + name + "\".");
 	}
 
-	// The request as the node that ordered it sends it on, which is the term it ordered it in and
-	// nothing else changed.
-	router::request carried(const router::request &request, int64_t term)
+	// The request as the node that ordered it sends it on, which is the version it ordered it in
+	// and nothing else changed.
+	router::request carried(const router::request &request, int64_t term, uint64_t count = 0)
 	{
 		router::request ordered = request;
 
 		ordered.term = term;
+		ordered.count = count;
 
 		return ordered;
 	}
@@ -534,6 +535,10 @@ router::response router::router::route_record(
 					"stale_leader", "This key is led in a later term than the one that ordered this write.");
 			}
 
+			// The version the leader stamped, applied as it was given rather than made again here:
+			// the copies of one write are the same record and have to say so.
+			record.stamp = record::version { static_cast<uint64_t>(request.term), request.count };
+
 			return write_record(request, name, record, where);
 		}
 
@@ -541,6 +546,11 @@ router::response router::router::route_record(
 
 		if (!lead)
 		{
+			// Nothing leads, so there is one copy and nobody to order it against. The count still
+			// rises, because a node that joins a cluster later is one whose records are compared
+			// with another node's.
+			record.stamp = record::version { 0, repository.next_count() };
+
 			return write_record(request, name, record, where);
 		}
 
@@ -561,7 +571,13 @@ router::response router::router::route_record(
 
 		std::lock_guard<std::mutex> ordering(write_lock(record.key));
 
-		return write_record(carried(request, lead->term), name, record, replicas_of(request, where, record.key));
+		record.stamp = record::version { static_cast<uint64_t>(lead->term), repository.next_count() };
+
+		return write_record(
+			carried(request, lead->term, record.stamp.count),
+			name,
+			record,
+			replicas_of(request, where, record.key));
 	}
 
 	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)

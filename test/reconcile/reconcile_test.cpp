@@ -78,6 +78,43 @@ namespace
 		return file(keys, false, next);
 	}
 
+	record::record stamped(const std::string &key, const std::string &value, uint64_t term, uint64_t count)
+	{
+		record::record written = record::valid_record(key, value);
+
+		written.stamp = record::version { term, count };
+
+		return written;
+	}
+
+	// The same file the node being read from would have answered with, for keys written in a
+	// version a test names rather than in none.
+	router::response versioned_file(
+		const std::vector<std::string> &keys,
+		const std::string &value,
+		bool values,
+		uint64_t term,
+		uint64_t count)
+	{
+		repository::fake_repository source;
+
+		source.create_table(table::valid_table("account", std::vector<std::string>()));
+
+		for (size_t i = 0; i < keys.size(); i++)
+		{
+			source.write_record("account", stamped(keys[i], value, term, count));
+		}
+
+		repository::share whole;
+
+		whole.partitions.set();
+		whole.values = values;
+
+		repository::extract taken = source.export_records("account", whole);
+
+		return router::file_response(taken.file, taken.records, "");
+	}
+
 	repository::fake_repository store(const std::vector<std::string> &keys)
 	{
 		repository::fake_repository repository;
@@ -567,4 +604,90 @@ TEST(reconcile_test, walks_a_store_larger_than_one_page)
 	EXPECT_FALSE(repository.read_record("account", "a").has_value());
 	EXPECT_FALSE(repository.read_record("account", "b").has_value());
 	EXPECT_FALSE(repository.read_record("account", "c").has_value());
+}
+
+// The gap a version closes. This node was not there for the write the other copies took, so what it
+// holds is the older of two records — and it is the owner of the key, so nothing about where the
+// record belongs is wrong and the clear down has nothing to say about it. The fetch is what catches
+// it up.
+TEST(reconcile_test, takes_a_record_written_after_the_one_this_node_holds)
+{
+	repository::fake_repository repository;
+
+	repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	repository.write_record("account", stamped("a", "stale", 41, 4));
+
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { self, peer, other });
+	nodes.answer(peer, versioned_file({ "a" }, "fresh", true, 41, 9));
+
+	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
+
+	EXPECT_EQ(1u, done.fetched);
+	EXPECT_EQ("fresh", repository.read_record("account", "a").value_or(""));
+}
+
+// And the write this node was there for is not undone by a copy that was not: a record held here
+// at a later version is one the file cannot touch.
+TEST(reconcile_test, keeps_a_record_written_after_the_one_a_file_carries)
+{
+	repository::fake_repository repository;
+
+	repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	repository.write_record("account", stamped("a", "fresh", 41, 9));
+
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { self, peer, other });
+	nodes.answer(peer, versioned_file({ "a" }, "stale", true, 41, 4));
+
+	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
+
+	EXPECT_EQ(0u, done.fetched);
+	EXPECT_EQ("fresh", repository.read_record("account", "a").value_or(""));
+}
+
+// Clearing down is where a version stops a write being lost rather than merely staling. The node
+// that owns this key now holds an older copy of it, so handing it over and deleting this one would
+// take the later write out of the zone altogether. It is kept, and the pass does not settle until
+// the owner has caught up.
+TEST(reconcile_test, keeps_a_record_the_node_that_owns_it_has_yet_to_catch_up_on)
+{
+	repository::fake_repository repository;
+
+	repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	repository.write_record("account", stamped("gone", "fresh", 41, 9));
+
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("gone", { mate, peer, other });
+	nodes.answer(mate, versioned_file({ "gone" }, "stale", false, 41, 4));
+
+	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
+
+	EXPECT_EQ(0u, done.cleared);
+	EXPECT_EQ(1u, done.deferred);
+	EXPECT_FALSE(done.settled());
+	EXPECT_EQ("fresh", repository.read_record("account", "gone").value_or(""));
+}
+
+// The owner has caught up, so this copy is the one to go: the record is in the zone either way and
+// the node that owns it is the one that should be holding it.
+TEST(reconcile_test, gives_up_a_record_the_node_that_owns_it_holds_at_the_same_version)
+{
+	repository::fake_repository repository;
+
+	repository.create_table(table::valid_table("account", std::vector<std::string>()));
+	repository.write_record("account", stamped("gone", "the write", 41, 9));
+
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("gone", { mate, peer, other });
+	nodes.answer(mate, versioned_file({ "gone" }, "the write", false, 41, 9));
+
+	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
+
+	EXPECT_EQ(1u, done.cleared);
+	EXPECT_FALSE(repository.read_record("account", "gone").has_value());
 }

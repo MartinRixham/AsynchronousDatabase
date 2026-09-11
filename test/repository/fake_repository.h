@@ -20,6 +20,10 @@ namespace repository
 
 		bool stalled = false;
 
+		// What the real store reserves blocks of on disk. Nothing here outlives the process, so
+		// there is nothing to reserve against.
+		uint64_t counts = 0;
+
 		// A walk hands the files of a share to several threads at once, so a store this stands in
 		// for is one that is written from several at once. Held by pointer because the fixtures
 		// that build one of these hand it back by value.
@@ -55,6 +59,8 @@ namespace repository
 		size_t clear_records(const std::string &table_name, const std::string &file) override;
 
 		void delete_records(const std::string &table_name, const scan::range &range) override;
+
+		uint64_t next_count() override;
 
 		bool is_write_stalled() const override;
 

@@ -160,3 +160,48 @@ TEST(record_test, a_key_of_two_parts_is_counted_in_the_bytes_of_both)
 	EXPECT_TRUE(record::parse_key(record::compose_key(half, half.substr(1))).is_valid);
 	EXPECT_EQ(record::parse_key(record::compose_key(half, half)).code, "key_too_large");
 }
+
+TEST(record_test, a_value_carries_the_version_it_was_written_with)
+{
+	std::string stored = record::compose_value(record::version { 41, 7 }, "a value");
+
+	EXPECT_EQ(record::value_of(stored), "a value");
+	EXPECT_EQ(record::version_of(stored).term, 41u);
+	EXPECT_EQ(record::version_of(stored).count, 7u);
+}
+
+// The version is fixed width and big endian, so the bytes of two of them sort as the pairs do and
+// a store deciding between two copies compares bytes rather than decoding either.
+TEST(record_test, a_later_write_is_the_one_with_the_later_version)
+{
+	std::string first = record::compose_value(record::version { 41, 7 }, "");
+	std::string later_count = record::compose_value(record::version { 41, 8 }, "");
+	std::string later_term = record::compose_value(record::version { 42, 1 }, "");
+
+	EXPECT_TRUE(record::is_newer(later_count, first));
+	EXPECT_FALSE(record::is_newer(first, later_count));
+
+	// A term rises whenever leadership moves, so it outranks a count that a new leader started
+	// again from nothing.
+	EXPECT_TRUE(record::is_newer(later_term, later_count));
+	EXPECT_FALSE(record::is_newer(later_count, later_term));
+}
+
+// Two copies of one write carry one version, which is the pair a store cannot order — and what it
+// does about a pair it cannot order is keep what it holds.
+TEST(record_test, one_version_is_newer_than_nothing)
+{
+	std::string stored = record::compose_value(record::version { 41, 7 }, "a value");
+
+	EXPECT_FALSE(record::is_newer(stored, stored));
+}
+
+// A count of 2^63 and a count of 1 are a pair a signed comparison would order backwards.
+TEST(record_test, a_version_past_the_middle_of_its_range_is_still_the_later_one)
+{
+	std::string small = record::compose_value(record::version { 1, 1 }, "");
+	std::string large = record::compose_value(record::version { 1, 1ull << 63 }, "");
+
+	EXPECT_TRUE(record::is_newer(large, small));
+	EXPECT_FALSE(record::is_newer(small, large));
+}

@@ -119,8 +119,9 @@ TEST(forwarder_test, forward_a_body)
 }
 
 // A write from the leader carries the term it was ordered in, so that a copy can refuse one older
-// than the newest it has applied.
-TEST(forwarder_test, forward_the_term_a_write_was_ordered_in)
+// than the newest it has applied, and the count beside it, which is the other half of the version
+// every copy of that write is to hold.
+TEST(forwarder_test, forward_the_version_a_write_was_ordered_in)
 {
 	http::fake_client http;
 
@@ -133,13 +134,15 @@ TEST(forwarder_test, forward_the_term_a_write_was_ordered_in)
 		"",
 		"a value",
 		false,
-		60
+		60,
+		7
 	};
 
 	forwarder.forward(one, write);
 
-	ASSERT_EQ(http.sent()[0].headers.size(), 2u);
+	ASSERT_EQ(http.sent()[0].headers.size(), 3u);
 	EXPECT_EQ(http.sent()[0].headers[1], "X-Asyncdb-Term: 60");
+	EXPECT_EQ(http.sent()[0].headers[2], "X-Asyncdb-Count: 7");
 }
 
 // A write to the leader carries no term, which is what tells the two hops of a write apart.

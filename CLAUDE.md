@@ -594,13 +594,27 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   read, so a walk that is not reading values covers far more of a table for the same one. That is
   what makes a clear down one question of the node that owns a share rather than one for every key
   in it.
-- **A file never overwrites.** `import_records` keeps whatever the store already holds for a key the
-  file also carries, which is what makes the fetch half safe: this node owns the key now, so every
-  write since the ownership moved landed here and the file was written by the node that had it before.
-  It is the store that decides and not the caller — the RocksDB one walks the incoming file once to see
-  whether anything is held at all, and ingests the file as it stands when nothing is.
-  `clear_records` is the other half of the same idea: it deletes the records a file names and leaves
-  a key it has nothing for alone, so a pass does not write a tombstone for every record it never held.
+- **Every record carries a version, and it is what decides between two copies.** `record::version` is
+  a term and a count: the term is the etcd revision behind the leader's claim, so it rises whenever
+  leadership moves or a leader restarts, and the count is that node's own and rises within a term.
+  Only a leader issues one, and it travels to the copies in `X-Asyncdb-Count` beside the term they
+  already carried, so the copies of one write are one record. `record::compose_value` puts it in
+  front of the value in the store, 16 bytes, big endian so the bytes sort as the pair does — which
+  is why a file of records carries versions without carrying anything extra, the bytes that move
+  being the bytes the store holds. The count comes from `repository::next_count()`, reserved on disk
+  a million at a time, so stamping a write costs nothing and a process that restarts carries on
+  above every count the one before it issued. **A store written before this refuses to open**: its
+  values have no version to tell from their first bytes, and `check_format` says so rather than
+  serving what was never written.
+- **A file overwrites only what was written before it.** `import_records` keeps a record the store
+  holds at a later version and replaces an earlier one, which is what catches up a copy that was
+  not there for a write the others took. It is the store that decides and not the caller — the
+  RocksDB one walks the incoming file once to see whether anything is held at all, and ingests the
+  file as it stands when nothing is. `clear_records` is the other half: it deletes the records a
+  file names **unless what is here was written later**, which is a copy the owner has yet to catch
+  up on rather than one to hand over, and leaves a key it has nothing for alone, so a pass does not
+  write a tombstone for every record it never held. That is why a file of keys alone carries the
+  versions in place of the values.
 - **Records move when ownership moves, and only then.** A membership change redraws the split inside
   a zone without moving a record, so `reconcile::reconcile` does: it **fetches** what this node now
   owns and holds nothing for, from every other node, and **clears down** what it no longer owns.

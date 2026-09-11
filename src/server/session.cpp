@@ -84,6 +84,18 @@ namespace
 		return term;
 	}
 
+	uint64_t read_count(const boost::beast::string_view &header)
+	{
+		uint64_t count = 0;
+
+		if (header.empty() || !boost::conversion::try_lexical_convert(std::string(header), count))
+		{
+			return 0;
+		}
+
+		return count;
+	}
+
 	// Only a segment that is entirely ".." is a traversal. A key that happens to contain dots is
 	// a key like any other, and travels percent encoded.
 	bool has_traversal(const std::string &target)
@@ -213,7 +225,8 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 			url::query_string(target),
 			request.body(),
 			!request[cluster::forwarded_header].empty(),
-			read_term(request[cluster::term_header])
+			read_term(request[cluster::term_header]),
+			read_count(request[cluster::count_header])
 		};
 
 		try

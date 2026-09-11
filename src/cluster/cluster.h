@@ -17,6 +17,10 @@ namespace cluster
 
 	constexpr char term_header[] = "X-Asyncdb-Term";
 
+	// The count the leader stamped the write with. The term beside it is the other half of the
+	// version, so this travels only where that does.
+	constexpr char count_header[] = "X-Asyncdb-Count";
+
 	// The key the tables are led by. A table is held by every node rather than by the copies of a
 	// partition, so it has no key of its own to hash: one constant is what gives every create and
 	// delete of a table the same leader, and one leader is what orders two creates of one name

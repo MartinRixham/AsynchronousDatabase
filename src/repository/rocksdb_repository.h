@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <vector>
@@ -48,6 +49,24 @@ namespace repository
 		// What names them apart. Several exports can be in flight at once, and each is a file.
 		mutable std::atomic<uint64_t> transfers = 0;
 
+		// The block of counts reserved on disk, and how much of it is left. Writes take from it
+		// without touching the store, and the next block is reserved when it runs out.
+		std::mutex count_mutex;
+
+		uint64_t counts = 0;
+
+		uint64_t counts_reserved = 0;
+
+		// Refuses a store written before records carried a version, whose values would otherwise
+		// be read as a version and a value that were never written.
+		void check_format();
+
+		// Every column family handle given back, which the destructor cannot do for a constructor
+		// that threw.
+		void close_handles();
+
+		void reserve_counts();
+
 	public:
 		explicit rocksdb_repository(const std::string &directory, size_t memory_bytes = default_memory_bytes);
 
@@ -84,6 +103,8 @@ namespace repository
 		size_t clear_records(const std::string &table_name, const std::string &file) override;
 
 		void delete_records(const std::string &table_name, const scan::range &range) override;
+
+		uint64_t next_count() override;
 
 		bool is_write_stalled() const override;
 

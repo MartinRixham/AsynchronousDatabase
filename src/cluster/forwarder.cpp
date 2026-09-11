@@ -48,6 +48,7 @@ namespace
 		if (request.term != 0)
 		{
 			headers.push_back(std::string(cluster::term_header) + ": " + std::to_string(request.term));
+			headers.push_back(std::string(cluster::count_header) + ": " + std::to_string(request.count));
 		}
 
 		return headers;

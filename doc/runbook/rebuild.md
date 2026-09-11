@@ -281,10 +281,12 @@ pass. What is left over when a pass is done is its `deferred` count.
 - **It is not a repair.** It moves what some node still has. A key whose owner in
   every zone was terminated by the same update is gone, and this does not bring
   it back.
-- **It does not choose between two values.** A file never overwrites a record this
-  node already holds — the store keeps what it has and takes the rest. This node
-  owns the key now, so every write since the ownership moved landed here, and what
-  the file carries was written before it did.
+- **It chooses between two values by which was written later, and by nothing
+  else.** Every record carries the version the leader stamped it with — a term
+  that rises whenever leadership moves, and a count that rises within one — so a
+  file replaces a record written before it and leaves one written after it alone.
+  There is no clock in this and no guess: a pair it cannot order is two copies of
+  one write, and what it does about one of those is keep what it holds.
 - **It is triggered by the membership, and by starting on a store this node did
   not fill.** A store that matches the membership it was left with is never
   walked, so a node whose cluster does not change never runs a pass at all. A

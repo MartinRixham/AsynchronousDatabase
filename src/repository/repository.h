@@ -2,6 +2,7 @@
 #define REPOSITORY_REPOSITORY_H
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <set>
 #include <string>
@@ -102,19 +103,27 @@ namespace repository
 		// half again the size of another costs a little of that and nothing else.
 		virtual std::vector<std::string> split_points(const std::string &table_name, size_t ways) const = 0;
 
-		// Takes a file into a table and answers how many records it took. **A key this store
-		// already holds is kept**: the file was written by a node that used to own the key, and
-		// every write since the ownership moved came here, so what is here is the newer of the two.
+		// Takes a file into a table and answers how many records it took. **A key this store holds
+		// at a later version is kept**: the record here was written after the one the file carries,
+		// whoever owns the key now. An earlier one is replaced, which is what catches up a copy
+		// that was not there for a write the others took.
 		virtual size_t import_records(const std::string &table_name, const std::string &file) = 0;
 
-		// Deletes the records of this table that the file also carries, and answers how many went.
-		// The file is written by the node that owns those keys now, so a key in both stores is a
-		// copy this one may give up — which is the whole of what makes clearing down safe. A key
-		// the file carries and this store has nothing for is left alone rather than deleted, or a
-		// pass would write a tombstone for every record it never held.
+		// Deletes the records of this table that the file also carries at a version at least as
+		// late, and answers how many went. The file is written by the node that owns those keys
+		// now, so a key in both stores is a copy this one may give up — unless what is here was
+		// written later, which is a copy the owner has yet to catch up on and not one to drop. A
+		// key the file carries and this store has nothing for is left alone rather than deleted,
+		// or a pass would write a tombstone for every record it never held.
 		virtual size_t clear_records(const std::string &table_name, const std::string &file) = 0;
 
 		virtual void delete_records(const std::string &table_name, const scan::range &range) = 0;
+
+		// The count for the next write this node orders, which rises for as long as the store
+		// lives. It is handed out in blocks reserved on disk rather than one at a time, so a write
+		// costs nothing to stamp and a process that restarts carries on above every count the one
+		// before it issued — which is what a leader keeping its claim across a restart needs.
+		virtual uint64_t next_count() = 0;
 
 		virtual bool is_write_stalled() const = 0;
 

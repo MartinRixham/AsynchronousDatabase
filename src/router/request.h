@@ -22,6 +22,10 @@ namespace router
 		bool forwarded = false;
 
 		int64_t term = 0;
+
+		// The other half of the version the leader stamped a write with, the term being the
+		// first. It travels only with a term, because only a leader issues one.
+		uint64_t count = 0;
 	};
 }
 

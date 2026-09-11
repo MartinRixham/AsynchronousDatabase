@@ -81,6 +81,30 @@ namespace
 		return cluster::encode_partitions(held);
 	}
 
+	// The version a record was stored with, which the API never carries: what a client is given is
+	// the value, and the version is what one store compares with another.
+	record::version stamp_of(
+		const repository::fake_repository &repository,
+		const std::string &name,
+		const std::string &key)
+	{
+		scan::range whole;
+
+		whole.is_valid = true;
+
+		scan::page page = repository.scan_records(name, whole);
+
+		for (size_t i = 0; i < page.records.size(); i++)
+		{
+			if (page.records[i].key == key)
+			{
+				return page.records[i].stamp;
+			}
+		}
+
+		return record::version();
+	}
+
 	std::vector<std::string> keys(const router::response &response)
 	{
 		boost::json::array records = response.json.at("records").as_array();
@@ -1243,6 +1267,95 @@ TEST(router_cluster_test, order_a_write_of_a_partition_this_node_leads)
 	ASSERT_EQ(nodes.sent().size(), 1u);
 	EXPECT_EQ(nodes.sent()[0].first, partner);
 	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+}
+
+// The leader stamps the write with the term it ordered it in and a count of its own, and both
+// halves travel: the copies of one write are one record and have to be able to say so.
+TEST(router_cluster_test, stamp_a_write_with_the_version_it_was_ordered_in)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, partner });
+	nodes.led_by("4821", here, 41);
+
+	router.route(put("/table/account/key/4821", "a value"));
+
+	record::version stamped = stamp_of(repository, "account", "4821");
+
+	EXPECT_EQ(stamped.term, 41u);
+	EXPECT_NE(stamped.count, 0u);
+
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+	EXPECT_EQ(nodes.sent()[0].second.count, stamped.count);
+}
+
+// The count is what orders two writes the same leader ordered, which a term of its own cannot: a
+// term stands for as long as the claim behind it does.
+TEST(router_cluster_test, count_a_write_after_the_one_before_it)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.copies("4821", { here, partner });
+	nodes.led_by("4821", here, 41);
+
+	router.route(put("/table/account/key/4821", "one"));
+
+	uint64_t first = stamp_of(repository, "account", "4821").count;
+
+	router.route(put("/table/account/key/4821", "two"));
+
+	EXPECT_GT(stamp_of(repository, "account", "4821").count, first);
+}
+
+// A copy applies the version it was given rather than making one of its own, or the copies of one
+// write would be records that nothing could tell apart from two writes.
+TEST(router_cluster_test, apply_the_version_a_forwarded_write_was_ordered_in)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+
+	router::request forwarded = put("/table/account/key/4821", "a value");
+
+	forwarded.forwarded = true;
+	forwarded.term = 60;
+	forwarded.count = 7;
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+
+	record::version stamped = stamp_of(repository, "account", "4821");
+
+	EXPECT_EQ(stamped.term, 60u);
+	EXPECT_EQ(stamped.count, 7u);
+}
+
+// An instance nothing leads writes where it always has, and still counts: a store that joins a
+// cluster later is one whose records are weighed against another node's.
+TEST(router_test, count_a_write_no_leader_ordered)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+
+	router.route(put("/table/account/key/4821", "a value"));
+
+	record::version stamped = stamp_of(repository, "account", "4821");
+
+	EXPECT_EQ(stamped.term, 0u);
+	EXPECT_NE(stamped.count, 0u);
 }
 
 // A partition nothing leads has nowhere to order a write, and saying so is what makes the client

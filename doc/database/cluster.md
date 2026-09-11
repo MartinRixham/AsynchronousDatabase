@@ -346,6 +346,39 @@ records the other zones still have, which is the one failure worth spending a ho
 on a genuine miss to avoid. It is not read repair — the copy that was missing
 stays missing until the record is written again.
 
+### Every record carries a version
+
+Two nodes can end up holding one key at two values — a copy that was not there
+for a write the others took, a node that restarted while a write was in flight —
+and a pass moving records between them has to know which of the two is the later
+one. Every record therefore carries the version it was written in, and it is a
+pair of numbers rather than a clock:
+
+| | |
+| --- | --- |
+| term | The etcd revision that created the claim of the leader that ordered the write, so it rises whenever leadership moves and whenever a leader restarts |
+| count | That leader's own, and rises within a term |
+
+**Only a leader issues one**, so no two nodes ever stamp the same key in the same
+term, and the pair travels to the copies in `X-Asyncdb-Count` beside the term
+they already carried — the copies of one write are one record and say so. There
+is no clock in it, so no node's idea of the time can pick the wrong winner, and
+nothing is read before a write to produce it: counts are reserved on disk a
+million at a time, which is also what carries a node past the counts it issued
+before it last restarted.
+
+The version is held in front of the value, fixed width and big endian, so two of
+them sort as the pairs do. It never reaches a client — what `GET` answers is the
+value — and what it decides is what a file does when it meets a key the store
+already holds: replace it if what the file carries was written later, keep it
+otherwise. A pair it cannot order is two copies of one write, and what it does
+about one of those is keep what it holds.
+
+**It is a tiebreak and not a repair.** Nothing compares two copies unless a pass
+is already moving records between them, which is when the membership changes or
+when a node starts on a store it did not fill. Two zones can hold one key at two
+versions for as long as neither of those happens.
+
 ## What each endpoint does in a cluster
 
 | Endpoint | In a cluster |
@@ -473,10 +506,15 @@ node holding hundreds of gigabytes would need millions of round trips to be
 filled, which is not a thing that finishes. A file is one round trip for as much
 of the table as the budget covers.
 
-**A file never overwrites, and it never deletes what it does not name.** The store
-a file is taken into keeps whatever it already holds for a key the file also
-carries, and a store giving records up deletes only the keys the file names — see
-[what makes a fetch safe](/runbook/rebuild#when-ownership-moves).
+**A file overwrites only what was written before it, and it never deletes what it
+does not name.** Every record carries [the version it was written
+in](#every-record-carries-a-version), so the store a file is taken into keeps a
+key it holds at a later version and replaces an earlier one; a store giving
+records up deletes only the keys the file names, and only where the node that
+owns them now holds them at a version at least as late — see [what makes a fetch
+safe](/runbook/rebuild#when-ownership-moves). A file of keys alone carries the
+versions in place of the values, which is what a node deciding whether to give a
+record up asks for.
 
 ## Scans across a cluster
 
@@ -520,16 +558,18 @@ it ends.
   zones survive two of them being gone, and no arrangement here survives a key
   being written to a node whose disk is then lost before anything reads it: there
   is no log, no quorum and nothing to reconcile against.
-- **Nothing repairs a copy that fell behind.** This is the one a leader does not
-  fix. A write that one copy refused is answered as a failure, and the copies that
-  took it keep it; there is no log to catch a copy up with, no read repair and no
-  hinted handoff. What a membership change does move is
-  [the records whose owner moved with it](/runbook/rebuild#when-ownership-moves),
-  which is a different question: where a record belongs, not which of two values
-  is the current one. Until the client runs the write again the
-  zones disagree, and a read may be answered by either of them. A scan is answered
+- **Nothing goes looking for a copy that fell behind.** This is the one a leader
+  does not fix. A write that one copy refused is answered as a failure, and the
+  copies that took it keep it; there is no log to catch a copy up with, no read
+  repair and no hinted handoff, so until the client runs the write again the
+  zones disagree and a read may be answered by either of them. A scan is answered
   by one zone, so it answers what *that* zone holds — a record another zone has
-  and this one does not is a record the scan does not return.
+  and this one does not is a record the scan does not return. What has changed is
+  only what happens when something *does* compare two copies: a pass moving
+  records can tell which of them is the later one and takes it, where before it
+  kept whichever it happened to be holding. That is a repair where a pass runs and
+  nowhere else, and a pass runs when the membership moves or a node starts on a
+  store it did not fill.
 
   **A leader orders writes; it does not replicate them.** Ordering is what stops
   two clients diverging the copies. Catching a copy up is what a replication log
