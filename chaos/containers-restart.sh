@@ -24,13 +24,12 @@
 #   every write the cluster acknowledged reads back what was written   nothing taken is lost
 #   every seeded record is there, at the value written before          nothing at rest is lost
 #   no copy of a key answers a different value from another copy       nothing diverged
-#   every acknowledged key is in every zone, and in one store of it    nothing moved
+#   every seeded record is in every zone, and in one store of it       nothing moved
 #   every partition is led and no node holds less than it owns         it is a cluster again
 #
-# What it does not assert is that the zones hold the *same* keys, which is what the resizes ask
-# and what this fault is allowed to break: a write refused to the client that a copy took anyway
-# leaves a key in one zone and not another, and nothing in the cluster puts the rest of it back.
-# See expect_replicated below.
+# The first of those is the load the harness keeps on every experiment here, and this is the fault
+# it was written for: a write is answered only once every copy has taken it, and every copy of it
+# is then killed with the write ahead log unflushed and RocksDB never closed.
 #
 # The kill is SIGKILL from the host rather than `docker stop`, deliberately. A node stopped
 # cleanly revokes its lease and leaves the membership before it stops accepting, which is
@@ -47,6 +46,7 @@ banner "Every container is killed" "The store outlives the process, and what it 
 
 setup
 seed
+start_load
 
 rounds=${CHAOS_RESTART_ROUNDS:-3}
 between=${CHAOS_RESTART_SETTLE:-20}
@@ -99,39 +99,6 @@ done
 
 echo "never answered again"
 exit 1'
-
-# survived — three numbers over the writes the cluster acknowledged: how many there were, how many
-# of those keys no copy answers for, and how many answer something other than what was written.
-#
-# A few attempts each, because a read is answered by one copy and the load balancer picks which
-# node is asked.
-survived()
-{
-	local i attempt key code taken=0 lost=0 wrong=0
-
-	: > "$work/codes"
-
-	while read -r i; do
-		key=probe-$stamp-$i
-		taken=$((taken + 1))
-
-		for attempt in 1 2 3; do
-			code=$(read_value "$key")
-			echo "$code" >> "$work/codes"
-
-			case $code in
-				2*) break ;;
-			esac
-		done
-
-		case $code in
-			2*) [ "$(cat "$work/value")" = "$stamp-$i" ] || wrong=$((wrong + 1)) ;;
-			*) lost=$((lost + 1)) ;;
-		esac
-	done < "$work/acknowledged"
-
-	printf '%s %s %s\n' "$taken" "$lost" "$wrong"
-}
 
 # copies_agree <value> <how many keys> — every node asked what it holds for those keys in its own
 # store, and no two of them may answer differently. It is the question expect_copies cannot put: a
@@ -188,36 +155,24 @@ done"
 	printf '  ---- %s copies of %s keys answered out of their own stores\n' "$held" "$2"
 }
 
-# expect_replicated <when> — every key the cluster acknowledged is in every zone's stores, and no
-# key is in two stores of one zone. It is given time the way expect_copies is: a key written to the
-# node standing in for one that was away is one the returning owner has to be handed, and until it
-# is, that key is in two stores of its zone.
+# expect_seed_replicated <when> — every seeded record is in every zone's stores, and no key is in
+# two stores of one zone. It is given time the way expect_copies is: a key written to the node
+# standing in for one that was away is one the returning owner has to be handed, and until it is,
+# that key is in two stores of its zone.
 #
-# **It is deliberately not expect_copies, and the difference is the writer.** The resizes assert
-# that every zone holds *the same keys*, which holds there because every write they made was
-# answered 2xx. A fault that kills a leader mid-write leaves the other half of that: a write the
-# client was told had failed, which a copy took anyway — and nothing in the cluster puts the other
-# copies of it back. There is no read repair and no anti-entropy, and a reconcile pass moves the
-# records whose owner moved, which after this fault is none of them. So the zones genuinely do not
-# hold the same keys afterwards, and the keys they differ by are exactly the writes that were
-# refused. Measured against a two zone cluster killed twice over: twenty-seven keys apart, every
-# one of them a refused write, and no fewer three minutes later.
-#
-# What is asserted instead is the claim that does hold, and it is the stronger one for this fault:
-# a write that was **acknowledged** is on every copy, so it is in every zone — and it stays there,
-# because the only thing that erases a record is the clear down, which deletes what this zone's
-# owner has confirmed holding.
-expect_replicated()
+# **It is deliberately not expect_copies**, which asks that the zones hold the *same* keys. The
+# recovery assertions above this one retry writes until they are taken, which is what await_writes
+# is for — and a write that was refused on the way there may still have been taken by one copy,
+# which leaves the zones holding different keys with nothing wrong. What is asked instead is that
+# the records written while the cluster was whole are all still in every zone, which is the claim
+# a kill has to leave standing.
+expect_seed_replicated()
 {
-	local deadline=$((SECONDS + converge)) zone missing short duplicates elsewhere=0 i
+	local deadline=$((SECONDS + converge)) zone missing short duplicates i
 
-	{
-		for (( i = 0; i < records; i++ )); do
-			echo "$i"
-		done
-
-		sed "s/^/probe-$stamp-/" "$work/acknowledged"
-	} | sort -u > "$work/replicated"
+	for (( i = 0; i < records; i++ )); do
+		echo "$i"
+	done | sort -u > "$work/replicated"
 
 	while :; do
 		short=
@@ -243,9 +198,9 @@ expect_replicated()
 	expect "$holdings_asked" "$holdings_total" "every node said what it holds $1"
 
 	if [ -z "$short" ]; then
-		result 0 "every key the cluster acknowledged is in every zone $1"
+		result 0 "every seeded record is in every zone $1"
 	else
-		result 1 "every key the cluster acknowledged is in every zone $1 — short:$short"
+		result 1 "every seeded record is in every zone $1 — short:$short"
 	fi
 
 	if [ -z "$duplicates" ]; then
@@ -253,21 +208,6 @@ expect_replicated()
 	else
 		result 1 "no key is held by two nodes of a zone $1 — held twice: $duplicates"
 	fi
-
-	# The other side of it, reported and never asserted on: a key some zone holds and another does
-	# not is a write the client was told had failed, taken by a copy anyway. Nothing here puts the
-	# rest of its copies back, which is what doc/runbook/index.md means by a copy that missed a
-	# write never recovering by itself.
-	for zone in $(zones_held); do
-		cat "$work/held.$zone"
-	done | sort -u > "$work/held.all"
-
-	for zone in $(zones_held); do
-		elsewhere=$((elsewhere + $(comm -23 "$work/held.all" "$work/held.$zone" | grep -c .)))
-	done
-
-	printf '  ---- %s keys are in one zone and not another %s, every one a write that was refused\n' \
-		"$elsewhere" "$1"
 }
 
 # await_cluster <timeout> — the two things only a node can be asked, waited for: the claims it
@@ -386,22 +326,9 @@ expect "$failed" 0 "every seeded record was written before the first kill"
 
 started=$SECONDS
 
-# Both probes start before the fault rather than after it: what this experiment breaks it breaks
-# inside inject, and a probe started afterwards would have watched the recovery alone.
-start_probe
-start_writes "$stamp"
-
 fault_start || { verdict; exit 1; }
 
-stop_probe
-stop_writes
-
-# The writes the cluster said it had taken, which is what two of the checks below are about. The
-# last line the writer got to may be half a line, so a line that is not a number and a status is
-# not one of them.
-awk '$2 ~ /^2[0-9][0-9]$/ { print $1 }' "$work/written" > "$work/acknowledged"
-
-probe_report "while the containers were being killed"
+load_report "while the containers were being killed"
 
 # The runbook's claim, and the whole of what restarts a container here. Nothing in this experiment
 # starts one: a node that came back is `--restart always` doing it.
@@ -435,21 +362,9 @@ else
 	result 1 "every node said whether it rebuilt itself"
 fi
 
-# The one thing no error code can say, and the reason the writer ran at all. A write that answered
-# 2xx was taken by every copy of the key, and every copy of it was then killed with the write
-# ahead log unflushed and RocksDB never closed.
-read -r taken lost wrong <<< "$(survived)"
-
-expect_not "$taken" 0 "the cluster took writes while it was being killed"
-expect "$lost" 0 "every write the cluster took while it was being killed is still there"
-expect "$wrong" 0 "and every one of them reads back what was written"
-
-printf '  ---- %s writes were acknowledged across %s rounds of kills, %s lost, %s changed\n' \
-	"$taken" "$rounds" "$lost" "$wrong"
-
-# And what was at rest rather than in flight. Presence is asked with attempts, because a read is
-# answered by one copy; the value is asked without them, because a 2xx carrying the wrong value is
-# never the load balancer's doing.
+# What was at rest rather than in flight, which is the seed. Presence is asked with attempts,
+# because a read is answered by one copy; the value is asked without them, because a 2xx carrying
+# the wrong value is never the load balancer's doing.
 absent=$(readable "$records" 3)
 
 expect "$absent" 0 "every seeded record is still there"
@@ -464,11 +379,15 @@ printf ' %s an older one, %s no copy answered for\n' "$other" "$gone"
 copies_agree "$before" 8
 
 # Nothing moved, because the membership came back naming the same six addresses and every node
-# owns what it owned. A zone short of a key it acknowledged is a store that did not outlive its
+# owns what it owned. A zone short of a seeded record is a store that did not outlive its
 # container; a key in two stores of one zone is a node that came back believing it owns something
 # it does not.
-expect_replicated "once every container had been killed $rounds times"
+expect_seed_replicated "once every container had been killed $rounds times"
 
 expect_round_trip 10 "a key written after the last kill reads back what was written"
+
+# And the claim the whole load exists to make, over every write the cluster acknowledged while its
+# every copy was being killed with the write ahead log unflushed and RocksDB never closed.
+expect_load_kept "once every container had come back"
 
 verdict

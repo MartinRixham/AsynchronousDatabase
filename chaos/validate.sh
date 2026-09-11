@@ -17,6 +17,10 @@ here=$(dirname "$0")
 
 export CHAOS_VALIDATE=1
 
+# A preflight breaks nothing and takes seconds, so there is nothing for a client to be doing while
+# it runs. It is the one thing here that turns the load off.
+export CHAOS_LOAD=0
+
 setup
 preflight_chaos || exit 1
 

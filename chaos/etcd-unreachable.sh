@@ -29,6 +29,7 @@ banner "One node loses etcd" "It becomes a cluster of one, and re-registers by i
 
 setup
 seed
+start_load
 
 isolated=$(instances asyncdb | cut -f1 | head -1)
 
@@ -90,6 +91,8 @@ printf '  ---- %s of 60 reads answered something other than 2xx\n' "$missed"
 [ "$missed" -gt 0 ] \
 	&& echo "  ---- a node that has lost etcd and is still being chosen, exactly as documented"
 
+load_report "while one node had lost etcd"
+
 fault_stop
 
 # It re-registers from scratch on the pass after a renewal fails rather than believing it is
@@ -98,5 +101,9 @@ await '(.nodes | length) == 6 and (.zones | length) == 3' "$settle" \
 	"the isolated node re-registered by itself, with nothing restarted"
 
 expect_reads 60 "every read of a seeded record is answered again"
+
+# The isolated node went on serving what it held and refusing what no leader had ordered, so a
+# write it was part of was either taken by every copy or refused outright.
+expect_load_kept "once the isolated node had re-registered"
 
 verdict

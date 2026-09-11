@@ -19,6 +19,7 @@ banner "A node is stopped" "Reads survive it, writes recover with the membership
 
 setup
 seed
+start_load
 
 before=$(instances asyncdb | cut -f1)
 count=$(echo "$before" | wc -l)
@@ -62,16 +63,13 @@ preflight()
 
 fault_start || { verdict; exit 1; }
 
-start_probe
-
 # The lease is what removes it, and the load balancer's health check is what stops routing to
 # it. Five nodes in three zones is both of those having happened: the zone it was in still has
 # its other node, so the number of copies never changed.
 await '(.nodes | length) == 5 and (.zones | length) == 3' "$settle" \
 	"the stopped node left the membership and the zone count did not change"
 
-stop_probe
-probe_report "while the node was going away"
+load_report "while the node was going away"
 
 # Once the membership has settled the cluster is whole again as far as a client is concerned:
 # a read needs one copy and every key still has three, and a write needs every copy of a
@@ -130,5 +128,10 @@ expect_writes 20 "every write is taken once the replacement has joined"
 # The fault ended when the group terminated the instance, which is what the assertions above
 # waited for. This is the case it did not: an instance still sitting stopped is started again.
 fault_stop
+
+# The instance that went took a copy of everything it held with it, and the replacement rebuilt
+# from another zone. A write that was acknowledged had been taken by all three copies, so losing
+# one of them loses nothing.
+expect_load_kept "once the replacement had joined"
 
 verdict

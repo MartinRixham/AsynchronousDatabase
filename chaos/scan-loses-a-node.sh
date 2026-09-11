@@ -24,6 +24,7 @@ banner "One node in every zone goes deaf" "Key reads carry on. Scans have nowher
 
 setup
 seed
+start_load
 
 # One instance per zone, which is what makes this the scan failure rather than a zone failure.
 deaf=$(instances asyncdb | awk '!seen[$2]++ { print $1 }')
@@ -100,6 +101,8 @@ esac
 # writes in eight touch one, so this number is expected to be large.
 printf '  ---- %s of 20 writes were refused while three nodes were deaf\n' "$(write_check 20)"
 
+load_report "while three nodes were deaf"
+
 fault_stop
 
 # The membership is what this fault never touched — the assertion above is that it held at six
@@ -108,5 +111,10 @@ fault_stop
 await_writes 20 "$settle" "every node answers its peers again"
 
 expect "$(scan_status)" 200 "the scan is answered once a zone is whole"
+
+# Seven writes in eight were refused while the three were deaf, and what matters is the eighth:
+# a write that was answered had reached every copy, deaf nodes included, because a deaf node is
+# one that cannot be *reached* rather than one that stopped writing.
+expect_load_kept "once every node answered its peers again"
 
 verdict

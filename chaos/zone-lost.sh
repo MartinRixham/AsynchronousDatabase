@@ -21,6 +21,7 @@ banner "A zone is cut off" "Reads carry on from the other copies, and the member
 
 setup
 seed
+start_load
 
 # The private subnet of a zone is the subnet an asyncdb instance in that zone is in. Nothing is
 # read out of the template for this: the instance knows where it is.
@@ -67,8 +68,6 @@ preflight()
 
 fault_start || { verdict; exit 1; }
 
-start_probe
-
 # Two zones is one copy of the keyspace gone. The nodes of the cut off zone cannot renew their
 # leases against a single etcd member that has no quorum, so they leave the membership rather
 # than sit in it refusing every write to their keys.
@@ -80,8 +79,7 @@ start_probe
 await_node "$witness" "(.zones | length) == 2 and (.nodes | length) == $remaining" "$settle" \
 	"a zone left the membership, leaving $remaining nodes and two copies"
 
-stop_probe
-probe_report "while the zone was going away"
+load_report "while the zone was going away"
 
 # The point of the whole design: a read needs one copy, and two remain.
 # A node the fault cut off is still in the load balancer for as long as the health check takes to
@@ -117,5 +115,9 @@ await '(.zones | length) == 3 and (.nodes | length) == 6' "$recovery" \
 
 expect_reads 40 "every read is answered once the zone is back"
 expect_writes 20 "every write is taken once the zone is back"
+
+# A zone that was cut off comes back with its copy, so nothing a client was told had been taken
+# was anywhere but on all three of them throughout.
+expect_load_kept "once the zone was back"
 
 verdict

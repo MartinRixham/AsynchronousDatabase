@@ -3,9 +3,10 @@
 # Sourced by every experiment in this folder.
 #
 # An experiment here is four things: a fault applied to the deployed stack with the AWS CLI,
-# the assertions doc/runbook makes about what that fault looks like from outside, a probe
-# recording what a client saw while it ran, and a verdict. This file owns all four, so that an
-# experiment script is the fault and the assertions and nothing else.
+# the assertions doc/runbook makes about what that fault looks like from outside, a client reading
+# and writing throughout so that the fault lands on a cluster that is serving, and a verdict. This
+# file owns all four, so that an experiment script is the fault and the assertions and nothing
+# else.
 #
 # Everything is an environment variable, as in perf/. The defaults are the deployed stack:
 #
@@ -18,11 +19,13 @@
 #   CHAOS_ONSET        how long a started fault is given to bite    20 seconds
 #   CHAOS_CONVERGE     how long a resized cluster is given to move   300 seconds
 #                      the records whose owner changed
+#   CHAOS_LOAD         0 for an experiment against an idle cluster    1
+#   CHAOS_LOAD_PAUSE   seconds between the load's writes              0.2
 
 set -u
 
-# Job control, so that stop_probe signals the curl inside the probe's own process group rather
-# than orphaning it. perf/harness.sh does this for the same reason.
+# Job control, so that stop_load signals the curl inside the load's own process group rather than
+# orphaning it. perf/harness.sh does this for the same reason.
 set -m
 
 export LC_ALL=C
@@ -46,8 +49,6 @@ remove_script=/tmp/asyncdb-chaos-remove
 checks=0
 failures=0
 standing=0
-probe=
-writer=
 
 # ---------------------------------------------------------------------------- the stack
 
@@ -742,50 +743,65 @@ expect_copies()
 	printf '  ---- %s of %s seeded keys are held by some node %s\n' "$(seed_held)" "$records" "$1"
 }
 
-# ---------------------------------------------------------------------------- the probe
+# ---------------------------------------------------------------------------- the load
 
-# Reads through the load balancer for as long as the fault lasts, so that an experiment can say
-# what a client saw rather than only what the cluster looked like afterwards.
-start_probe()
+# **A fault that lands on an idle cluster is not the fault anybody has.** Every experiment here
+# keeps a client on the load balancer for the whole of itself — reads as fast as one connection
+# answers them, and a write every CHAOS_LOAD_PAUSE seconds — so the node that is stopped, cut off,
+# slowed or killed is one that was serving when it went, and what the cluster does next is
+# measured while it is still being asked for things.
+#
+# The two halves are not there for the same reason. The **reads** are what a client saw, reported
+# and never asserted on: they are of the seeded keys, every one of which exists, so a read that is
+# not answered 2xx is the fault and never the key — and how many of them a fault costs is the load
+# balancer's health check interval as much as the database. The **writes** are the assertion no
+# error code can make: a write answered 2xx was taken by every copy of the key, so every one of
+# them has to still be there when the fault is over. Each key is written once and never again,
+# because a key written twice could read back either value with nothing wrong.
+#
+# **The load writes into a table of its own**, and that is not tidiness. A write that is *refused*
+# may still have been taken by one copy — the copies of a write are written beside each other
+# rather than in turn — and nothing here puts the rest of it back: there is no read repair, no
+# anti-entropy, and a reconcile pass moves the records whose owner moved. So a load running into
+# the seeded table would leave the zones holding different keys, which is what expect_copies
+# asserts they do not. Measured on a two zone cluster killed twice over: twenty-seven keys apart,
+# every one of them a write the client was told had failed, and no fewer three minutes later.
+load_table=$table-load
+load_stamp=
+load_mark=0
+reader=
+writer=
+
+start_load()
 {
-	rm -f "$work/probe"
+	local created
 
+	[ "${CHAOS_LOAD:-1}" = 0 ] && { echo "CHAOS_LOAD is 0, so nothing is reading or writing."; return 0; }
+
+	created=$(status --request PUT --header 'Content-Type: application/json' \
+		--data '{}' "$base/table/$load_table")
+
+	case $created in
+		200 | 201) ;;
+		*) die "Could not create $load_table: $created." ;;
+	esac
+
+	load_stamp=$RANDOM
+	load_mark=0
+
+	: > "$work/reads"
+	: > "$work/written"
+
+	# Both loops append a line at a time rather than holding one redirect open over the whole of
+	# themselves, because load_report empties the reads as it goes: a truncated file under a
+	# redirect that is still open is written at the offset it had reached, and the hole is zeroes.
 	(
 		while :; do
-			curl --silent --output /dev/null --max-time 10 \
-				--write-out '%{http_code}\n' \
-				"$base/table/$table/key/$((RANDOM % records))"
-		done > "$work/probe"
+			printf '%s\n' "$(status "$base/table/$table/key/$((RANDOM % records))")" >> "$work/reads"
+		done
 	) &
 
-	probe=$!
-}
-
-stop_probe()
-{
-	[ -n "$probe" ] || return 0
-
-	kill -- "-$probe" 2> /dev/null
-	wait "$probe" 2> /dev/null
-	probe=
-}
-
-# The other probe: a client **writing** for as long as the fault lasts, with the status of every
-# one of those writes kept in $work/written, a line of `<n> <status>` each. It is the only way to
-# make the claim a read probe cannot — a write answered 2xx was taken by every copy of the key, so
-# it has to still be there when the fault is over — and a read probe would call that a pass while
-# never having asked for anything the fault could have lost.
-#
-# The keys are `probe-<stamp>-<n>` and each carries `<stamp>-<n>` as its value, so what a key
-# should hold is worked out from its name and never looked up. **Each key is written once and never
-# again**: a key written twice could read back either value with nothing wrong, and a check that
-# cannot fail is worse than no check. The prefix is its own, because write_check's keys are
-# `w-<stamp>-<n>` and two probes sharing a name is one of them overwriting what the other asserts.
-start_writes()
-{
-	local stamp=$1
-
-	rm -f "$work/written"
+	reader=$!
 
 	(
 		i=0
@@ -793,39 +809,201 @@ start_writes()
 		while :; do
 			i=$((i + 1))
 
-			printf '%s %s\n' "$i" "$(status --request PUT --data "$stamp-$i" \
+			printf '%s %s\n' "$i" "$(status --request PUT --data "$load_stamp-$i" \
 				--header 'Content-Type: application/octet-stream' \
-				"$base/table/$table/key/probe-$stamp-$i")" >> "$work/written"
+				"$base/table/$load_table/key/load-$load_stamp-$i")" >> "$work/written"
 
-			# A writer as fast as curl can be started is a readback of thousands of keys, and
-			# what this is measuring is whether a write survived rather than how many there were.
-			sleep 0.2
+			# A writer as fast as curl can be started is tens of thousands of keys to read back
+			# over an experiment that waits for instances, and what this measures is whether a
+			# write survived rather than how many of them there were.
+			sleep "${CHAOS_LOAD_PAUSE:-0.2}"
 		done
 	) &
 
 	writer=$!
+
+	echo "A client is reading $table and writing $load_table throughout."
 }
 
-stop_writes()
+stop_load()
 {
-	[ -n "$writer" ] || return 0
+	local pid
 
-	kill -- "-$writer" 2> /dev/null
-	wait "$writer" 2> /dev/null
+	for pid in $reader $writer; do
+		kill -- "-$pid" 2> /dev/null
+		wait "$pid" 2> /dev/null
+	done
+
+	reader=
 	writer=
 }
 
-# probe_report <description> — what the probe saw, reported and never asserted on. A read during
-# the window in which the load balancer has not yet noticed a dead target is a read it sends to
-# one, so a dip here is the load balancer's health check interval and not the database.
-probe_report()
+# load_report <description> — what the load saw since the last report, which is what makes these
+# lines a phase of the experiment rather than a running total: an experiment reports once while
+# the fault is standing and again for what came after it.
+#
+# Reported and never asserted on, both halves. A read during the window in which the load balancer
+# has not yet noticed a dead target is a read it sends to one, and a write refused while a copy of
+# its key is missing is the design rather than a fault — what is asserted about the writes is
+# expect_load_kept, and it is about the ones that were taken.
+load_report()
 {
-	local total answered
+	local reads answered writes taken lines
 
-	total=$(wc -l < "$work/probe")
-	answered=$(grep -c '^2' "$work/probe") || answered=0
+	[ -s "$work/reads" ] || [ -s "$work/written" ] || return 0
 
-	printf '  ---- %s: %s of %s reads answered 2xx\n' "$1" "$answered" "$total"
+	reads=$(grep -c . "$work/reads") || reads=0
+	answered=$(grep -c '^2' "$work/reads") || answered=0
+	: > "$work/reads"
+
+	lines=$(grep -c . "$work/written") || lines=0
+	writes=$((lines - load_mark))
+	taken=$(sed -n "$((load_mark + 1)),\$p" "$work/written" | grep -c ' 2[0-9][0-9]$') || taken=0
+	load_mark=$lines
+
+	printf '  ---- %s: %s of %s reads and %s of %s writes were answered 2xx\n' \
+		"$1" "$answered" "$reads" "$taken" "$writes"
+}
+
+# load_survivors — four numbers over the writes the cluster acknowledged: how many there were, how
+# many no copy answers for, how many answer something other than what was written, and how many of
+# the **refused** writes are readable anyway.
+#
+# The readback is one curl over one connection rather than a request a process, because an
+# experiment that waited for instances acknowledged thousands of them: a loop spawning curl a key
+# at a time is minutes where this is seconds. Only what did not answer 2xx is asked again one at a
+# time, because a read is answered by one copy and the load balancer picks which node is asked.
+load_survivors()
+{
+	local n key code attempt taken lost=0 wrong=0 stray=0
+
+	awk '$2 ~ /^2[0-9][0-9]$/ { print $1 }' "$work/written" | sort -n > "$work/acknowledged"
+	awk '$2 !~ /^2[0-9][0-9]$/ { print $1 }' "$work/written" | sort -n > "$work/refused"
+
+	taken=$(grep -c . "$work/acknowledged") || taken=0
+
+	[ "$taken" = 0 ] && { printf '0 0 0 0\n'; return 0; }
+
+	rm -rf "$work/back"
+	mkdir -p "$work/back"
+
+	while read -r n; do
+		printf 'url = "%s"\noutput = "%s"\n' \
+			"$base/table/$load_table/key/load-$load_stamp-$n" "$work/back/$n"
+	done < "$work/acknowledged" > "$work/readback"
+
+	curl --silent --max-time 30 --config "$work/readback" --write-out '%{http_code}\n' \
+		> "$work/back.codes"
+
+	paste "$work/acknowledged" "$work/back.codes" > "$work/back.status"
+
+	awk '$2 !~ /^2[0-9][0-9]$/ { print $1 }' "$work/back.status" | sort > "$work/missed"
+
+	# The value is the key's own number, so what a record should hold is worked out from the name
+	# of the file it was read into. One pass rather than a process a key, for the same reason.
+	awk -v stamp="$load_stamp" '
+		FNR == 1 { key = FILENAME; sub(/.*\//, "", key); if ($0 != stamp "-" key) print key }' \
+		"$work/back"/* | sort > "$work/unexpected"
+
+	# A key that did not answer 2xx holds an error document rather than a value, so it is asked
+	# again below and is not a value that changed.
+	wrong=$(comm -23 "$work/unexpected" "$work/missed" | grep -c .) || wrong=0
+
+	while read -r n; do
+		key=load-$load_stamp-$n
+
+		for attempt in 1 2 3; do
+			code=$(read_value "$key")
+
+			case $code in
+				2*) break ;;
+			esac
+		done
+
+		case $code in
+			2*) [ "$(cat "$work/value")" = "$load_stamp-$n" ] || wrong=$((wrong + 1)) ;;
+			*) lost=$((lost + 1)) ;;
+		esac
+	done < "$work/missed"
+
+	# And the other side of a refused write, which is a measurement and never an assertion: the
+	# copies of a write are written beside each other, so a write the client was told had failed is
+	# one a copy may have taken. Nothing in the cluster puts the rest of its copies back.
+	while read -r n; do
+		case $(status "$base/table/$load_table/key/load-$load_stamp-$n") in
+			2*) stray=$((stray + 1)) ;;
+		esac
+	done < <(head -200 "$work/refused")
+
+	printf '%s %s %s %s\n' "$taken" "$lost" "$wrong" "$stray"
+}
+
+# expect_load_kept <description> — the load is stopped, what it last saw is reported, and **every
+# write the cluster acknowledged is still there, holding what was written**. It is the claim the
+# whole load exists to make, and it is an assertion for every fault that breaks nothing
+# permanently.
+expect_load_kept()
+{
+	local taken lost wrong stray
+
+	stop_load
+	load_report "$1"
+
+	[ -s "$work/written" ] || return 0
+
+	read -r taken lost wrong stray <<< "$(load_survivors)"
+
+	expect_not "$taken" 0 "the cluster took writes while the fault was standing"
+	expect "$lost" 0 "every write the cluster took $1 is still there"
+	expect "$wrong" 0 "and every one of them reads back what was written"
+
+	load_strays "$stray"
+}
+
+# report_load_kept <description> — the same, counted and never asserted on. It is for the three
+# faults that **terminate** instances: a key whose owner in every zone went in the same update went
+# with them, and nothing in the cluster puts that back — no rebuild of a copy, and no backup. What
+# is asserted there instead is the shape of the answer, which expect_codes does.
+report_load_kept()
+{
+	local taken lost wrong stray
+
+	stop_load
+	load_report "$1"
+
+	[ -s "$work/written" ] || return 0
+
+	read -r taken lost wrong stray <<< "$(load_survivors)"
+
+	expect_not "$taken" 0 "the cluster took writes while the fault was standing"
+	expect "$wrong" 0 "no write the cluster took $1 reads back as something else"
+
+	printf '  ---- of %s writes the cluster took %s, %s are held by no copy afterwards\n' \
+		"$taken" "$1" "$lost"
+
+	load_strays "$stray"
+}
+
+# load_strays <how many of the refused writes were readable> — the other side of a refused write,
+# and the reason the load has a table of its own. The copies of a write are written beside each
+# other, so a write the client was told had failed is one a copy may have taken — and nothing here
+# puts the rest of its copies back. Only the first two hundred are asked about, because this is a
+# measurement and a fault that refuses thousands would otherwise be read back twice.
+load_strays()
+{
+	local refused asked
+
+	refused=$(grep -c . "$work/refused") || refused=0
+	asked=$(( refused > 200 ? 200 : refused ))
+
+	[ "$refused" = 0 ] && return 0
+
+	if [ "$asked" = "$refused" ]; then
+		printf '  ---- of %s writes that were refused, %s are readable anyway\n' "$refused" "$1"
+	else
+		printf '  ---- of %s writes that were refused, %s of the %s asked about are readable anyway\n' \
+			"$refused" "$1" "$asked"
+	fi
 }
 
 # ---------------------------------------------------------------------------- the assertions
@@ -1625,8 +1803,7 @@ cleanup()
 {
 	local status=$?
 
-	stop_probe
-	stop_writes
+	stop_load
 
 	# The fault is taken away here as well as by the experiment, because an experiment that died
 	# holding one never reached its own fault_stop. It is a no-op when the fault has already

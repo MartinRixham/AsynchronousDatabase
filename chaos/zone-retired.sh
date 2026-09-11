@@ -43,6 +43,7 @@ banner "A zone is retired" "Two copies carry the keyspace, and the third is rebu
 
 setup
 seed
+start_load
 
 # What is waited for is two replacements launching and joining, and not a scheduler deciding. The
 # ceiling stays generous: a fault that expires mid-assertion is a false failure.
@@ -142,6 +143,8 @@ expect "$(scan_status)" 200 "a scan is answered by a zone of three"
 # Both zones went from two nodes to three, so a third of each zone's copy changed hands inside it.
 expect_copies "with the tier in two zones"
 
+load_report "while a zone was retired"
+
 fault_stop
 
 # Putting the zone back is the increase, and it is two instances that have never held anything: the
@@ -186,5 +189,9 @@ absent=$(readable 60 3)
 
 printf '  ---- of 60 seeded keys once all three zones are back: %s are held by no copy\n' "$absent"
 expect_codes '^(2|404)' "a key that went with an instance is refused as not found and not as an error"
+
+# Counted and not asserted, as the seed above is: the zones that stayed shed a node each when the
+# third came back, and what only that node held went with it.
+report_load_kept "while a zone was retired and brought back"
 
 verdict

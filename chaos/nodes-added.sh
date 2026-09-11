@@ -33,6 +33,7 @@ banner "The tier grows to nine" "Growing loses nothing: a node fills itself in b
 
 setup
 seed
+start_load
 
 resize=${CHAOS_RESIZE:-1200}
 
@@ -109,6 +110,8 @@ grown=grown-$RANDOM
 
 expect "$(write_seed "$grown")" 0 "every seeded key takes a write at nine nodes"
 
+load_report "while the tier was nine"
+
 fault_stop
 
 await '(.nodes | length) == 6 and (.zones | length) == 3 and ([ .zones[] | length ] | unique) == [2]' \
@@ -141,5 +144,9 @@ expect_round_trip 10 "a key written after the shrink reads back what was written
 # it, whether it kept it or had to be given it again, and no node of a zone holds a key another
 # node of that zone owns.
 expect_copies "once the tier is six again"
+
+# Counted and not asserted, for the same reason the seed is: a key whose owner in every zone was
+# terminated by the same update went with them, and the growth is not a repair.
+report_load_kept "while the tier was nine and then six again"
 
 verdict

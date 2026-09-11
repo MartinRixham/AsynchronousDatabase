@@ -33,6 +33,7 @@ banner "A node's disk fills" "Writes are refused with a documented code. Reads c
 
 setup
 seed
+start_load
 
 full=$(instances asyncdb | cut -f1 | head -1)
 seconds=${CHAOS_DISK_SECONDS:-240}
@@ -145,6 +146,8 @@ fi
 # A read does not write, and the record is in every zone.
 expect_reads 40 "every read is answered while one node cannot write"
 
+load_report "while the disk was full"
+
 fault_stop
 
 # A store that stopped for want of space does not notice the space coming back by itself: the
@@ -181,6 +184,11 @@ else
 fi
 
 expect_writes 30 "every write is taken once there is room for it"
+
+# The same claim as the thirty writes above, over the thousands the load made: a write the store
+# refused for want of space was refused to the client, and one the client was told had been taken
+# was on every copy including the one that had no room a moment later.
+expect_load_kept "once there was room again"
 
 # And the megabytes go with the table, which is the only thing that erases a record: the disk they
 # would be on next is the one this experiment just filled. Every experiment seeds the table for

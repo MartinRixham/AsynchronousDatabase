@@ -28,6 +28,7 @@ banner "A node is slow" "It stays in the membership, and everything forwarding t
 
 setup
 seed
+start_load
 
 slow=$(instances asyncdb | cut -f1 | head -1)
 cidr=$(aws ec2 describe-vpcs --vpc-ids "$vpc" --query 'Vpcs[0].CidrBlock' --output text)
@@ -72,11 +73,17 @@ printf '  ---- a read through the load balancer now takes %ss\n' \
 	"$(curl --silent --output /dev/null --max-time 40 --write-out '%{time_total}' \
 		"$base/table/$table/key/1")"
 
+load_report "while a node was slow"
+
 fault_stop
 
 await '(.nodes | length) == 6 and (.zones | length) == 3' "$settle" \
 	"the membership never changed and is still six nodes in three zones"
 
 expect_reads 30 "every read is answered once the latency is gone"
+
+# A slow copy is still a copy: the load's own writes are given fifteen seconds and the node is
+# delayed by less, so what the client was told was taken really was.
+expect_load_kept "once the latency was gone"
 
 verdict

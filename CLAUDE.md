@@ -174,8 +174,8 @@ make delete-chaos-stack
 ```
 
 `chaos/harness.sh` is sourced by each experiment the way `perf/harness.sh` is, and owns the same
-four things every one of them needs: the stack, the fault, a probe recording what a client saw
-while it ran, and the verdict. Everything is an environment variable — `CHAOS_EXPERIMENTS`,
+four things every one of them needs: the stack, the fault, a client reading and writing throughout,
+and the verdict. Everything is an environment variable — `CHAOS_EXPERIMENTS`,
 `CHAOS_SETTLE`, `CHAOS_RECOVERY`, `CHAOS_CONVERGE` — and a failed assertion is a non-zero exit,
 which is what lets `build.yaml` run it after the load tests and fail the build on it.
 
@@ -195,6 +195,20 @@ be one the fault would fail**. A rule left standing changes no membership, so `s
 waits on a write rather than on `/health`: a write needs every copy, and a node no peer can reach
 fails one.
 
+- **Every experiment runs under load**, because a fault that lands on an idle cluster is not the
+  fault anybody has. `start_load` keeps a client on the load balancer for the whole of an
+  experiment — reads of the seeded keys as fast as one connection answers them, and a write every
+  `CHAOS_LOAD_PAUSE` (0.2 seconds) — and `CHAOS_LOAD=0` turns it off. The reads are reported a
+  phase at a time and never asserted on, a fault costing reads being the load balancer's health
+  check as much as the database. The writes are the assertion no error code can make:
+  `expect_load_kept` is every write the cluster answered 2xx still being there and holding what was
+  written, which every fault that breaks nothing permanently has to leave standing. The three that
+  terminate instances call `report_load_kept` instead and print what was lost, for the same reason
+  the seed is counted there and not asserted. **The load writes into a table of its own**: a
+  refused write may still have been taken by one copy — the copies of a write are written beside
+  each other rather than in turn — and nothing puts the rest of that record back, so a load in the
+  seeded table would leave the zones holding different keys, which is what `expect_copies` asserts
+  they do not.
 - **The suite refuses to start** against a cluster that is not already six nodes in three zones
   with nothing stalled and every node holding what it owns, and stops early if an experiment's
   damage did not heal — everything after that would be measuring the previous fault. `every_node_whole`

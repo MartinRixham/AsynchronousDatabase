@@ -43,6 +43,49 @@ the system that puts a lost copy back. `nodes-added` and `zone-retired` reach th
 from the other side — a node joining a tier that grew rather than one replacing a tier that lost an
 instance — and `zone-retired` is the only one that asks a whole zone's copy to be built.
 
+## Every experiment runs under load
+
+**A fault that lands on an idle cluster is not the fault anybody has.** So the harness keeps a
+client on the load balancer for the whole of every experiment — reads as fast as one connection
+answers them, and a write every `CHAOS_LOAD_PAUSE` seconds — and the node that is stopped, cut off,
+slowed or killed is one that was serving when it went.
+
+The two halves are not there for the same reason.
+
+| | Is | And |
+| --- | --- | --- |
+| The **reads** | Of the seeded keys, every one of which exists, so a read that is not answered 2xx is the fault and never the key | Reported per phase and never asserted on. How many reads a fault costs is the load balancer's health check interval as much as it is the database |
+| The **writes** | Keys of their own, each written once and never again | **The assertion no error code can make**: a write answered 2xx was taken by every copy of the key, so every one of them has to still be there when the fault is over |
+
+A `---- while the node was going away: 121 of 190 reads and 24 of 48 writes were answered 2xx` line
+is one phase of one experiment. Every experiment reports at least two: what the load saw while the
+fault stood, and what it saw while the cluster recovered.
+
+`expect_load_kept` is the assertion, and every fault that breaks nothing permanently makes it. The
+three that **terminate instances** call `report_load_kept` instead and print the number: a key whose
+owner in every zone went in the same update went with them, exactly as
+[the seed does](#what-is-measured-and-never-asserted).
+
+### Why the load has a table of its own
+
+It writes into `chaos-load` rather than into the seeded table, and that is not tidiness. A write is
+answered only once every copy has taken it — but a write that is **refused** may still have been
+taken by one of them, because the copies of a write are written beside each other rather than in
+turn. Nothing in the cluster puts the rest of that record back: there is no read repair, no
+anti-entropy, and a reconcile pass moves the records whose owner moved.
+
+So a load running into the seeded table would leave the zones holding different keys, which is
+exactly what [the resizes assert they do not](#the-two-invariants-they-assert). Measured on a two
+zone cluster killed twice over: twenty-seven keys apart, every one of them a write the client was
+told had failed, and no fewer three minutes later. That is
+[a copy that missed a write](../doc/runbook/index.md#what-recovers-by-itself) not recovering by
+itself, which the runbook already says — so it is measured, in the `of N writes that were refused, M
+are readable anyway` line, and the invariants are left asking about a table whose every write was
+acknowledged.
+
+`CHAOS_LOAD=0` turns the whole of it off, which is how an experiment is read against an idle
+cluster.
+
 ## Run it
 
 The stack has to be up, and the suite refuses to start against one that is not already whole —
@@ -99,6 +142,10 @@ chaos/node-stops.sh
 
 `nodes-added` is the longest because nine instances are three launches and a rebuild apiece, and
 there is no way to ask for them sooner.
+
+The [load](#every-experiment-runs-under-load) adds well under a minute to each of them, nearly all
+of it at the end: the writes it made are read back in one curl over one connection rather than a
+request a process, so thousands of keys are seconds rather than the minutes a loop would take.
 
 The three resizes are all waiting: each is two stack updates, and an update that adds instances is
 a launch, a pull and a rebuild before the membership says anything has happened. A replacement is
@@ -382,7 +429,9 @@ because `leads` is a node's own count and the load balancer answers from whichev
 ### What is measured and never asserted
 
 **What a terminated instance took with it.** Every resize prints how many of the seeded keys are
-still held by some node. A key whose owner in *every* zone was terminated in the same update went
+still held by some node, and how many of the writes the load made and the cluster *acknowledged*
+are held by no copy afterwards — the same loss counted over records written while the tier was
+moving rather than before it. A key whose owner in *every* zone was terminated in the same update went
 with them — every copy of it left at once — and no mechanism inside the cluster puts that back:
 there is [no rebuild of a copy](../doc/runbook/storage.md#what-there-is-not) and no backup. Roughly
 one key in eight of a six-to-three shrink is in that position, and the number is the deployment's
@@ -451,6 +500,8 @@ As in [`perf/`](../perf).
 | `CHAOS_RECOVERY` | How long an instance replacement is given | 900 seconds |
 | `CHAOS_ONSET` | How long a started fault is given to bite | 20 seconds |
 | `CHAOS_CONVERGE` | How long a resized cluster is given to move the records whose owner changed | 300 seconds |
+| `CHAOS_LOAD` | 0 for an experiment against an idle cluster | 1 |
+| `CHAOS_LOAD_PAUSE` | Seconds between the load's writes | 0.2 |
 
 Each experiment has one or two of its own — the length of its fault, the size of its latency, the
 time a resized group is given to reach its new shape — named at the top of the script that uses it.
@@ -479,19 +530,28 @@ fault that never landed.
 == A node is stopped
    Reads survive it, writes recover with the membership, the replacement rebuilds.
 
+  Seeded 200 records into chaos.
+  A client is reading chaos and writing chaos-load throughout.
   PASS the stack is running six database nodes
   Stopping i-0a1b2c3d4e5f60718.
   PASS the fault was injected
   PASS the stopped node left the membership and the zone count did not change
-  ---- while the node was going away: 143 of 190 reads answered 2xx
+  ---- while the node was going away: 143 of 190 reads and 24 of 48 writes were answered 2xx
   PASS every read is answered with the node out of the membership
   ...
+  PASS every write the cluster took once the replacement had joined is still there
+  PASS and every one of them reads back what was written
+  ---- of 61 writes that were refused, 9 of the first 61 are readable anyway
 ```
 
 A `PASS`/`FAIL` line is an assertion. A `----` line is something measured and reported and never
 asserted on — the reads a client lost while the load balancer had not yet noticed a dead target
 are the load balancer's health check interval and not the database, and latency here is
 [the same as it is in `perf/`](../perf): reported, never a threshold.
+
+The two lines the [load](#every-experiment-runs-under-load) adds are of both kinds. What it saw in
+a phase is measured; that every write the cluster **acknowledged** is still there is asserted, and
+it is the one claim here that no error code could have made.
 
 A shape the cluster never reached carries one `----` line more: the last few scaling activities of
 both auto scaling groups. **A membership that never arrived and an instance that was never

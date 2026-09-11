@@ -29,6 +29,7 @@ banner "The tier shrinks to three" "One node a zone, each holding the whole of i
 
 setup
 seed
+start_load
 
 resize=${CHAOS_RESIZE:-1200}
 
@@ -82,6 +83,8 @@ printf '  ---- of 60 seeded keys at three nodes: %s are held by no copy\n' "$abs
 # and would be this one hiding it.
 expect_codes '^(2|404)' "a key a shrink took away is refused as not found and not as an error"
 
+load_report "while the tier was three"
+
 fault_stop
 
 await '(.nodes | length) == 6 and (.zones | length) == 3 and ([ .zones[] | length ] | unique) == [2]' \
@@ -99,5 +102,9 @@ expect_writes 20 "every write is taken once the tier is six again"
 expect_round_trip 10 "a key written once the tier is six again reads back what was written"
 
 expect_copies "once the tier is six again"
+
+# Counted and not asserted: half the instances were terminated, so a key both of whose owners went
+# at once is a key no copy has, and nothing in the cluster puts that back.
+report_load_kept "while the tier was three and then six again"
 
 verdict

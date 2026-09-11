@@ -28,6 +28,7 @@ banner "etcd loses quorum" "Every node becomes a cluster of one, and the members
 
 setup
 seed
+start_load
 
 etcd=$(instances etcd | cut -f1)
 count=$(echo "$etcd" | wc -l)
@@ -106,6 +107,8 @@ printf '  ---- %s of 60 reads of seeded records answered something other than 2x
 [ "$missed" -gt 0 ] \
 	&& echo "  ---- an isolated node answering for keys it has never held, as doc/runbook/membership.md describes"
 
+load_report "while etcd had no quorum"
+
 echo "  Waiting for the members to come back."
 
 fault_stop
@@ -119,5 +122,9 @@ await '.leads > 0' "$settle" "every node is leading partitions again"
 
 expect_reads 60 "every read of a seeded record is answered again"
 expect_writes 20 "every write is ordered and taken by every copy again"
+
+# etcd holds the membership and the claims and never a record, so a quorum it lost cost the
+# cluster the ability to order writes and nothing it had already taken.
+expect_load_kept "once quorum was back"
 
 verdict
