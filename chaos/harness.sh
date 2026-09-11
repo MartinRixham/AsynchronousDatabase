@@ -409,7 +409,7 @@ expect_round_trip()
 			*) failed=$((failed + 1)); continue ;;
 		esac
 
-		code=$(read_value "$key")
+		code=$(read_value "$table" "$key")
 		echo "$code" >> "$work/codes"
 
 		case $code in
@@ -425,36 +425,80 @@ expect_round_trip()
 	fi
 }
 
-# read_value <key> — the status, with the body left in $work/value. Everything else here reads a
-# status alone, because every seeded record holds the same value; what a resize needs is which
-# value came back.
+# read_value <table> <key> — the status, with the body left in $work/value. Everything else here
+# reads a status alone, because every seeded record holds the same value; what a resize needs is
+# which value came back. The table is a parameter because the load writes into one of its own, and
+# a key of the load read out of the seeded table is a 404 whatever became of the write.
 read_value()
 {
 	curl --silent --max-time 15 --output "$work/value" --write-out '%{http_code}' \
-		"$base/table/$table/key/$1"
+		"$base/table/$1/key/$2"
 }
 
 # write_seed <value> — the seeded keys again with a value of the suite's own, so that a read after a
-# resize says which copy answered rather than only that one did.
+# resize says which copy answered rather than only that one did. The keys it was refused are left
+# in $work/unwritten, which is what await_seed asks again.
 write_seed()
 {
-	local i failed=0 answer
+	local i
 
 	: > "$work/codes"
 
 	for (( i = 0; i < records; i++ )); do
+		echo "$i"
+	done > "$work/unwritten"
+
+	write_unwritten "$1"
+}
+
+# write_unwritten <value> — the keys in $work/unwritten written with that value, how many of them
+# were refused the answer, and those ones left in the file for the next ask. Every status is
+# appended, so the codes of a retry are the codes of the pass before it as well.
+write_unwritten()
+{
+	local key answer failed=0
+
+	mv "$work/unwritten" "$work/asking"
+	: > "$work/unwritten"
+
+	while read -r key; do
 		answer=$(status --request PUT --data "$1" \
 			--header 'Content-Type: application/octet-stream' \
-			"$base/table/$table/key/$i")
+			"$base/table/$table/key/$key")
 		echo "$answer" >> "$work/codes"
 
 		case $answer in
 			2*) ;;
-			*) failed=$((failed + 1)) ;;
+			*) failed=$((failed + 1)); echo "$key" >> "$work/unwritten" ;;
 		esac
-	done
+	done < "$work/asking"
 
 	echo "$failed"
+}
+
+# await_seed <value> <timeout> <description> — every seeded key holds that value, the ones that were
+# refused asked again until they are taken. It is await_writes for the seed, and for the same
+# reason: a write is ordered by the leader of its partition and a membership change renames that
+# leader without taking any claim away, so a write refused while the claims are still following the
+# membership is a retry rather than a fault. A key left unwritten is worse than a failed assertion
+# here, because it reads back below as a value nothing overwrote.
+await_seed()
+{
+	local deadline=$((SECONDS + $2)) failed
+
+	failed=$(write_seed "$1")
+
+	while [ "$failed" != 0 ] && [ "$SECONDS" -lt "$deadline" ]; do
+		sleep 5
+
+		failed=$(write_unwritten "$1")
+	done
+
+	if [ "$failed" = 0 ]; then
+		result 0 "$3"
+	else
+		result 1 "$3 — $failed of $records were refused: $(codes)"
+	fi
 }
 
 # held <how many keys> <value> — three numbers: how many of those seeded keys answer that value, how
@@ -469,7 +513,7 @@ held()
 
 	for (( i = 0; i < $1; i++ )); do
 		key=$((i % records))
-		code=$(read_value "$key")
+		code=$(read_value "$table" "$key")
 		echo "$code" >> "$work/codes"
 
 		case $code in
@@ -582,10 +626,21 @@ scan_status()
 #   no key is held twice inside a zone    a zone's nodes split the copy it holds, so a key in two
 #                                         of their stores is a node that kept what it stopped owning
 #
-# A thousand is the largest page the API allows, and five of them is more keys than any experiment
-# here writes — the cap is on the Run Commands rather than on the correctness.
+# A thousand is the largest page the API allows. Ten of them is above what the load writes in the
+# longest experiment here — a write every CHAOS_LOAD_PAUSE seconds for as long as two stack updates
+# take — and a walk breaks out at the first page with no cursor, so a table of two hundred seeded
+# records still costs one Run Command a node whatever this is set to.
+#
+# A walk that does reach the cap stops at the same key on every node, because the order is the
+# store's own. So what is compared is a prefix of the table rather than a different part of it on
+# each node: the cap is short coverage and never a false answer.
 holdings_limit=1000
-holdings_pages=5
+holdings_pages=10
+
+# What `aws ssm get-command-invocation` answers with: the first 24,000 characters the command wrote
+# to stdout, and nothing to say the rest was cut. A page of a table is longer than that at a few
+# hundred records, which is what walk_store packs it for.
+ssm_output_limit=24000
 
 holdings_asked=0
 holdings_total=0
@@ -593,11 +648,29 @@ holdings_total=0
 # cluster::forwarded_header in src/cluster/cluster.h.
 forwarded_header=X-Asyncdb-Forwarded
 
-# holdings <instance> — the keys that node holds in its own store, sorted, one per line. Non-zero
+# walk_store <instance> <table> <values> <jq filter> — that node's own store, the filter applied to
+# every record it holds, sorted. A scan carrying the forwarded header is served where it lands, so
+# what comes back is that node's own share and not the merged answer its zone would give. Non-zero
 # when the node could not be asked, which is not the same answer as a node that holds nothing.
-holdings()
+#
+# **The node packs the page and this unpacks it**, because Run Command carries ssm_output_limit
+# characters of what was printed and says nothing about having cut the rest — and a document with
+# no end is not JSON, so a page over that limit reads as a node that said nothing at all. The keys
+# and values of one table compress by better than an order of magnitude, which is what keeps a page
+# one Run Command apiece rather than one per few hundred records: Run Command is seconds a call
+# however small the call is, and every node is asked once a page.
+#
+# `values` is false for a walk that needs the keys alone, and that is the limit rather than the
+# bandwidth: a table whose values are kilobytes is a page that does not fit however few records it
+# carries.
+#
+# A scan names the two halves of a composed key separately, and every caller here takes `.key` for
+# the whole of it, which holds because nothing this suite writes carries a sort key. Give one a sort
+# key and its records collapse onto one name: a key set that is short without saying so, and two
+# values under one name that copies_agree would call a disagreement.
+walk_store()
 {
-	local id=$1 from= url page keys pages=0
+	local id=$1 name=$2 values=$3 filter=$4 from= url packed page keys pages=0
 
 	: > "$work/keys"
 
@@ -605,17 +678,27 @@ holdings()
 		pages=$((pages + 1))
 
 		# Every key this suite writes is unreserved in a URL, so the resume bound is not encoded.
-		url="http://localhost:8080/table/$table/key?limit=$holdings_limit${from:+&from=$from}"
+		url="http://localhost:8080/table/$name/key?limit=$holdings_limit&values=$values${from:+&from=$from}"
 
-		page=$(ssm_run "$id" "curl -s --max-time 30 -H '$forwarded_header: true' '$url'")
+		packed=$(ssm_run "$id" \
+			"curl -s --max-time 30 -H '$forwarded_header: true' '$url' | gzip -c | base64 -w0")
 
-		echo "$page" | jq --exit-status 'has("records")' > /dev/null 2>&1 || return 1
+		page=$(printf '%s' "$packed" | base64 -d 2> /dev/null | gunzip 2> /dev/null)
+
+		if ! echo "$page" | jq --exit-status 'has("records")' > /dev/null 2>&1; then
+			# The one answer here that is not a node refusing to say anything: a page that did
+			# not fit even packed, which is holdings_limit set too high for what it carries.
+			[ "${#packed}" -lt "$ssm_output_limit" ] \
+				|| echo "  ---- $id said more of $name than Run Command carries." >&2
+
+			return 1
+		fi
 
 		keys=$(echo "$page" | jq -r '.records[].key')
 
 		[ -n "$keys" ] || break
 
-		echo "$keys" >> "$work/keys"
+		echo "$page" | jq -r ".records[] | $filter" >> "$work/keys"
 
 		# No cursor is a range that is exhausted. A bound is inclusive, so the next page begins
 		# again with the key it resumed at, which the sort takes back out.
@@ -625,6 +708,12 @@ holdings()
 	done
 
 	sort -u "$work/keys"
+}
+
+# holdings <instance> — the keys that node holds in its own store, sorted, one per line.
+holdings()
+{
+	walk_store "$1" "$table" false '.key'
 }
 
 # collect_holdings — every node asked, into one file each named by the zone it is in. A node that
@@ -747,6 +836,74 @@ expect_copies()
 	printf '  ---- %s of %s seeded keys are held by some node %s\n' "$(seed_held)" "$records" "$1"
 }
 
+# copies_agree <table> <when> — every node asked what it holds of that table in its own store, and
+# no key may be held at two different values.
+#
+# It is the question nothing else here puts. expect_copies compares key *sets*, so two copies of one
+# key holding two values is a pair of zones it calls identical; and every readback of the load goes
+# through the load balancer, which answers from whichever copy has the key, so a copy holding
+# something else is one nothing ever asks. A write the cluster answered 2xx was taken by every copy
+# of the key, and this is the assertion that they took the same thing.
+#
+# A copy that is *missing* a key is not a disagreement and is not counted as one. A zone that is
+# short is what expect_copies and expect_load_kept are for, and a node answering for a key it does
+# not hold would be the fault rather than the answer.
+#
+# **It needs no time to converge**, which is what separates it from expect_copies. Every key this
+# compares is written once and never again, so there is no moment at which two copies legitimately
+# hold two values — one value was ever written, and a second is a cluster that invented it. So a
+# disagreement is permanent by construction and can be asked for the moment the load stops.
+copies_agree()
+{
+	local id disagreed count
+
+	rm -rf "$work/values"
+	mkdir -p "$work/values"
+
+	holdings_asked=0
+	holdings_total=0
+
+	while read -r id _; do
+		holdings_total=$((holdings_total + 1))
+
+		# The value is carried base64, because what a client wrote is bytes of its choosing and what
+		# is compared here is a line: a value holding a space or a newline would otherwise be read
+		# back as a different key or as two records.
+		if walk_store "$id" "$1" true '.key + " " + (.value | @base64)' > "$work/values/$id"; then
+			holdings_asked=$((holdings_asked + 1))
+		fi
+	done < <(instances asyncdb)
+
+	expect "$holdings_asked" "$holdings_total" "every node said what it holds of $1 $2"
+
+	# Every copy every node answered for, and then one line per key and value the cluster holds
+	# anywhere: the copies of a key that agree collapse onto one line, so a key still named twice
+	# after that is one two nodes answered differently for.
+	cat "$work/values"/* 2> /dev/null > "$work/copies"
+	sort -u "$work/copies" > "$work/held"
+
+	disagreed=$(awk '{ print $1 }' "$work/held" | uniq -d)
+	count=$(echo "$disagreed" | grep -c .) || count=0
+
+	# Printed whether it passed or failed, because an agreement over nothing is the answer a walk
+	# that found an empty store on every node would also give.
+	printf '  ---- %s copies of %s keys answered out of their own stores %s\n' \
+		"$(grep -c . "$work/copies")" "$(awk '{ print $1 }' "$work/held" | sort -u | grep -c .)" "$2"
+
+	if [ "$count" = 0 ]; then
+		result 0 "no copy of a key disagrees with another about what is in it $2"
+
+		return 0
+	fi
+
+	result 1 "no copy of a key disagrees with another about what is in it $2 — held at two values: $count"
+
+	echo "$disagreed" | head -3 | while read -r key; do
+		printf '       %s is held as %s\n' "$key" "$(awk -v key="$key" '$1 == key { print $2 }' \
+			"$work/held" | while read -r held; do printf '%s ' "$(echo "$held" | base64 -d)"; done)"
+	done
+}
+
 # ---------------------------------------------------------------------------- the load
 
 # **A fault that lands on an idle cluster is not the fault anybody has.** Every experiment here
@@ -778,9 +935,21 @@ writer=
 
 start_load()
 {
-	local created
+	local dropped created
 
 	[ "${CHAOS_LOAD:-1}" = 0 ] && { echo "CHAOS_LOAD is 0, so nothing is reading or writing."; return 0; }
+
+	# **Dropped and made again, so the table holds this experiment's writes and nothing else.** What
+	# the writes of the experiment before it were worth was asserted while it ran, and a table that
+	# keeps them is one every later copies_agree walks through — a walk that grows with the share
+	# rather than with the experiment, over Run Command, a node at a time. Dropping a table is the
+	# only thing here that erases a record, and 404 is the first experiment of a run finding none.
+	dropped=$(status --request DELETE "$base/table/$load_table")
+
+	case $dropped in
+		204 | 404) ;;
+		*) die "Could not drop $load_table: $dropped." ;;
+	esac
 
 	created=$(status --request PUT --header 'Content-Type: application/json' \
 		--data '{}' "$base/table/$load_table")
@@ -917,7 +1086,7 @@ load_survivors()
 		key=load-$load_stamp-$n
 
 		for attempt in 1 2 3; do
-			code=$(read_value "$key")
+			code=$(read_value "$load_table" "$key")
 
 			case $code in
 				2*) break ;;
@@ -943,9 +1112,16 @@ load_survivors()
 }
 
 # expect_load_kept <description> — the load is stopped, what it last saw is reported, and **every
-# write the cluster acknowledged is still there, holding what was written**. It is the claim the
-# whole load exists to make, and it is an assertion for every fault that breaks nothing
-# permanently.
+# write the cluster acknowledged is still there, holding what was written, and holding it on every
+# copy that has it**. It is the claim the whole load exists to make, and it is an assertion for
+# every fault that breaks nothing permanently.
+#
+# The readback and copies_agree are two halves of one claim and neither is the other. The readback
+# is answered by one copy, so it says a 2xx write survived somewhere; copies_agree asks each node
+# out of its own store, so it says the copies of it survived as one record. A fault that left the
+# copies of an acknowledged write holding two values would pass the first and fail the second, and
+# nothing in the cluster would ever repair it — there is no read repair and no anti-entropy, and a
+# reconcile pass moves the records whose owner moved rather than the ones that disagree.
 expect_load_kept()
 {
 	local taken lost wrong stray
@@ -960,6 +1136,8 @@ expect_load_kept()
 	expect_not "$taken" 0 "the cluster took writes while the fault was standing"
 	expect "$lost" 0 "every write the cluster took $1 is still there"
 	expect "$wrong" 0 "and every one of them reads back what was written"
+
+	copies_agree "$load_table" "$1"
 
 	load_strays "$stray"
 }
@@ -984,6 +1162,11 @@ report_load_kept()
 
 	printf '  ---- of %s writes the cluster took %s, %s are held by no copy afterwards\n' \
 		"$taken" "$1" "$lost"
+
+	# Asserted here as it is in expect_load_kept, and it is no weaker for the instances having gone:
+	# what a terminated instance took with it is a copy that is missing, which this does not count,
+	# and a surviving copy that disagrees is the same fault here as anywhere.
+	copies_agree "$load_table" "$1"
 
 	load_strays "$stray"
 }

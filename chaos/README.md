@@ -55,7 +55,7 @@ The two halves are not there for the same reason.
 | | Is | And |
 | --- | --- | --- |
 | The **reads** | Of the seeded keys, every one of which exists, so a read that is not answered 2xx is the fault and never the key | Reported per phase and never asserted on. How many reads a fault costs is the load balancer's health check interval as much as it is the database |
-| The **writes** | Keys of their own, each written once and never again | **The assertion no error code can make**: a write answered 2xx was taken by every copy of the key, so every one of them has to still be there when the fault is over |
+| The **writes** | Keys of their own, each written once and never again | **The assertion no error code can make**: a write answered 2xx was taken by every copy of the key, so every one of them has to still be there when the fault is over, and every copy of it has to hold the same thing |
 
 A `---- while the node was going away: 121 of 190 reads and 24 of 48 writes were answered 2xx` line
 is one phase of one experiment. Every experiment reports at least two: what the load saw while the
@@ -65,6 +65,34 @@ fault stood, and what it saw while the cluster recovered.
 three that **terminate instances** call `report_load_kept` instead and print the number: a key whose
 owner in every zone went in the same update went with them, exactly as
 [the seed does](#what-is-measured-and-never-asserted).
+
+### Still there, and the same everywhere
+
+Both of those end in `copies_agree`, which asks **each node** what it holds of `chaos-load` in its
+own store and asserts that no key is held at two different values. It is a second question and not
+a restatement of the readback above it:
+
+| | Asks | Sees |
+| --- | --- | --- |
+| The readback | The load balancer | That a 2xx write survived **somewhere**, because a read is answered by whichever copy has the key |
+| `copies_agree` | Every node, over Run Command, with a scan carrying `X-Asyncdb-Forwarded` | That the copies of it survived as **one record** |
+| `expect_copies` | The same walk, of the seeded table | That the zones hold the same **keys** — a key set says nothing about what is in them |
+
+A fault that left the copies of an acknowledged write holding two values passes the readback and
+passes `expect_copies` — the key is there, and every zone names it — and fails `copies_agree` alone.
+That is the whole reason it is a third question: **nothing in the cluster would ever put such a
+record right**, because there is no read repair, no anti-entropy, and a reconcile pass moves the
+records whose owner moved rather than the ones that disagree.
+
+A copy that is **missing** a key is not a disagreement and is not counted as one — that is what the
+readback and `expect_copies` are for, and a zone that is short is a different fault from a zone that
+is wrong. And unlike `expect_copies` it is given no time to converge, because it needs none: every
+key it compares was written once and never again, so there is no moment at which two copies
+legitimately hold two values. One value was ever written, and a second is a cluster that invented
+it. A disagreement here is permanent by construction.
+
+`containers-restart` asks it of the seeded table as well, where the value is the one written before
+the first `kill -9` and never again.
 
 ### Why the load has a table of its own
 
@@ -82,6 +110,11 @@ told had failed, and no fewer three minutes later. That is
 itself, which the runbook already says — so it is measured, in the `of N writes that were refused, M
 are readable anyway` line, and the invariants are left asking about a table whose every write was
 acknowledged.
+
+`start_load` drops `chaos-load` and makes it again, so it holds the writes of the experiment
+running and nothing else. What the writes before them were worth was asserted while that experiment
+ran, and a table that keeps them is one every later `copies_agree` walks through — a walk that grows
+with the share rather than with the experiment, node by node over Run Command.
 
 `CHAOS_LOAD=0` turns the whole of it off, which is how an experiment is read against an idle
 cluster.
@@ -143,9 +176,13 @@ chaos/node-stops.sh
 `nodes-added` is the longest because nine instances are three launches and a rebuild apiece, and
 there is no way to ask for them sooner.
 
-The [load](#every-experiment-runs-under-load) adds well under a minute to each of them, nearly all
-of it at the end: the writes it made are read back in one curl over one connection rather than a
-request a process, so thousands of keys are seconds rather than the minutes a loop would take.
+The [load](#every-experiment-runs-under-load) adds about a minute to each of them, nearly all of it
+at the end. The readback is seconds: the writes it made are asked for in one curl over one
+connection rather than a request a process, so thousands of keys cost what a loop would spend on
+tens. What the minute is instead is
+[`copies_agree`](#still-there-and-the-same-everywhere) — six nodes asked over Run Command, a page
+of a thousand keys at a time, and Run Command is seconds a call however small the call is. It is
+the price of a question the load balancer cannot answer, and it is paid once per experiment.
 
 The three resizes are all waiting: each is two stack updates, and an update that adds instances is
 a launch, a pull and a rebuild before the membership says anything has happened. A replacement is
@@ -408,13 +445,18 @@ nothing clears down.
 and never where. The assertions ask each node what is in its own store, over Run Command, with a
 scan carrying `X-Asyncdb-Forwarded`: a forwarded request is served where it lands, so the answer is
 that node's own share rather than its zone's merged one. It is the request a rebuild makes of each
-node of a zone.
+node of a zone. The node gzips the page before Run Command carries it, because Run Command returns
+the first 24,000 characters of what a command printed and says nothing about having cut the rest —
+which a page of a few hundred records is longer than, and a JSON document with no end reads as a
+node that answered nothing at all.
 
 `nodes-added` makes the second half visible through the API as well. It writes a value of its own
 into every seeded key while the tier is nine wide and reads them back once it is six again, and
 asserts that **none of them answers the older value**: a key handed back to a node that stopped
 owning it either has to be given it again or was never let go, and a stale answer is the second of
-those. The three numbers it prints beside that — fresh, stale, gone — are what the clear down is
+those. That value is written with the patience `await_writes` has, because at nine nodes the claims
+are still following the membership: a key the cluster refused the write for would come back holding
+the older one and read as a clear down that never happened. The three numbers it prints beside that — fresh, stale, gone — are what the clear down is
 worth in a line: before it existed, four keys in sixty came back holding a value that had been
 overwritten while the tier was wider.
 

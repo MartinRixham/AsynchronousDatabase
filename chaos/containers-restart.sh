@@ -100,61 +100,6 @@ done
 echo "never answered again"
 exit 1'
 
-# copies_agree <value> <how many keys> — every node asked what it holds for those keys in its own
-# store, and no two of them may answer differently. It is the question expect_copies cannot put: a
-# key set says which records a zone has and never what is in them, and two copies of one key
-# holding two values is a cluster that is wrong rather than one that is short.
-#
-# A read carrying the forwarded header is answered where it lands, so what comes back is that
-# node's own store rather than the copy its zone would have found. A node that does not hold the
-# key answers 404, which is every node but the three copies of it and is not a disagreement.
-copies_agree()
-{
-	local expected=$1 keys script id key value held=0 differ=0
-
-	keys=$(seq 0 $(( $2 - 1 )) | paste -sd' ')
-
-	script="for key in $keys; do
-	code=\$(curl -s -o /tmp/asyncdb-chaos.value -m 10 -H '$forwarded_header: true' \\
-		-w '%{http_code}' http://localhost:8080/table/$table/key/\$key)
-
-	if [ \"\$code\" = 200 ]; then
-		echo \"\$key \$(cat /tmp/asyncdb-chaos.value)\"
-	else
-		echo \"\$key -\"
-	fi
-done"
-
-	# shellcheck disable=SC2086
-	if ! ssm_all "$script" $ids; then
-		result 1 "every node said what it holds for a key of its own"
-
-		return 1
-	fi
-
-	: > "$work/disagreed"
-
-	for id in $ids; do
-		while read -r key value; do
-			[ "$value" = - ] && continue
-
-			held=$((held + 1))
-
-			[ "$value" = "$expected" ] \
-				|| { differ=$((differ + 1)); printf '%s %s %s\n' "$id" "$key" "$value" >> "$work/disagreed"; }
-		done < "$work/answer.$id"
-	done
-
-	if [ "$differ" = 0 ]; then
-		result 0 "no copy of a key disagrees with another about what is in it"
-	else
-		result 1 "no copy of a key disagrees with another about what is in it — $differ of them do:"
-		sed 's/^/       /' "$work/disagreed" | head -3
-	fi
-
-	printf '  ---- %s copies of %s keys answered out of their own stores\n' "$held" "$2"
-}
-
 # expect_seed_replicated <when> — every seeded record is in every zone's stores, and no key is in
 # two stores of one zone. It is given time the way expect_copies is: a key written to the node
 # standing in for one that was away is one the returning owner has to be handed, and until it is,
@@ -376,7 +321,12 @@ expect "$other" 0 "and none of them came back holding an older value"
 printf '  ---- of 60 seeded records: %s hold the value written before the kills,' "$same"
 printf ' %s an older one, %s no copy answered for\n' "$other" "$gone"
 
-copies_agree "$before" 8
+# Asked of the seeded table as well as of the load, because every key in it is written once too:
+# the seeded records carry the value written above and never another, and the keys the write and
+# round trip checks leave behind carry a stamp of their own apiece. So a node holding something
+# else for one of them is a copy that took a different write and is waiting on no later one. What
+# the value *is* was asserted above; this is that the copies say one thing.
+copies_agree "$table" "once every container had come back"
 
 # Nothing moved, because the membership came back naming the same six addresses and every node
 # owns what it owned. A zone short of a seeded record is a store that did not outlive its

@@ -105,10 +105,18 @@ for joined in $(comm -13 <(echo "$before") <(echo "$after")); do
 done
 
 # Written while the tier is nine wide, so it lands on the owners the wider membership names. What
-# the shrink does to it is the point of the second half.
+# the shrink does to it is the point of the second half, and it is an await rather than one pass of
+# two hundred writes because a key the cluster refused the write for reads back below as a value
+# nothing overwrote — which is the answer the stale assertion gives for a clear down that never had
+# anything to do. The claims follow the membership by being given up and claimed again, so a write
+# ordered by a node the wider membership has just named is refused until that node holds the claim.
+#
+# The codes are printed whether it passed or not, because a write that was only taken on the second
+# ask is a write the cluster did not take at once and nothing else here would say so.
 grown=grown-$RANDOM
 
-expect "$(write_seed "$grown")" 0 "every seeded key takes a write at nine nodes"
+await_seed "$grown" "$settle" "every seeded key takes a write at nine nodes"
+printf '  ---- writes of the seed at nine nodes: %s\n' "$(codes)"
 
 load_report "while the tier was nine"
 
@@ -121,7 +129,8 @@ await '(.nodes | length) == 6 and (.zones | length) == 3 and ([ .zones[] | lengt
 # membership hands back to a node that stopped owning it answers with whatever that node held when
 # it stopped — the seed, and not the write above — so **a stale answer here is a copy that was never
 # cleared down**. There is no third possibility: either the node let the key go and has to be given
-# it again, or it kept it and is a version behind.
+# it again, or it kept it and is a version behind. The write having been taken for every one of
+# these keys is what the assertion above settles, and a key it was refused for would be a third.
 #
 # Gone is not asserted on. A key every zone's terminated instance was the only holder of went with
 # them, and no mechanism in the cluster puts that back — every copy of it left at once.

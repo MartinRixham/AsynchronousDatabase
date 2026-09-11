@@ -204,7 +204,14 @@ fails one.
   `expect_load_kept` is every write the cluster answered 2xx still being there and holding what was
   written, which every fault that breaks nothing permanently has to leave standing. The three that
   terminate instances call `report_load_kept` instead and print what was lost, for the same reason
-  the seed is counted there and not asserted. **The load writes into a table of its own**: a
+  the seed is counted there and not asserted. **Both of them end in `copies_agree`**, which asks
+  each node what it holds of that table in its own store and asserts that no key is held at two
+  different values: the readback goes through the load balancer, so it says a 2xx write survived
+  somewhere and never that the copies of it survived as one record, and `expect_copies` compares
+  key sets, which say nothing about what is in them. A copy that is *missing* a key is not a
+  disagreement and is not counted as one. It is given no time to converge because it needs none —
+  every key it compares is written once and never again, so two copies holding two values is a
+  cluster that invented one, and nothing would ever put it right. **The load writes into a table of its own**: a
   refused write may still have been taken by one copy — the copies of a write are written beside
   each other rather than in turn — and nothing puts the rest of that record back, so a load in the
   seeded table would leave the zones holding different keys, which is what `expect_copies` asserts
