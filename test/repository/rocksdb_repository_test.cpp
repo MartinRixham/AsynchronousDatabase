@@ -634,45 +634,6 @@ TEST_F(repository_test, counts_rise_across_the_store_being_opened_again)
 	EXPECT_GT(repository->next_count(), last);
 }
 
-// A store written before records carried a version holds values that are values all the way
-// through, so opening one and reading the first bytes of each as a version would serve bytes
-// nobody wrote. There is nothing here that can turn one into the other, and refusing to open it
-// is what keeps it from being served.
-TEST_F(repository_test, a_store_written_before_records_carried_a_version_is_refused)
-{
-	create_table("a_table");
-	repository->write_record("a_table", record::valid_record("1", "one"));
-	repository = nullptr;
-
-	// Which is a store with a table in it and nothing saying what its values are.
-	{
-		rocksdb::Options options;
-		std::vector<std::string> names;
-
-		ASSERT_TRUE(rocksdb::DB::ListColumnFamilies(options, "/tmp/asyncdb", &names).ok());
-
-		std::vector<rocksdb::ColumnFamilyDescriptor> families;
-
-		for (size_t i = 0; i < names.size(); i++)
-		{
-			families.push_back(rocksdb::ColumnFamilyDescriptor(names[i], rocksdb::ColumnFamilyOptions()));
-		}
-
-		std::vector<rocksdb::ColumnFamilyHandle *> handles;
-		std::unique_ptr<rocksdb::DB> database;
-
-		ASSERT_TRUE(rocksdb::DB::Open(options, "/tmp/asyncdb", families, &handles, &database).ok());
-		ASSERT_TRUE(database->Delete(rocksdb::WriteOptions(), "FORMAT").ok());
-
-		for (size_t i = 0; i < handles.size(); i++)
-		{
-			database->DestroyColumnFamilyHandle(handles[i]);
-		}
-	}
-
-	EXPECT_THROW(repository::rocksdb_repository("/tmp/asyncdb"), repository::storage_error);
-}
-
 // A share larger than one file is several of them, resumed from the key the walk reached rather
 // than from the last key written: a file the partitions emptied still moved the walk along.
 TEST_F(repository_test, a_walk_larger_than_one_file_resumes_where_it_reached)

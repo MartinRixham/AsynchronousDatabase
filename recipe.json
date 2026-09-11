@@ -3,6 +3,10 @@
 	"compiler": "g++ -O2 -g -Wall -Werror -std=c++20",
 	"packaging": "executable",
 	"modules": [],
+	"test":
+		{
+			"args": "--gtest_color=true"
+		},
 	"dependencies":
 		[
 			{

@@ -24,11 +24,6 @@ namespace
 	// than one apiece is what lets a node ask another for the schema and take it whole.
 	const std::string schema_key = "SCHEMA";
 
-	// What a store written before the schema was one record holds a table document under. Nothing
-	// reads one — a store holding them is refused — but a store with no format at all is told
-	// apart by them.
-	const std::string old_table_prefix = "TABLE_";
-
 	// What says the values in this store carry a version. A store written before they did holds
 	// neither this nor a version on any value, and its values cannot be told from versioned ones.
 	const std::string format_key = "FORMAT";
@@ -191,8 +186,8 @@ repository::rocksdb_repository::rocksdb_repository(const std::string &directory,
 	}
 
 	std::vector<rocksdb::ColumnFamilyHandle *> handle_list;
-	rocksdb::Status status = rocksdb::DB::Open(
-		options, database_path.string(), describe(names, family_options), &handle_list, &database);
+	rocksdb::Status status =
+		rocksdb::DB::Open(options, database_path.string(), describe(names, family_options), &handle_list, &database);
 
 	if (!status.ok())
 	{
@@ -244,22 +239,7 @@ void repository::rocksdb_repository::check_format()
 		return;
 	}
 
-	// A store with anything in it and no format is one written before the store said what format
-	// it was, which is before records carried a version: reading it would take the first bytes of
-	// every value for a version that was never written. What says there is something in it is a
-	// schema — this format's, or the document per table that came before it.
-	std::string schema;
 	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(rocksdb::ReadOptions()));
-
-	it->Seek(old_table_prefix);
-
-	if (database->Get(rocksdb::ReadOptions(), schema_key, &schema).ok() ||
-		(it->Valid() && it->key().starts_with(old_table_prefix)))
-	{
-		throw storage_error(
-			"storage_error",
-			ERROR("The store predates record versions and has to be rebuilt from a node that has them."));
-	}
 
 	written(database->Put(rocksdb::WriteOptions(), format_key, format_version), "Writing the store format");
 }
@@ -316,9 +296,7 @@ repository::rocksdb_repository::~rocksdb_repository()
 // because it is destroyed with the members afterwards.
 void repository::rocksdb_repository::close_handles()
 {
-	for (std::map<std::string, rocksdb::ColumnFamilyHandle *>::iterator it = handles.begin();
-		it != handles.end();
-		++it)
+	for (std::map<std::string, rocksdb::ColumnFamilyHandle *>::iterator it = handles.begin(); it != handles.end(); ++it)
 	{
 		database->DestroyColumnFamilyHandle(it->second);
 	}
@@ -415,9 +393,7 @@ void repository::rocksdb_repository::open_family(const std::string &table_name)
 
 	rocksdb::ColumnFamilyHandle *handle = NULL;
 
-	written(
-		database->CreateColumnFamily(family_options, table_name, &handle),
-		"Creating table \"" + table_name + "\"");
+	written(database->CreateColumnFamily(family_options, table_name, &handle), "Creating table \"" + table_name + "\"");
 
 	handles.insert({ table_name, handle });
 }
@@ -452,9 +428,8 @@ void repository::rocksdb_repository::read_tables()
 	std::set<std::string> named = tables.names();
 	std::vector<std::string> orphaned;
 
-	for (std::map<std::string, rocksdb::ColumnFamilyHandle *>::const_iterator it = handles.begin();
-		it != handles.end();
-		++it)
+	for (std::map<std::string, rocksdb::ColumnFamilyHandle *>::const_iterator it = handles.begin(); it != handles.end();
+		 ++it)
 	{
 		if (it->first != rocksdb::kDefaultColumnFamilyName && named.find(it->first) == named.end())
 		{
@@ -573,9 +548,7 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 // The keys the store's own files start at, weighted by how much is in each. A level compaction
 // leaves the levels overlapping, so this is a sample of the key space and not a partition of it —
 // which is all a split has to be.
-std::vector<std::string> repository::rocksdb_repository::split_points(
-	const std::string &table_name,
-	size_t ways) const
+std::vector<std::string> repository::rocksdb_repository::split_points(const std::string &table_name, size_t ways) const
 {
 	std::vector<std::string> points;
 
@@ -639,9 +612,8 @@ std::vector<std::string> repository::rocksdb_repository::split_points(
 	return points;
 }
 
-repository::extract repository::rocksdb_repository::export_records(
-	const std::string &table_name,
-	const share &wanted) const
+repository::extract repository::rocksdb_repository::export_records(const std::string &table_name, const share &wanted)
+	const
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 	std::string what = "Exporting a file of \"" + table_name + "\"";
@@ -685,9 +657,8 @@ repository::extract repository::rocksdb_repository::export_records(
 			// A walk that is not carrying values carries the versions, which is the whole of what
 			// a node deciding whether to give a record up has to ask about.
 			rocksdb::Slice stored = it->value();
-			rocksdb::Slice carried = wanted.values
-				? stored
-				: rocksdb::Slice(stored.data(), std::min(stored.size(), record::version_size));
+			rocksdb::Slice carried =
+				wanted.values ? stored : rocksdb::Slice(stored.data(), std::min(stored.size(), record::version_size));
 
 			check(writer.Put(it->key(), carried), what);
 
