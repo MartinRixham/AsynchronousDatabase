@@ -93,6 +93,7 @@ await '(.nodes | length) == 6 and (.zones | length) == 3 and ([ .zones[] | lengt
 absent=$(readable 60 3)
 
 printf '  ---- of 60 seeded keys once the tier is six again: %s are held by no copy\n' "$absent"
+expect_codes '^(2|404)' "a key every zone lost is still refused as not found and not as an error"
 
 expect_writes 20 "every write is taken once the tier is six again"
 expect_round_trip 10 "a key written once the tier is six again reads back what was written"
