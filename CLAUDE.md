@@ -259,8 +259,17 @@ peer can reach fails one.
   `chaos/harness.sh` is what sends one kill to every instance at once, because six sends in turn
   are a rolling restart and not this fault.
 - **`write-storm` is the sixth, and the only one that applies two faults at once**: a zone cut off
-  while another zone's containers are killed under it, an instance stopped while a third zone's
-  container is killed, and then every zone's pair of containers killed together, twice round. What
+  while a node of another zone is held out of the membership under it, an instance stopped while a
+  node of the third zone is held out, and then every zone in turn held out whole, twice round.
+  **Every fault in it outlasts the ten second membership lease, and that is the design and not a
+  setting**: a fault shorter than the lease takes no copy out of the write path, because the node
+  is still a member and the write it cannot take is *refused* rather than taken without it — the
+  client retries, the node takes the retry on its way back, and it was never behind. A container
+  kill is that fault, measured at two seconds a time, so what is held here is a node's path to
+  **etcd** (`etcd-unreachable`'s rule and deliberately not `nodes-go-deaf`'s, which leaves the node
+  renewing and stalls the cluster instead): it stops renewing, its peers drop it within a lease,
+  and they go on taking writes its copy will never see. `CHAOS_STORM_HOLD` is how long, six leases
+  by default. What
   makes the overlap assertable is its client, which is not the harness's: **a write is retried until
   the cluster takes it** — the same bytes again, a repair of the first write rather than a second
   value — so every write it issued was acknowledged in the end and the assertions cover all of them
@@ -273,7 +282,11 @@ peer can reach fails one.
   hundred times leaves a lagging copy holding something **different**, which is the other half of
   `import_records`, the `record::is_newer` comparison against what is already under the key. So it
   writes two populations: `hot-` keys over and over, and a `storm-` key once every
-  `CHAOS_STORM_SPREAD` of them. It asserts that no copy of a key disagrees with another and that
+  `CHAOS_STORM_SPREAD` of them. It asserts, **while the fault stands**, that the two sides of it hold different
+  values for those keys — across the cut in round one and across the isolated zone in round three,
+  the precondition observed rather than assumed, because a run where the faults never overlapped
+  the writes would otherwise pass every assertion after it over nothing —
+  and then that no copy of a key disagrees with another and that
   **every hot key holds the value last acknowledged for it**, both given `CHAOS_CONVERGE` — a copy
   that was away is entitled to lag until the reconcile fetch catches it up, so **lagging is allowed
   and staying behind is not**, which is what separates this from `copies_agree`, where every key is
@@ -283,8 +296,8 @@ peer can reach fails one.
   membership lease on top for a cut off node, which answers `/health` as normal until it has decided
   it is unled. That rule is a claim about the database and not about arithmetic because **no fault
   here kills two zones at once**: a key's copies are one node per zone, so a zone with both its
-  nodes serving holds a copy of every key. `container_kill_script` and `kill_containers` in
-  `chaos/harness.sh` are the kill it shares with `containers-restart`.
+  nodes serving holds a copy of every key. `blackhole` and `blackhole_clear` in `chaos/harness.sh` are the rule, the
+  same pair `nodes-go-deaf` and `etcd-unreachable` install.
 - **Three of the twelve inject with a stack update**, because the shape of the database tier is two
   parameters of `cloudformation.yaml` and nothing else: `Zones` is how many copies of the keyspace
   there are — a zone holds exactly one — and `Nodes` is how many ways a zone splits the copy it

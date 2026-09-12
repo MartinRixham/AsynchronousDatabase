@@ -314,7 +314,7 @@ than a category, and the fifth is one experiment that does not fit in any of the
 | `asyncdb-two` | `etcd-unreachable`, `nodes-added` | 23 min |
 | `asyncdb-three` | `node-stops`, `nodes-removed`, `zone-retired` | 23 min |
 | `asyncdb-four` | `nodes-go-deaf`, `node-latency`, `disk-fills`, `etcd-quorum-lost` | 23 min |
-| `asyncdb-five` | `write-storm` | 38 min |
+| `asyncdb-five` | `write-storm` | 40 min |
 
 The suites are a lump of their own — about four minutes — so the share carrying
 them carries `containers-restart` and the shortest of the faults beside it, and
@@ -350,14 +350,16 @@ against twenty-three for four. Four is the last one that takes more off the cloc
 than it costs to stand up.
 
 **`asyncdb-five` is not that argument.** It exists because `write-storm` is near
-thirty minutes and indivisible: eight faults in three rounds, one of them an
-instance the auto scaling group has to replace, and two walks of every node's own
-store afterwards. Put on any of the four it would make that share thirty-eight
-minutes and leave the other three idle for fifteen; on a stack of its own it costs
-the same wall clock and gives the other four back. So the fifth stack is not
-bought by shortening a share — it is bought by an experiment that is longer than
-one. **The run's wall clock is now that share: about thirty-eight minutes**, where
-four shares of the rest finish around twenty-three.
+forty minutes and indivisible: eight faults in three rounds, every one of them
+**held** past the ten second membership lease because a fault shorter than that
+takes no copy out of the write path at all, one an instance the auto scaling group
+has to replace, and walks of every node's own store during the faults as well as
+after them. Put on any of the four it would make that share forty minutes and leave
+the other three idle for seventeen; on a stack of its own it costs the same wall
+clock and gives the other four back. So the fifth stack is not bought by shortening
+a share — it is bought by an experiment that is longer than one. **The run's wall
+clock is now that share: about forty minutes**, where four shares of the rest
+finish around twenty-three.
 
 **It is also what takes the run past the default VPC quota.** Five VPCs at once
 against a default of five to a region leaves no room for the default VPC, where

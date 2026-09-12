@@ -3,16 +3,25 @@
 # Faults that overlap, under a client that never gives up on a write.
 #
 #   doc/runbook/index.md#what-recovers-by-itself
-#   doc/runbook/nodes.md#the-container-has-stopped
-#   doc/runbook/nodes.md#an-instance-was-replaced
+#   doc/runbook/membership.md#etcd-cannot-be-reached
 #   doc/runbook/membership.md#the-membership-is-wrong
+#   doc/runbook/nodes.md#an-instance-was-replaced
 #   doc/runbook/rebuild.md#when-ownership-moves
 #
 # Every other experiment here applies one fault and asks what it cost. This one applies them on
-# top of each other — a zone cut off while another zone's containers are killed under it, an
-# instance stopped while a third zone's container is killed, and then every zone's pair of
-# containers killed at once in turn, twice through — and asks the question none of them asks:
-# **whether a cluster that was never left alone can be driven back into agreeing with itself.**
+# top of each other — a zone cut off while a node of another zone is held out of the membership
+# under it, an instance stopped while a node of the third zone is held out, and then every zone in
+# turn held out whole, twice through — and asks the question none of them asks: **whether a
+# cluster that was never left alone can be driven back into agreeing with itself.**
+#
+# **Every fault here outlasts the membership lease, and that is not a detail.** A fault shorter
+# than the lease takes no copy out of the write path: the node is still a member, so the writes it
+# cannot take are *refused* rather than taken without it, the client retries them, and the node
+# takes the retry on its way back — it is never behind. That is what a container kill is, measured:
+# thirteen of them on the first run of this experiment, every one `answering again after 2s`
+# against a ten second lease, and not one lagging copy in the whole storm. So what is held here is
+# a node's path to **etcd**: it stops renewing, its peers drop it within a lease, and they go on
+# taking writes its copy will never see until it is let back in.
 #
 # What makes that question answerable is the client, and it is written the way it is for one
 # reason. A write is **retried until the cluster takes it**, however long that is and however many
@@ -42,6 +51,10 @@
 #   every hot key holds the value last acknowledged for it     no copy stayed behind
 #   every zone holds every one of those keys, one node apiece  no copy is missing one
 #
+# And the fault having made a lagging copy at all is asserted **while it stands**, in round one
+# across the cut and in round three across the zone that is out of the membership — because an
+# assertion about a state that never arose is how a green run means nothing.
+#
 # The third and fourth are the ones the faults are chosen for, and the fourth is the sharper: a
 # copy holding an **older** value is what a fault can actually make, and what has to take it away
 # is `record::is_newer`. Both are given CHAOS_CONVERGE, because a copy that was away is entitled to
@@ -70,8 +83,9 @@
 #   CHAOS_STORM_PAUSE   seconds between the client's writes                     0.5
 #   CHAOS_STORM_RETRY   seconds between the retries of a refused write          2
 #   CHAOS_STORM_GRACE   the window the load balancer's own health check owns    25 seconds
-#   CHAOS_STORM_ROLLS   times round the zones killing both containers of one    2
-#   CHAOS_STORM_SETTLE  seconds between one kill and the next                   20
+#   CHAOS_STORM_HOLD    seconds a node is held out of the membership            60
+#   CHAOS_STORM_ROLLS   times round the zones taking etcd from a whole one      2
+#   CHAOS_STORM_SETTLE  seconds between one isolation and the next              20
 
 source "$(dirname "$0")/harness.sh"
 
@@ -119,6 +133,13 @@ grace=${CHAOS_STORM_GRACE:-25}
 
 rolls=${CHAOS_STORM_ROLLS:-2}
 between=${CHAOS_STORM_SETTLE:-20}
+
+# **How long a node is held out of the membership, and it is the number that makes or breaks this
+# experiment.** A node is dropped by its peers when its lease runs out, so anything at or below the
+# ten seconds is a fault that never takes a copy out of the write path at all; what matters after
+# that is how many writes the cluster takes while it is gone, because that is how far behind its
+# copy falls. Six leases at a write every CHAOS_STORM_PAUSE is a copy behind by a hundred or so.
+hold=${CHAOS_STORM_HOLD:-60}
 
 # ---------------------------------------------------------------------------- the client
 
@@ -361,7 +382,10 @@ storm_report()
 	storm_reads=$((storm_reads + reads))
 	storm_answered=$((storm_answered + answered))
 
-	lines=$(grep -c . "$work/taken") || lines=0
+	# Both populations, because the refusals below count both: a phase line saying six writes were
+	# taken and eleven refused is one counting a tenth of what was written against all of what was
+	# refused, which reads as a cluster refusing more than it took.
+	lines=$(( $(grep -c . "$work/hot") + $(grep -c . "$work/taken") ))
 	writes=$((lines - storm_mark))
 	storm_mark=$lines
 
@@ -527,6 +551,7 @@ expect_storm_kept()
 expect_hot_settled()
 {
 	local deadline=$((SECONDS + converge)) id key expected disagreed count wrong values
+	local started=$SECONDS behind= caught=0
 
 	while :; do
 		rm -rf "$work/values"
@@ -574,6 +599,15 @@ expect_hot_settled()
 
 		wrong=$(grep -c . "$work/hot.wrong") || wrong=0
 
+		# **What the first walk found is the evidence that anything was under test.** The whole
+		# experiment rests on a fault having left a copy holding an older value, and a run where
+		# the very first walk finds every copy already in agreement is one where the faults never
+		# produced that — so the repair this asserts on was never asked to do anything. It is a
+		# measurement taken once and then asserted on below, and not a reason to go round again.
+		if [ -z "$behind" ]; then
+			behind=$((count + wrong))
+		fi
+
 		[ "$count" != 0 ] || [ "$wrong" != 0 ] || break
 		[ "$holdings_asked" = "$holdings_total" ] || break
 		[ "$SECONDS" -lt "$deadline" ] || break
@@ -581,7 +615,25 @@ expect_hot_settled()
 		sleep 15
 	done
 
+	caught=$((SECONDS - started))
+
 	expect "$holdings_asked" "$holdings_total" "every node said what it holds of $load_table $1"
+
+	# **An assertion over nothing is the one way this passes without testing anything**, and there
+	# are two of them. The first is an empty set of keys: a client that never got a write taken
+	# leaves nothing to compare, and the loop above would walk every store and find no fault in
+	# any of it.
+	expect_not "$(grep -c . "$work/hot.expected")" 0 \
+		"the client got writes taken for the keys it wrote over and over"
+
+	# What the first walk found, **reported and not asserted on**. It is tempting to fail a run in
+	# which no copy was behind here — a repair that repaired nothing asserted nothing — but this
+	# walk happens after the recovery waits, which are minutes, and a reconcile that finished
+	# inside them is the mechanism working rather than a fault that never landed. The assertion
+	# that the fault made a stale copy at all is made **while the fault stands**, where it can
+	# only mean the one thing: `the cut off zone is holding older values` in round one.
+	printf '  ---- %s of %s keys were behind or disagreed on the first walk, settled in %ss\n' \
+		"${behind:-0}" "$(grep -c . "$work/hot.expected")" "$caught"
 
 	# Printed whether it passed or failed, because an agreement over nothing is the answer a walk
 	# that found an empty store on every node would also give.
@@ -680,11 +732,59 @@ expect_storm_replicated()
 	fi
 }
 
+# storm_lagging <a zone> <another zone> — how many hot keys those two zones hold at **different**
+# values in their own stores. It is asked while one of them is out of the write path, and it is the
+# one observation that says the experiment is testing anything at all: the repair asserted on
+# afterwards is the repair of exactly this, and a run where this is zero is a run where the faults
+# never overlapped the writes and every assertion after it passes over nothing.
+#
+# **It compares zones and not nodes, because a node is not a copy.** A zone holds a copy of the
+# whole keyspace and its two nodes split it, and the split is hashed inside each zone — so two
+# nodes picked out of two zones can hold disjoint halves and agree about nothing by holding nothing
+# in common. Both nodes of each zone are walked and the answers put together, which is the copy.
+#
+# Non-zero here is not a failure. It is the state the design says being out of the membership
+# leaves behind — a copy that missed the writes taken while it was gone — and what is under test is
+# that it does not survive the zone coming back.
+storm_lagging()
+{
+	local one=$1 other=$2 id
+
+	: > "$work/lag.one"
+	: > "$work/lag.other"
+
+	for id in $(zone_nodes "$one"); do
+		walk_store "$id" "$load_table" true '.key + " " + (.value | @base64)' \
+			> "$work/lag.node" || return 1
+
+		grep '^hot-' "$work/lag.node" >> "$work/lag.one"
+	done
+
+	for id in $(zone_nodes "$other"); do
+		walk_store "$id" "$load_table" true '.key + " " + (.value | @base64)' \
+			> "$work/lag.node" || return 1
+
+		grep '^hot-' "$work/lag.node" >> "$work/lag.other"
+	done
+
+	# join needs both sides ordered on the key, and a zone holds one value a key.
+	sort -o "$work/lag.one" "$work/lag.one"
+	sort -o "$work/lag.other" "$work/lag.other"
+
+	join -j 1 -o 0,1.2,2.2 "$work/lag.one" "$work/lag.other" | awk '$2 != $3' | grep -c .
+}
+
 # ---------------------------------------------------------------------------- the targets
 
 zone_nodes()
 {
 	instances asyncdb | awk -v z="$1" '$2 == z { print $1 }'
+}
+
+# Any zone but that one, which is what a zone that is out of the membership is measured against.
+other_zone()
+{
+	instances asyncdb | awk -v z="$1" '$2 != z { print $2; exit }'
 }
 
 mapfile -t zones < <(instances asyncdb | awk '{ print $2 }' | sort -u)
@@ -707,29 +807,63 @@ third_zone=${zones[2]}
 cut_subnet=$(instances asyncdb | awk -v z="$cut_zone" '$2 == z { print $3; exit }')
 victim=$(zone_nodes "$kill_zone" | head -1)
 
+# The cut off side stays reachable over Run Command, which is what lets it be asked what it holds
+# while it is cut: the acl is between zones and leaves IPv6 alone, and that is how Systems Manager
+# still answers there.
+
 echo "  $cut_zone is the zone that is cut off, $kill_zone is where the containers are killed,"
 echo "  and $victim is the instance that is stopped."
 
-# storm_kill <what> <instance>... — one kill, the window it opens, and what each node said. **A
-# kill that could not be sent is a failed assertion and not the end of the storm**: an experiment
-# this long that abandoned twenty minutes of faults over one Run Command would report nothing about
-# any of them, and every round after this one is still worth applying. The window opens either way,
-# because a kill that half landed still took nodes down.
-storm_kill()
+# The rule that takes a node out of the membership, and it is etcd-unreachable's and not
+# nodes-go-deaf's. **The difference is the whole reason this experiment changed.** A rule on what
+# *arrives* for port 8080 leaves the node renewing its lease, so it stays in the membership and
+# refuses every write that needs it — which is a cluster that stalls, and a copy that is never
+# behind. A rule on what the container *sends* to etcd stops the renewal: the node leaves the
+# membership within a lease, the other zones go on taking writes without it, and its copy falls
+# behind by every one of them. That is the state this experiment exists to repair.
+#
+# Nothing else on a database node is forwarded to 2379, so the port alone names etcd.
+deaf_match="-p tcp --dport 2379"
+deaf=()
+
+# storm_isolate <what> <instance>... — those nodes lose etcd, and are **held** that way.
+#
+# A kill is not this fault and cannot be made into it: a container is back inside two seconds,
+# which is well inside the ten second lease, so the node never leaves the membership at all — the
+# writes it missed are refused rather than taken, the client retries them, and the node takes the
+# retry on its way back. Measured on the first run of this experiment: thirteen kills, every one
+# of them `answering again after 2s`, and not one lagging copy in the whole storm.
+storm_isolate()
 {
-	local what=$1 from=$EPOCHSECONDS node
+	local what=$1 from=$EPOCHSECONDS
 	shift
 
-	if ! kill_containers "$@"; then
-		result 1 "the kill of $what reached every node it was sent to"
+	deaf=("$@")
+
+	# The seconds here are the ceiling the script on the instance sleeps for, and nothing else:
+	# what ends this fault is storm_rejoin, as soon as the round is done with it. It is generous
+	# because a fault that expired mid-round would be a false pass rather than a weaker test.
+	if ! blackhole "$((hold + 300))" "$deaf_match" "$@"; then
+		result 1 "$what lost etcd"
+		deaf=()
+
+		return 1
 	fi
 
-	storm_excuse "$from" "$grace" "$what"
+	storm_excuse "$from" "$((grace + lease))" "$what"
 
-	for node in "$@"; do
-		printf '  ---- %s: %s\n' "$node" \
-			"$(tr '\n' ' ' < "$work/answer.$node" 2> /dev/null || echo 'said nothing')"
-	done
+	printf '  ---- %s, and it is held for %ss, which is %s leases\n' "$what" "$hold" "$((hold / lease))"
+}
+
+# storm_rejoin — the rule taken away, and the nodes let back in holding a store that is behind by
+# every write the cluster took while they were out of it.
+storm_rejoin()
+{
+	[ "${#deaf[@]}" != 0 ] || return 0
+
+	blackhole_clear "$deaf_match" "${deaf[@]}"
+
+	deaf=()
 }
 
 # ---------------------------------------------------------------------------- the fault
@@ -740,14 +874,14 @@ storm_kill()
 # on a cluster that is short of something else.
 inject()
 {
-	local from node roll zone pair
+	local from node roll zone pair lagging
 
 	# ---- One. A zone cut off, and the containers of another zone killed under it, one node at a
 	# time so that the zone never loses both copies it holds at once. The cut zone falls out of
 	# the membership on its lease, so the writes the client is retrying are taken by two zones —
 	# and the cut zone is holding a store that is missing every one of them by the time it is let
 	# back in.
-	echo "  Round one: cutting off $cut_zone, then killing the containers in $kill_zone under it."
+	echo "  Round one: cutting off $cut_zone, then taking etcd from $kill_zone's nodes under it."
 
 	from=$EPOCHSECONDS
 
@@ -760,12 +894,33 @@ inject()
 	sleep "$onset"
 
 	for node in $(zone_nodes "$kill_zone"); do
-		storm_kill "a container in $kill_zone" "$node"
+		storm_isolate "a node in $kill_zone lost etcd" "$node" && sleep "$hold"
+
+		storm_rejoin
 
 		sleep "$between"
 	done
 
-	storm_report "while $cut_zone was cut off and $kill_zone was being killed under it"
+	storm_report "while $cut_zone was cut off and $kill_zone was losing etcd under it"
+
+	# **The precondition, observed rather than assumed.** The client has been writing new values to
+	# the hot keys throughout, and the cut zone can take none of them: it can reach no etcd, so it
+	# leaves the membership on its lease, and a write needs every copy of the membership it is
+	# ordered against — which is now the two zones that are left. So the isolated side is holding
+	# the values it had when it went, and the majority side is holding the ones since. If that is
+	# not true here, the faults never overlapped the writes and every assertion after this one
+	# passes over nothing.
+	lagging=$(storm_lagging "$cut_zone" "$third_zone") || lagging=
+
+	if [ -z "$lagging" ]; then
+		result 1 "the two sides of the cut said what they hold"
+	else
+		expect_not "$lagging" 0 \
+			"the cut off zone is holding older values than the zones still taking writes"
+
+		printf '  ---- %s of the %s keys written over and over differ across the cut\n' \
+			"$lagging" "$hot_keys"
+	fi
 
 	zone_heal
 
@@ -779,7 +934,7 @@ inject()
 	# replacement, an empty store and a rebuild — and a container killed in the third zone while
 	# that is happening. The zone that was cut off in round one is whole here and answers the
 	# reads.
-	echo "  Round two: stopping $victim, and killing a container in $third_zone while it goes."
+	echo "  Round two: stopping $victim, and taking etcd from a node of $third_zone while it goes."
 
 	from=$EPOCHSECONDS
 
@@ -789,9 +944,12 @@ inject()
 
 	sleep "$onset"
 
-	storm_kill "a container in $third_zone" "$(zone_nodes "$third_zone" | head -1)"
+	storm_isolate "a node in $third_zone lost etcd" "$(zone_nodes "$third_zone" | head -1)" \
+		&& sleep "$hold"
 
-	storm_report "while $victim was being replaced and $third_zone was being killed"
+	storm_rejoin
+
+	storm_report "while $victim was being replaced and $third_zone was losing etcd"
 
 	echo "  Waiting for the group to replace $victim."
 
@@ -811,20 +969,48 @@ inject()
 
 			[ "${#pair[@]}" -gt 0 ] || continue
 
-			echo "  Round three, pass $roll of $rolls: killing every container in $zone."
+			echo "  Round three, pass $roll of $rolls: taking etcd from every node in $zone."
 
-			storm_kill "every container in $zone" "${pair[@]}"
+			if storm_isolate "every node in $zone lost etcd" "${pair[@]}"; then
+				sleep "$hold"
+
+				# Asked on the first pass alone. It is four walks of a store over Run Command,
+				# which is a minute, and what it establishes — that this fault takes this zone's
+				# copy out of the write path — is the same answer every pass round.
+				[ "$roll" = 1 ] || { storm_rejoin; sleep "$between"; continue; }
+
+				# **A whole zone out of the membership is a whole copy of the keyspace going
+				# behind**, and this is where that is checked rather than assumed: a node of the
+				# zone that is out against a node of one that is not, while it is still out. The
+				# isolated nodes are reachable over Run Command throughout — the rule names one
+				# port and Systems Manager is not on it.
+				lagging=$(storm_lagging "$zone" "$(other_zone "$zone")") || lagging=
+
+				if [ -z "$lagging" ]; then
+					result 1 "both sides said what they hold while $zone was out of the membership"
+				else
+					expect_not "$lagging" 0 \
+						"$zone fell behind the zones still taking writes while it was out"
+
+					printf '  ---- %s of the %s keys written over and over differ across it\n' \
+						"$lagging" "$hot_keys"
+				fi
+			fi
+
+			storm_rejoin
 
 			sleep "$between"
 		done
 
-		storm_report "while every zone was killed in turn, pass $roll"
+		storm_report "while every zone lost etcd in turn, pass $roll"
 	done
 }
 
-# Every round takes its own fault away as it ends, so this is the run that died holding one. The
-# acl is the only one of the three that stands by itself; a stopped instance the group has not
-# replaced is started, and a container the restart policy did not bring back is started too.
+# Every round takes its own fault away as it ends, so this is the run that died holding one. **The
+# rule is cleared from every node and not only from the ones this run recorded**: a run that died
+# between installing one and writing down where is a run whose record is short, and a node left
+# unable to reach etcd is a node out of the membership for good. Deleting a rule that is not there
+# is nothing, which is what makes it safe from a heal that runs twice.
 heal()
 {
 	local stopped ids
@@ -839,25 +1025,23 @@ heal()
 	ids=$(instances asyncdb | cut -f1)
 
 	# shellcheck disable=SC2086
-	[ -n "$ids" ] && container_start $ids
+	[ -n "$ids" ] && blackhole_clear "$deaf_match" $ids
+
+	deaf=()
 
 	return 0
 }
 
 preflight()
 {
-	local answered
-
 	may_write_acls
 	may_stop "$victim"
 
+	# Run Command is how the rule gets onto an instance, and it is also how both sides of a cut
+	# are asked what they hold — so an agent that does not answer takes the assertions with it as
+	# well as the fault.
 	# shellcheck disable=SC2086
 	may_run $all_ids
-
-	answered=$(ssm_run "$(echo "$all_ids" | head -1)" \
-		"docker ps --format '{{.Image}}' | grep -c asyncdb")
-
-	expect "${answered:-0}" 1 "one container of the asyncdb image is running on the first node"
 }
 
 # The client is started after the preflight, because a validating run applies nothing and has

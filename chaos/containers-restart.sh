@@ -67,8 +67,7 @@ stamp=$RANDOM
 before=before-$stamp
 
 # The kill, and what the container is, are `container_kill_script` and `chaos_container` in
-# chaos/harness.sh: write-storm kills containers too, and a second copy of a fault is a second
-# fault to keep true.
+# chaos/harness.sh, where every fault's mechanics live.
 container=$chaos_container
 
 # expect_seed_replicated <when> — every seeded record is in every zone's stores, and no key is in

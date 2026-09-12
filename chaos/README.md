@@ -19,7 +19,7 @@ broke came back, and an assertion that did not hold is a non-zero exit — which
 | `node-latency` | [A node that is up but wrong](../doc/runbook/nodes.md), [threads are all waiting](../doc/runbook/nodes.md) | A `netem` qdisc delaying everything the host sends into the VPC |
 | `disk-fills` | [RocksDB returned an error](../doc/runbook/storage.md), [the disk is filling](../doc/runbook/storage.md) | `fallocate` over what is left of the root volume |
 | `containers-restart` | [The container has stopped](../doc/runbook/nodes.md), [what recovers by itself](../doc/runbook/index.md) | `SIGKILL` to every container's own process at once, three times over |
-| `write-storm` | [What recovers by itself](../doc/runbook/index.md), [the membership is wrong](../doc/runbook/membership.md), [when ownership moves](../doc/runbook/rebuild.md) | All three of those **two at a time**, under a client that retries a refused write until it is taken |
+| `write-storm` | [etcd cannot be reached](../doc/runbook/membership.md), [the membership is wrong](../doc/runbook/membership.md), [when ownership moves](../doc/runbook/rebuild.md) | A zone cut off, an instance stopped and nodes **held out of the membership**, two at a time, under a client that retries a refused write until it is taken |
 | `nodes-added` | [Growing a cluster](../doc/runbook/storage.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update taking the tier to **nine** instances, and back to six |
 | `nodes-removed` | [No rebalancing](../doc/runbook/storage.md) | A stack update taking the tier to **three** instances, and back to six |
 | `zone-retired` | [Fewer zones than the deployment has](../doc/runbook/membership.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update giving the group **two** subnets instead of three, and `ec2:StopInstances` on what is left in the third |
@@ -180,7 +180,7 @@ where it says otherwise:
 
 | | |
 | --- | --- |
-| `write-storm` | eight faults in three rounds, one of them an instance replacement, and two walks of every node's store afterwards — **not yet measured against a deployed stack**, and near thirty minutes by the timings around it |
+| `write-storm` | eight faults in three rounds, each held for `CHAOS_STORM_HOLD` past the membership lease, one of them an instance replacement, and store walks during the fault as well as after it — **measured at 30 min in its first form**, and near forty now that every fault is held rather than a kill that was over in two seconds |
 | `nodes-added` | 9.5 min |
 | `zone-retired` | 6 min |
 | `nodes-removed` | 5 min |
@@ -218,7 +218,7 @@ to itself by design. Standing a cluster up and tearing it down is eight minutes 
 then runs, so the other eleven are spread to land four shares within a minute or two of each other
 — and `write-storm` has a stack to itself, because it is longer on its own than any share of the
 rest and there is nothing to balance it against. **It is what the run now waits for**: four shares
-finish around twenty-three minutes and the fifth around thirty-eight.
+finish around twenty-three minutes and the fifth around forty.
 
 They also cost money for as long as they run: `nodes-added` is nine database instances rather than
 six for the length of it. Nothing is left behind — every one of them puts the shape back, and the
@@ -352,9 +352,8 @@ single hop is a refused write, where the delay on its own is only a slow one.
 
 `containers-restart` sends no rule anywhere. What it runs on each instance is `kill -9` on the
 container's own init, found through `docker inspect`, and then a wait for that node's API port to
-answer again. `container_kill_script` in [`harness.sh`](harness.sh) is that script, and it is there
-rather than in the experiment because `write-storm` kills containers too: a second copy of a fault
-is a second fault to keep true. Neither half of it is incidental:
+answer again. `container_kill_script` in [`harness.sh`](harness.sh) is that script, where every fault's
+mechanics live. Neither half of it is incidental:
 
 - **From the host, because a container cannot kill itself.** The kernel drops a signal a PID
   namespace sends its own init unless the init handles it, so a `kill -9 1` over `docker exec`
@@ -370,8 +369,8 @@ is a second fault to keep true. Neither half of it is incidental:
   store and joined the cluster, so a round that waits for an answer is a round whose next kill
   lands on a node that was serving rather than on one that was still starting.
 
-The kills of one round go out in **one** Run Command rather than six — `kill_containers`, which is
-also how `write-storm` takes a whole zone down at once — because sends in turn are kills a wait apart — a rolling restart, which is a fault the cluster is built to ride out
+The kills of one round go out in **one** Run Command rather than six — `kill_containers` in
+[`harness.sh`](harness.sh) — because sends in turn are kills a wait apart — a rolling restart, which is a fault the cluster is built to ride out
 one node at a time and not the one this asserts on. `ssm_all` in [`harness.sh`](harness.sh) is
 that send, and it is every instance or none: Systems Manager refuses a batch naming an instance it
 does not know, and a kill that quietly skipped a node would be a weaker fault reported as the
@@ -417,10 +416,33 @@ twice could read back either value with nothing wrong, and then the check would 
 ### The one that applies faults on top of each other
 
 Every other experiment here applies one fault and asks what it cost. `write-storm` applies them in
-pairs — a zone cut off while the containers of another zone are killed under it, an instance
-stopped while a third zone's container is killed, and then every zone's pair of containers killed
-at once, twice round — and asks the question that needs them overlapping: **whether a cluster that
-is never left alone can be driven back into agreeing with itself.**
+pairs — a zone cut off while a node of another zone is held out of the membership under it, an
+instance stopped while a node of the third zone is held out, and then every zone in turn held out
+whole, twice round — and asks the question that needs them overlapping: **whether a cluster that is
+never left alone can be driven back into agreeing with itself.**
+
+#### A fault has to outlast the lease
+
+The faults are what they are because of one number. A node is dropped by its peers when its ten
+second membership lease runs out, and **a fault shorter than that takes no copy out of the write
+path at all**: the node is still a member, so a write that needs it is *refused* rather than taken
+without it, the client retries, and the node takes the retry on its way back. It is never behind,
+and there is nothing for the repair to repair.
+
+That is exactly what a container kill is. Measured, on the first run of this experiment: thirteen
+kills, every one of them `answering again after 2s` against a ten second lease, and not a single
+lagging copy in the whole storm — twenty green checks over a fault that never once created the
+state they were asserting about. So what is held here instead is a node's path to **etcd**, which
+is [`etcd-unreachable`](#the-faults-that-go-in-through-ssm)'s rule and deliberately not
+`nodes-go-deaf`'s:
+
+| The rule | The node | Its copy |
+| --- | --- | --- |
+| On what **arrives** for 8080 (`nodes-go-deaf`) | Goes on renewing its lease, so it stays in the membership and refuses every write that needs it | Never behind. The cluster stalls instead |
+| On what the container **sends** to 2379 (`write-storm`) | Stops renewing, so its peers drop it within a lease and go on taking writes without it | Behind by every write taken while it was out |
+
+`CHAOS_STORM_HOLD` is how long it is held — six leases by default, which at a write every
+`CHAOS_STORM_PAUSE` is a copy a hundred or so writes behind by the time it is let back in.
 
 What makes that question answerable is the client, and it is not the harness's. A write here is
 **retried until the cluster takes it**, however long that takes and however many times it is
@@ -460,10 +482,22 @@ So it asserts five things, in the order of what losing them would mean:
 | No read failed | A key with no copy answering for it. Every fault here leaves at least one whole zone serving, and a zone with both its nodes up holds a copy of every key |
 | Every write the client issued is there, holding what was written | A retry that never arrived, or a 2xx that was not durable |
 | No copy of a key disagrees with another about what is in it | Divergence — two live values for one key, which only a key written more than once can have |
+| The cut off zone is holding **older** values than the zones still taking writes | The experiment testing nothing. It is asserted in round one **while the cut stands**, and it is the only place it can be: the repair asserted on afterwards is the repair of exactly this, so a run where the two sides never diverged is one where every assertion after it passes over nothing |
 | Every hot key holds the value the cluster **last acknowledged** for it | A copy that stayed behind. It is the sharper of the two: a copy holding an older value is what a fault can actually make, where two copies holding two values needs one of them to be wrong about which write was last |
 | Every zone holds every one of those keys, one node of it apiece | A copy that is missing one. A zone that was cut off missed every write taken while it was gone, and what fetches them is the [reconcile pass](../doc/runbook/rebuild.md#when-ownership-moves) its rejoining starts |
 
-**The third and fourth are given `CHAOS_CONVERGE`, and that is the one place this differs from
+**A green run has to have been a run that broke something**, and a suite of assertions about a
+state that never arose is the way that goes wrong quietly. So the divergence is observed before it
+is repaired, twice: while the zone is cut, and again while a whole zone is out of the membership in
+round three. A node either side is asked what it holds of the hot keys in its own store, and the
+two have to differ. The isolated side can be asked because the
+acl is between zones and leaves IPv6 alone, which is how Systems Manager still reaches it. The same
+number after the storm has to be zero, and **the two together are the claim** — a fault that made a
+stale copy, and a cluster that took it away. How many were behind by the time the walk afterwards
+runs is printed and not asserted: the recovery waits are minutes, and a reconcile that finished
+inside them is the mechanism working rather than a fault that never landed.
+
+**The last two are given `CHAOS_CONVERGE`, and that is the one place this differs from
 [`copies_agree`](#still-there-and-the-same-everywhere).** There the question can be asked the moment
 the load stops, because every key it compares was written once: two copies holding two values is a
 cluster that invented one and no waiting would put it right. Here a copy that was out of the
@@ -678,8 +712,9 @@ As in [`perf/`](../perf).
 | `CHAOS_STORM_PAUSE` | `write-storm` only: seconds between its client's writes | 0.5 |
 | `CHAOS_STORM_RETRY` | `write-storm` only: seconds between the retries of a refused write | 2 |
 | `CHAOS_STORM_GRACE` | `write-storm` only: the window the load balancer's own health check owns | 25 seconds |
-| `CHAOS_STORM_ROLLS` | `write-storm` only: times round the zones killing both containers of one | 2 |
-| `CHAOS_STORM_SETTLE` | `write-storm` only: seconds between one kill and the next | 20 |
+| `CHAOS_STORM_HOLD` | `write-storm` only: seconds a node is held out of the membership | 60 |
+| `CHAOS_STORM_ROLLS` | `write-storm` only: times round the zones taking etcd from a whole one | 2 |
+| `CHAOS_STORM_SETTLE` | `write-storm` only: seconds between one isolation and the next | 20 |
 
 Each experiment has one or two of its own — the length of its fault, the size of its latency, the
 time a resized group is given to reach its new shape — named at the top of the script that uses it.
