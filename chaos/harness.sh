@@ -280,21 +280,66 @@ status()
 	curl --silent --output /dev/null --max-time 15 --write-out '%{http_code}' "$@"
 }
 
+# answer <curl argument>... — the status of a request, with what a refusal said kept beside it. The
+# status is what an assertion counts and it is all the status can say: a write refused because one
+# copy of the key did not answer is a 500 whichever copy it was, and the sentence the server sends
+# with it names that node and what curl made of it. A bare code is evidence the run already had and
+# threw away.
+#
+# Only what did not answer 2xx is kept. The body of a 2xx here is a seeded value and nothing is
+# read of it.
+answer()
+{
+	local answered code
+
+	# The status is written after the body, so what precedes the last newline is the body however
+	# many newlines of its own it carries.
+	answered=$(curl --silent --max-time 15 --write-out '\n%{http_code}' "$@")
+	code=${answered##*$'\n'}
+
+	case $code in
+		2*) ;;
+		*) reason "$code" "${answered%$'\n'*}" ;;
+	esac
+
+	printf '%s' "$code"
+}
+
+# reason <status> <body> — one line of what a refusal said, for reasons to render when the
+# assertion counting it fails.
+reason()
+{
+	local message
+
+	# Every error this API answers carries the same document, and the message is the half of it
+	# the status does not already say. What is not one of those is nginx answering for a database
+	# that is not there.
+	message=$(printf '%s' "$2" | jq --exit-status --raw-output '.error.message' 2> /dev/null) \
+		|| message=$(printf '%s' "$2" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//' | cut -c 1-200)
+
+	# A status the server answers on its own carries no body — a 404 for a key a copy does not
+	# hold, or a transfer that never answered at all — and the code has said the whole of it.
+	[ -n "$message" ] || return 0
+
+	printf '%s %s\n' "$1" "$message" >> "$work/reasons"
+}
+
 # read_check <how many> — the number of reads of seeded records that did not answer 2xx. Every
 # status is kept, because a count says an assertion failed and only the codes say how: a 404 is
 # a copy that answered for a key it does not hold, a 000 is one that did not answer at all, and
 # they are not the same incident.
 read_check()
 {
-	local i failed=0 answer
+	local i failed=0 answered
 
 	: > "$work/codes"
+	: > "$work/reasons"
 
 	for (( i = 0; i < $1; i++ )); do
-		answer=$(status "$base/table/$table/key/$((i % records))")
-		echo "$answer" >> "$work/codes"
+		answered=$(answer "$base/table/$table/key/$((i % records))")
+		echo "$answered" >> "$work/codes"
 
-		case $answer in
+		case $answered in
 			2*) ;;
 			*) failed=$((failed + 1)) ;;
 		esac
@@ -307,17 +352,18 @@ read_check()
 # never leaves the seed short. Every write here is idempotent, so a retry is a retry.
 write_check()
 {
-	local i failed=0 stamp=$RANDOM answer
+	local i failed=0 stamp=$RANDOM answered
 
 	: > "$work/codes"
+	: > "$work/reasons"
 
 	for (( i = 0; i < $1; i++ )); do
-		answer=$(status --request PUT --data 'chaos' \
+		answered=$(answer --request PUT --data 'chaos' \
 			--header 'Content-Type: application/octet-stream' \
 			"$base/table/$table/key/w-$stamp-$i")
-		echo "$answer" >> "$work/codes"
+		echo "$answered" >> "$work/codes"
 
-		case $answer in
+		case $answered in
 			2*) ;;
 			*) failed=$((failed + 1)) ;;
 		esac
@@ -536,6 +582,17 @@ codes()
 	sort "$work/codes" | uniq -c | sort -rn | awk '{ printf "%s×%s ", $1, $2 }'
 }
 
+# reasons — what the refusals behind a failed assertion said, a line each and counted, with the
+# one most of them said first. Nothing when every refusal carried no body, which is what a status
+# the API answers on its own — a 404 from a copy that does not hold the key — looks like here.
+reasons()
+{
+	[ -s "$work/reasons" ] || return 0
+
+	sort "$work/reasons" | uniq -c | sort -rn \
+		| awk '{ count = $1; $1 = ""; printf "  ---- %s×%s\n", count, $0 }'
+}
+
 # expect_reads / expect_writes <how many> <description> — the check and the evidence together. A
 # bare count says an assertion failed and only the codes say how.
 expect_reads()
@@ -547,6 +604,7 @@ expect_reads()
 		result 0 "$2"
 	else
 		result 1 "$2 — $failed of $1 did not answer 2xx: $(codes)"
+		reasons
 	fi
 }
 
@@ -559,6 +617,7 @@ expect_writes()
 		result 0 "$2"
 	else
 		result 1 "$2 — $failed of $1 did not answer 2xx: $(codes)"
+		reasons
 	fi
 }
 
@@ -576,6 +635,7 @@ refuse_writes()
 		result 0 "$3"
 	else
 		result 1 "$3 — $refused of $1 answered $2: $(codes)"
+		reasons
 	fi
 }
 
@@ -601,6 +661,8 @@ await_writes()
 	done
 
 	result 1 "$3 — $failed of $1 did not answer 2xx: $(codes)"
+	reasons
+
 	return 1
 }
 
@@ -1622,6 +1684,38 @@ latency()
 
 	command=$(fault_send "$seconds" "$install" "$(latency_remove)" "$instance") || return 1
 	fault_await "$command" "$instance"
+}
+
+# latency_stats <instance> — what the qdisc did while it stood. netem holds a packet for the delay
+# rather than sending it, and its queue is a thousand packets, so a node sending more than that in
+# a delay's worth of time has packets **discarded** rather than delayed. That is a handshake lost
+# and not a handshake slowed, and the difference is the whole of whether a refused write was the
+# fault working as intended: a connect crosses the delay once and has two seconds
+# (cluster::config::connect_timeout_seconds) to do it in, but a retransmission is a second on top
+# of that and puts it over.
+#
+# **Read before heal, which deletes the qdisc and these counters with it.** Reported and never
+# asserted on: what the count should be is not known in advance.
+latency_stats()
+{
+	local shown sent
+
+	shown=$(ssm_run "$1" 'tc -s qdisc show dev $(ip route show default | cut -d" " -f5)')
+
+	if [ -z "${shown:-}" ]; then
+		printf '  ---- the qdisc on %s could not be asked what it dropped\n' "$1"
+
+		return 0
+	fi
+
+	# The netem stanza alone. The name line says what was asked for and the line under it is what
+	# the qdisc sent, dropped and still holds.
+	sent=$(printf '%s\n' "$shown" \
+		| awk '/^qdisc netem/ { found = 1; next } found && /Sent/ { sub(/^ +/, ""); print; exit }')
+
+	# A device with nothing on it is a fault that was never there, which every assertion before
+	# this one was made against.
+	printf '  ---- the qdisc on %s: %s\n' "$1" "${sent:-there is no netem qdisc on the device}"
 }
 
 latency_clear()

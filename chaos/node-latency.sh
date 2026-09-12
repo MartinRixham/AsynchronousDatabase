@@ -75,6 +75,12 @@ printf '  ---- a read through the load balancer now takes %ss\n' \
 
 load_report "while a node was slow"
 
+# Asked while the qdisc is still there, because heal takes it away with what it counted. A packet
+# it discarded rather than delayed is a handshake that has to be made again, which is a second on
+# top of the delay and over what a connect is given — so this is what tells a write refused by
+# the fault from a write refused by the shape of the fault.
+latency_stats "$slow"
+
 fault_stop
 
 await '(.nodes | length) == 6 and (.zones | length) == 3' "$settle" \

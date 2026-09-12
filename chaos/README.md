@@ -311,6 +311,18 @@ waiting.
 container's traffic leaves through it like anything else. Its qdisc goes on whatever the default
 route names, which is not `eth0` on an instance of this generation.
 
+**Its counters are read before `heal`**, which deletes the qdisc and them with it. `latency_stats`
+prints netem's own `Sent` line, and the drop count on it is the number worth having: netem *holds*
+a packet for the delay rather than sending it, and its queue is a thousand packets, so a node
+sending more than that in a delay's worth of time has packets **discarded** instead. That is the
+difference between a slow handshake and a lost one. A connect is given two seconds
+(`cluster::config::connect_timeout_seconds`) and crosses the delay once, so a handshake across the
+fault is 1200 ms in before anything has gone wrong. A packet that has to be sent again waits a
+second for the initial retransmission timeout first — which the delay is already longer than, so
+every handshake here retransmits anyway — and the replacement crosses the delay in its turn, which
+is 2.2 seconds and over. A write needs every copy and does not retry one, so a single drop on a
+single hop is a refused write, where the delay on its own is only a slow one.
+
 ### The kill is a kill, and it comes from the host
 
 `containers-restart` sends no rule anywhere. What it runs on each instance is `kill -9` on the
@@ -596,6 +608,13 @@ A `PASS`/`FAIL` line is an assertion. A `----` line is something measured and re
 asserted on — the reads a client lost while the load balancer had not yet noticed a dead target
 are the load balancer's health check interval and not the database, and latency here is
 [the same as it is in `perf/`](../perf): reported, never a threshold.
+
+A `FAIL` carries the statuses that failed it, and a `----` line under it carries what those
+refusals **said**. Every error this API answers is a document with a sentence in it, and on a write
+that sentence is the half the status cannot say: a copy that did not answer is a 500 whichever copy
+it was, and `cluster::forwarder` names the node and what curl made of it. A refusal the server
+answers on its own carries no body and gets no line — a 404 for a key a copy does not hold is a
+code that has said the whole of it.
 
 The two lines the [load](#every-experiment-runs-under-load) adds are of both kinds. What it saw in
 a phase is measured; that every write the cluster **acknowledged** is still there is asserted, and
