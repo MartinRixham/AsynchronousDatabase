@@ -26,7 +26,8 @@ same list read the other way round: what to *do* about each one.
 | `stale_leader` | 409 | **Yes, at once** | The write went to a leader that had been replaced |
 | `storage_error` | 500 | **Yes, once** | A node did not answer; another may |
 | `table_not_found` | 404 | Only after declaring the table | The table is not there. A node that came back empty answers `node_incomplete` instead, so this one is not a node's own gap |
-| `invalid_cursor` | 400 | No — restart the scan | The cursor belongs to another instance |
+| `invalid_cursor` | 400 | No — restart the scan | The cursor belongs to another instance, or to another partition |
+| `invalid_partition` | 400 | No — name a partition | A scan named none of the 256, both ways at once, or one that is not one of them |
 | `table_exists` | 409 | No | The table is there with different options |
 | everything else 4xx | 400, 413 | No | The request is wrong and will stay wrong |
 | `unavailable` | 500, 502, 504 | **Yes** | nginx's, not the server's — the database is not up yet, or [its disk is full](/runbook/storage#the-disk-is-filling) |
@@ -163,16 +164,24 @@ node.
 
 ## `400 invalid_cursor` part way through a scan
 
-> A cursor names the instance that issued it.
+> A cursor names the partition it was issued for and the instance that issued it.
 
-The page was asked of a different instance from the one that started the scan —
-which, behind a load balancer, is what happens by default, because nothing makes
-the second request land on the node that answered the first.
+A load balancer is not the cause of this one: a scan names a partition, and a
+partition routes every page of it to the same node — the copy that holds it — so
+a cursor comes back to the node that issued it whichever node the client asks.
 
-**Page a scan against the node that started it**, or use `from` and `to`
-instead, which any node will take. A cursor also stops being valid when the
-instance that issued it restarts, because the name is generated afresh each time
-the repository is opened.
+What is left is the two cases that are real:
+
+- **The partition moved.** A membership change gives it to another node, and that
+  node did not issue this cursor. Start the scan again; the page it answers is
+  the same range.
+- **The cursor was given back against a different partition.** It is a position
+  in the partition it was issued for and nowhere else, so this is refused rather
+  than answered with the nothing that key holds there.
+
+A cursor also stops being valid when the instance that issued it restarts,
+because the name is generated afresh each time the repository is opened. `from`
+and `to` are the alternative, and any copy will take them.
 
 ## `502` or `504` with an HTML body
 

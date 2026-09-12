@@ -91,7 +91,7 @@ load_report "while the zone was going away"
 # reported beside it.
 expect_readable 60 5 "every seeded record can still be read with a zone gone"
 printf '  ---- reads with a zone gone: %s\n' "$(codes)"
-expect "$(scan_status)" 200 "a scan falls back to a zone that is whole"
+expect "$(scan_status)" 200 "a scan falls back to a copy in a zone that answers"
 
 # And a write needs every copy of the membership as it now stands, which is two. It is waited for
 # rather than asserted outright, because the isolated side refuses a write before the load

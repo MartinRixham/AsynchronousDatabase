@@ -79,7 +79,7 @@ expect_readable 60 5 "every seeded record can still be read once the tier has gr
 printf '  ---- reads at nine nodes: %s\n' "$(codes)"
 
 expect_writes 20 "every write is taken by three copies split three ways"
-expect "$(scan_status)" 200 "a scan is answered by a zone of three"
+expect "$(scan_status)" 200 "a scan is answered by a copy of the partition"
 
 # The growth, asked of the stores rather than through the load balancer. Every zone holds the
 # keyspace between its three nodes, and no key is in two of them: the node that gained a partition

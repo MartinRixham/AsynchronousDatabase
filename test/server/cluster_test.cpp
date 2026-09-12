@@ -231,6 +231,37 @@ protected:
 		return owner(key) == first ? second : first;
 	}
 
+	// The keys a walk of these partitions answers with, asked of one server. A client walks a
+	// table a partition at a time, so this is what one written key's partition holds.
+	std::vector<std::string> walked(
+		const std::shared_ptr<server::server> &server,
+		const std::vector<std::string> &written,
+		bool forwarded = false)
+	{
+		std::vector<std::string> found;
+
+		for (size_t i = 0; i < written.size(); i++)
+		{
+			answer answered = request(
+				server, "GET", "/table/account/key?key=" + written[i], "", forwarded);
+
+			if (answered.code != 200)
+			{
+				continue;
+			}
+
+			std::vector<std::string> read = keys(answered);
+
+			found.insert(found.end(), read.begin(), read.end());
+		}
+
+		std::sort(found.begin(), found.end());
+
+		found.erase(std::unique(found.begin(), found.end()), found.end());
+
+		return found;
+	}
+
 	std::vector<std::string> keys(const answer &answer)
 	{
 		boost::json::array records = boost::json::parse(answer.body).as_object().at("records").as_array();
@@ -381,7 +412,9 @@ TEST_F(cluster_test, a_key_that_holds_punctuation_of_a_url_is_one_key)
 	EXPECT_EQ(get(second, "/table/account/key/a").code, 404);
 }
 
-TEST_F(cluster_test, a_scan_answers_the_keys_of_every_node_in_order)
+// **A table is walked one partition at a time**, and the partitions are spread over the nodes: a
+// walk asked of either node answers every record, each from whichever node holds that partition.
+TEST_F(cluster_test, a_walk_of_the_partitions_answers_every_record_from_either_node)
 {
 	request(first, "PUT", "/table/account", "{}");
 
@@ -397,32 +430,40 @@ TEST_F(cluster_test, a_scan_answers_the_keys_of_every_node_in_order)
 
 	std::sort(written.begin(), written.end());
 
-	EXPECT_EQ(keys(get(first, "/table/account/key")), written);
-	EXPECT_EQ(keys(get(second, "/table/account/key")), written);
+	EXPECT_EQ(walked(first, written), written);
+	EXPECT_EQ(walked(second, written), written);
 
-	// The keys really are spread: neither node holds all of them.
-	EXPECT_LT(keys(request(first, "GET", "/table/account/key", "", true)).size(), written.size());
-	EXPECT_LT(keys(request(second, "GET", "/table/account/key", "", true)).size(), written.size());
+	// The partitions really are spread: asked to answer out of its own store, neither node holds
+	// all of them, and between them they hold every one.
+	std::vector<std::string> here = walked(first, written, true);
+	std::vector<std::string> there = walked(second, written, true);
+
+	EXPECT_LT(here.size(), written.size());
+	EXPECT_LT(there.size(), written.size());
+	EXPECT_EQ(here.size() + there.size(), written.size());
 }
 
-TEST_F(cluster_test, a_scan_is_paged_across_the_nodes)
+// A page of a partition is answered by the node that holds it, and the cursor it issues is one
+// that node takes back: every request for a partition reaches the same node.
+TEST_F(cluster_test, a_scan_of_a_partition_is_paged_by_the_node_that_holds_it)
 {
 	request(first, "PUT", "/table/account", "{}");
 
 	for (size_t i = 0; i < 20; i++)
 	{
-		request(first, "PUT", "/table/account/key/row-" + std::to_string(i), "a value");
+		request(first, "PUT", "/table/account/key/rows/" + std::to_string(i), "a value");
 	}
 
-	std::vector<std::string> paged;
-	std::string query = "?limit=3";
+	size_t paged = 0;
+	std::string query = "?key=rows&limit=3";
 
 	for (size_t i = 0; i < 10; i++)
 	{
 		answer page = get(first, "/table/account/key" + query);
-		std::vector<std::string> keys_of_page = keys(page);
 
-		paged.insert(paged.end(), keys_of_page.begin(), keys_of_page.end());
+		ASSERT_EQ(page.code, 200);
+
+		paged += keys(page).size();
 
 		boost::json::object body = boost::json::parse(page.body).as_object();
 
@@ -431,11 +472,10 @@ TEST_F(cluster_test, a_scan_is_paged_across_the_nodes)
 			break;
 		}
 
-		query = "?limit=3&cursor=" + std::string(body.at("next").as_string());
+		query = "?key=rows&limit=3&cursor=" + std::string(body.at("next").as_string());
 	}
 
-	EXPECT_EQ(paged, keys(get(first, "/table/account/key")));
-	EXPECT_EQ(paged.size(), 20u);
+	EXPECT_EQ(paged, 20u);
 }
 
 TEST_F(cluster_test, a_table_is_deleted_on_every_node)
@@ -480,8 +520,12 @@ TEST_F(cluster_test, a_scan_answers_a_record_that_is_in_every_zone_once)
 	request(first, "PUT", "/table/account/key/4821", "a value");
 	request(second, "PUT", "/table/account/key/4822", "another value");
 
-	EXPECT_EQ(keys(get(first, "/table/account/key")), (std::vector<std::string> { "4821", "4822" }));
-	EXPECT_EQ(keys(get(second, "/table/account/key")), (std::vector<std::string> { "4821", "4822" }));
+	// Every zone holds the partition, and a scan of it is answered by one of them — so each record
+	// is in the answer once however many copies of it there are.
+	std::vector<std::string> written { "4821", "4822" };
+
+	EXPECT_EQ(walked(first, written), written);
+	EXPECT_EQ(walked(second, written), written);
 }
 
 // A zone that is gone is a copy that is gone, and the record is read from the zone that is left.
@@ -539,7 +583,9 @@ TEST_F(cluster_test, a_scan_answers_every_record_when_the_other_zone_is_gone)
 	second->close();
 	second_thread.join();
 
-	EXPECT_EQ(keys(get(first, "/table/account/key")), (std::vector<std::string> { "4821", "4822" }));
+	std::vector<std::string> written { "4821", "4822" };
+
+	EXPECT_EQ(walked(first, written), written);
 
 	// The test stops the servers it starts, and this one has stopped already.
 	second_thread = std::thread([]() {});

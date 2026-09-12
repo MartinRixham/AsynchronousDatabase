@@ -88,6 +88,11 @@ namespace
 			return ::cluster::placement();
 		}
 
+		::cluster::placement copies_of(size_t) const override
+		{
+			return ::cluster::placement();
+		}
+
 		::cluster::partition_set holdings() const override
 		{
 			::cluster::partition_set held;
@@ -208,16 +213,21 @@ namespace
 			taking.import_records("account", files[i]);
 		}
 
-		scan::range whole;
-
-		whole.is_valid = true;
-		whole.limit = scan::max_limit;
-
-		scan::page walked = taking.scan_records("account", whole);
-
-		for (size_t i = 0; i < walked.records.size(); i++)
+		// A scan reads one partition, so every key of the table is every partition asked in turn.
+		for (size_t partition = 0; partition < cluster::partition_count; partition++)
 		{
-			keys.insert(walked.records[i].key);
+			scan::range whole;
+
+			whole.is_valid = true;
+			whole.partition = partition;
+			whole.limit = scan::max_limit;
+
+			scan::page walked = taking.scan_records("account", whole);
+
+			for (size_t i = 0; i < walked.records.size(); i++)
+			{
+				keys.insert(walked.records[i].key);
+			}
 		}
 
 		return keys;

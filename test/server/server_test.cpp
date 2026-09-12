@@ -310,11 +310,13 @@ TEST_F(server_test, head_request)
 TEST_F(server_test, scan_request)
 {
 	request("PUT", "/table/account", "{}");
-	request("PUT", "/table/account/key/user%3A4821", "Eleanor Whitmore");
-	request("PUT", "/table/account/key/user%3A7203", "Marcus Hale");
-	request("PUT", "/table/account/key/order%3A1", "an order");
+	request("PUT", "/table/account/key/user/4821", "Eleanor Whitmore");
+	request("PUT", "/table/account/key/user/7203", "Marcus Hale");
+	request("PUT", "/table/account/key/order/1", "an order");
 
-	result response = get("/table/account/key?prefix=user%3A&limit=1");
+	// A scan reads one partition, named here by a key that is in it: the records of the partition
+	// key "user", and not the order in a partition of its own.
+	result response = get("/table/account/key?key=user&limit=1");
 
 	EXPECT_EQ(response.code, 200);
 
@@ -322,15 +324,16 @@ TEST_F(server_test, scan_request)
 	boost::json::array records = body.at("records").as_array();
 
 	EXPECT_EQ(records.size(), 1);
-	EXPECT_EQ(records[0].as_object().at("key"), "user:4821");
+	EXPECT_EQ(records[0].as_object().at("key"), "user");
+	EXPECT_EQ(records[0].as_object().at("sort"), "4821");
 	EXPECT_EQ(records[0].as_object().at("value"), "Eleanor Whitmore");
 
 	std::string cursor = std::string(body.at("next").as_string());
-	result next_result = get("/table/account/key?prefix=user%3A&limit=1&cursor=" + cursor);
+	result next_result = get("/table/account/key?key=user&limit=1&cursor=" + cursor);
 
 	boost::json::object next_body = boost::json::parse(next_result.body).as_object();
 
-	EXPECT_EQ(next_body.at("records").as_array()[0].as_object().at("key"), "user:7203");
+	EXPECT_EQ(next_body.at("records").as_array()[0].as_object().at("sort"), "7203");
 	EXPECT_FALSE(next_body.contains("next"));
 }
 

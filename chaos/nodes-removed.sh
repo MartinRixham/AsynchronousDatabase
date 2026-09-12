@@ -62,7 +62,7 @@ await '(.nodes | length) == 3 and (.zones | length) == 3 and ([ .zones[] | lengt
 # write still needs three of them and a read still has three to choose from.
 expect_writes 20 "every write is still taken by three copies, one node to a zone"
 expect_round_trip 10 "a key written after the shrink reads back what was written"
-expect "$(scan_status)" 200 "a scan is answered by a zone of one"
+expect "$(scan_status)" 200 "a scan is answered by the copy that is left"
 
 # The assertion the shrink is worth making, asked of the stores themselves. Every zone is down to
 # one node, so that node holds the whole of its zone's copy — anything else is a partition the zone

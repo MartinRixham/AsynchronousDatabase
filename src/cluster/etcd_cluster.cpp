@@ -205,6 +205,11 @@ std::vector<cluster::member> cluster::etcd_cluster::members() const
 
 cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 {
+	return copies_of(::cluster::partition_of(key));
+}
+
+cluster::placement cluster::etcd_cluster::copies_of(size_t partition) const
+{
 	membership registered = snapshot();
 
 	if (registered->size() < 2)
@@ -212,8 +217,7 @@ cluster::placement cluster::etcd_cluster::replicas(const std::string &key) const
 		return placement();
 	}
 
-	std::vector<member> owners =
-		::cluster::owners_of(::cluster::partition_name(::cluster::partition_of(key)), *registered);
+	std::vector<member> owners = ::cluster::owners_of(::cluster::partition_name(partition), *registered);
 	placement where;
 
 	where.local = false;

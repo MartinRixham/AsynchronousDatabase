@@ -1,16 +1,16 @@
 #! /usr/bin/env bash
 
-# A scan fails while everything else works.
+# One node in every zone answers no peer, and is still a member.
 #
-#   doc/runbook/nodes.md#a-scan-fails-while-everything-else-works
+#   doc/runbook/nodes.md#a-node-answers-no-peer
 #
 # One database node in each of the three zones stops answering on its API port, while its
-# process carries on renewing its lease. That is the one state in which a scan fails and a key
-# read does not: a scan is asked of one zone and every node of that zone has to answer, so a
-# zone with a node that does not answer is a zone to give up on — and when every zone has one,
-# there is no zone left to give up to.
+# process carries on renewing its lease. **A read and a scan both pass over a copy that does not
+# answer** — a scan names a partition and is answered by one copy of it, the same hops a read
+# takes — so what this fault costs is the partitions whose copy in *every* zone has gone deaf,
+# and what it refuses is writes, which need every copy.
 #
-# It is also the state the deployment is least likely to reach by accident and the hardest to
+# It is the state the deployment is least likely to reach by accident and the hardest to
 # arrange deliberately, which is why it is a test and not a paragraph: it needs one node in every
 # zone deaf at the same time, and it has to be deaf to its peers while it is still renewing.
 #
@@ -20,23 +20,24 @@
 
 source "$(dirname "$0")/harness.sh"
 
-banner "One node in every zone goes deaf" "Key reads carry on. Scans have nowhere left to fall back to."
+banner "One node in every zone goes deaf" "Reads and scans pass over a copy that does not answer. Writes need every copy."
 
 setup
 seed
 start_load
 
-# One instance per zone, which is what makes this the scan failure rather than a zone failure.
+# One instance per zone, which is what leaves one partition in eight with no copy any peer can
+# reach — and is what makes this a fault of the nodes rather than of a zone.
 deaf=$(instances asyncdb | awk '!seen[$2]++ { print $1 }')
 count=$(echo "$deaf" | wc -l)
 
 expect "$count" 3 "one node was picked in each of three zones"
 [ "$count" = 3 ] || { verdict; exit 1; }
 
-# A node's own zone never includes itself, so a deaf node answers a scan out of its own store and
-# the one node of its zone it can still reach: the fault is in what arrives, and nothing stops it
-# asking. Half the nodes are deaf, so a scan through the load balancer is a coin toss, and the
-# assertion below is made of a node that hears.
+# The fault is in what arrives, and nothing stops a deaf node asking: it forwards for a client and
+# is answered, and it is only its peers' requests that never reach it. Half the nodes are deaf, so
+# what the load balancer picks is a coin toss, and the assertions below are made of a node that
+# hears.
 hearing=$(instances asyncdb | cut -f1 | grep -vxF "$deaf" | head -1)
 
 seconds=${CHAOS_DEAF_SECONDS:-300}
@@ -83,17 +84,36 @@ holds '(.nodes | length) == 6 and (.zones | length) == 3' 30 \
 expect_readable 40 8 "every key is read, from a copy that answers or from a deaf copy itself"
 printf '  ---- reads with a node deaf in every zone: %s\n' "$(codes)"
 
-# A scan is not that. Every zone is short a node, and there is no fourth zone — and it fails with
-# a 5xx rather than a refusal, which is the difference between a zone that cannot be asked and a
-# cursor that no zone would take.
-scan=$(node_status "$hearing" "/table/$table/key?limit=100")
-said="a scan fails with a 5xx, and not a refusal, when every zone has a node that does not answer"
+# **A scan is the same arithmetic.** It names a partition and is answered by one copy of it, so a
+# deaf copy is passed over the way a read passes over one — and what a hearing node cannot answer
+# for is the one partition in eight whose copy in every zone is deaf. So the scan of a seeded key
+# either answers or fails with a 5xx, and never refuses: a refusal would be a cursor or a range no
+# copy would take, which is not what a deaf node causes.
+deaf_scans=0
 
-case $scan in
-	5*) result 0 "$said — $scan from $hearing" ;;
-	'') result 1 "$said — $hearing could not be asked" ;;
-	*) result 1 "$said — $scan from $hearing" ;;
-esac
+# A sample of the seeded keys rather than all two hundred: one partition in eight has every copy
+# of it deaf, so two dozen keys is several of them and a round trip each.
+for key in $(seq 0 23); do
+	scan=$(node_status "$hearing" "/table/$table/key?key=$key&limit=100")
+
+	case $scan in
+		2*) ;;
+		5*) deaf_scans=$((deaf_scans + 1)) ;;
+		'')
+			result 1 "a scan of every seeded partition answers or fails — $hearing could not be asked"
+
+			break
+			;;
+		*)
+			result 1 "a scan of every seeded partition answers or fails — $scan from $hearing"
+
+			break
+			;;
+	esac
+done
+
+result 0 "a scan of a partition is answered by a copy that hears, or fails where none does"
+printf '  ---- %s seeded partitions had no copy %s could reach\n' "$deaf_scans" "$hearing"
 
 # Writes are reported and not asserted on. The runbook says reads and writes of individual keys
 # are fine here, and for reads that is exactly true — but a write needs *every* copy, and a key
@@ -110,7 +130,7 @@ fault_stop
 # copy of its key, and seven writes in eight touched a deaf node a moment ago.
 await_writes 20 "$settle" "every node answers its peers again"
 
-expect "$(scan_status)" 200 "the scan is answered once a zone is whole"
+expect "$(scan_status)" 200 "every seeded partition is scannable once every node answers"
 
 # Seven writes in eight were refused while the three were deaf, and what matters is the eighth:
 # a write that was answered had reached every copy, deaf nodes included, because a deaf node is

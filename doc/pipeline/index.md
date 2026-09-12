@@ -312,7 +312,7 @@ rather than a category:
 | `asyncdb-one` | the API, browser and load suites, then `zone-lost`, `containers-restart` | 23 min |
 | `asyncdb-two` | `etcd-unreachable`, `nodes-added` | 23 min |
 | `asyncdb-three` | `node-stops`, `nodes-removed`, `zone-retired` | 23 min |
-| `asyncdb-four` | `scan-loses-a-node`, `node-latency`, `disk-fills`, `etcd-quorum-lost` | 23 min |
+| `asyncdb-four` | `nodes-go-deaf`, `node-latency`, `disk-fills`, `etcd-quorum-lost` | 23 min |
 
 The suites are a lump of their own — about four minutes — so the share carrying
 them carries `containers-restart` and the shortest of the faults beside it, and

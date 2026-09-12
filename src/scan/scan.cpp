@@ -5,6 +5,7 @@
 #include <boost/lexical_cast/try_lexical_convert.hpp>
 
 #include "base64/base64.h"
+#include "cluster/partition.h"
 #include "url/url.h"
 #include "scan.h"
 
@@ -41,7 +42,32 @@ namespace
 		return std::min(std::max(limit, static_cast<size_t>(1)), scan::max_limit);
 	}
 
-	std::optional<std::string> read_cursor(const std::string &cursor, const std::string &instance)
+	std::optional<size_t> partition_named(const std::string &query)
+	{
+		std::string named = url::read_parameter(query, "partition");
+		std::string key = url::read_parameter(query, "key");
+
+		if (named.empty() == key.empty())
+		{
+			return std::nullopt;
+		}
+
+		if (!key.empty())
+		{
+			return cluster::partition_of(key);
+		}
+
+		size_t partition = 0;
+
+		if (!boost::conversion::try_lexical_convert(named, partition) || partition >= cluster::partition_count)
+		{
+			return std::nullopt;
+		}
+
+		return partition;
+	}
+
+	std::optional<std::string> read_cursor(const std::string &cursor, const std::string &instance, size_t partition)
 	{
 		std::optional<std::string> decoded = base64::decode(cursor);
 
@@ -62,7 +88,9 @@ namespace
 
 		if (!object.contains("k") || !object["k"].is_string() ||
 			!object.contains("s") || !object["s"].is_string() ||
-			object["s"].as_string() != instance)
+			object["s"].as_string() != instance ||
+			!object.contains("p") || !object["p"].is_int64() ||
+			object["p"].as_int64() != static_cast<int64_t>(partition))
 		{
 			return std::nullopt;
 		}
@@ -71,9 +99,25 @@ namespace
 	}
 }
 
+std::optional<size_t> scan::read_partition(const std::string &query)
+{
+	return partition_named(query);
+}
+
 scan::range scan::parse_range(const std::string &query, const std::string &instance)
 {
 	range range;
+	std::optional<size_t> partition = read_partition(query);
+
+	if (!partition)
+	{
+		return invalid_range(
+			"invalid_partition",
+			"A scan names the partition it reads, as \"partition\" or as a \"key\" that is in it.");
+	}
+
+	range.partition = *partition;
+
 	std::string prefix = url::read_parameter(query, "prefix");
 	std::string from = url::read_parameter(query, "from");
 	std::string to = url::read_parameter(query, "to");
@@ -118,11 +162,11 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 
 	if (!cursor.empty())
 	{
-		std::optional<std::string> key = read_cursor(cursor, instance);
+		std::optional<std::string> key = read_cursor(cursor, instance, range.partition);
 
 		if (!key)
 		{
-			return invalid_range("invalid_cursor", "Cursor was not issued by this instance.");
+			return invalid_range("invalid_cursor", "Cursor was not issued by this instance for this partition.");
 		}
 
 		if (range.reverse)
@@ -150,9 +194,13 @@ scan::range scan::invalid_range(const std::string &code, const std::string &mess
 	return range;
 }
 
-std::string scan::encode_cursor(const std::string &key, const std::string &instance)
+std::string scan::encode_cursor(const std::string &key, const std::string &instance, size_t partition)
 {
-	boost::json::object cursor { { "k", boost::json::string(key) }, { "s", boost::json::string(instance) } };
+	boost::json::object cursor {
+		{ "k", boost::json::string(key) },
+		{ "s", boost::json::string(instance) },
+		{ "p", static_cast<int64_t>(partition) }
+	};
 
 	return base64::encode(boost::json::serialize(cursor));
 }

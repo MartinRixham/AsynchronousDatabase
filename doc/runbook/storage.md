@@ -194,9 +194,10 @@ tables were declared.
    ```
 
 Until step 2 is done, the cluster is not broken but it is thinner than it looks:
-reads are answered by the zones that still hold the record, and a **scan of the
-empty node's zone will not return it**, because a scan is answered by one zone
-and answers what that zone holds.
+reads are answered by the zones that still hold the record, and **a scan of a
+partition the empty node owns is answered by a copy that is whole**, because a
+node that holds less than it owns reports `node_incomplete` rather than a page
+short of the records it owns.
 
 The best defence is the one the API is built for: **have every service declare
 the tables it needs at start-up.** A node that joins then catches up on the next

@@ -63,10 +63,10 @@ that is a create.
 | 2 · Declare the table graph | What a service does at every start up: create, create again (200), create with different options (409), a dependency that is not a table (400), a name holding a character a table name may not (400), the reserved name `default` (400), a body that is not a JSON object (400), then inspect and list |
 | 3 · The record lifecycle | Write, read, `HEAD`, overwrite, a JSON value returned byte for byte, the empty value against the missing key, a value at the documented 16 MiB, and a delete of a key refused with the record left standing |
 | 4 · Keys the API must not mangle | A space and a `é`, an encoded slash, a key that is not valid UTF-8 (400), a key over 4 KiB (413), and a key **at** 4 KiB whose every byte has to be encoded — 12 KiB of request line, which is the one the length limits in front of the database are actually measured against |
-| 5 · Scans | Prefix, `values=false`, `from` inclusive against `to` exclusive, `reverse`, two pages and the cursor between them, a foreign cursor (400), an inverted range (400), the whole table |
+| 5 · Scans | The partition a key is in and a partition by number, `values=false`, `from` inclusive against `to` exclusive, `reverse`, two pages and the cursor between them, a scan naming no partition (400), one that is not one of the 256 (400), one named both ways (400), a foreign cursor and a cursor of another partition (400), an inverted range (400) |
 | 6 · Records cannot be erased | A delete of a range and a delete of a key, both 405, and the records folder 5 seeded still there afterwards |
 | 7 · Drop the tables | `204`, then `404`, then created again and empty — the data went with the column family |
-| 8 · The cluster | More than one instance: the membership, a table created on one node and present on all, a record written to one node and read from the others, a scan merged across the zone that answers it, a range delete refused wherever it is sent, and a table delete that reaches every node |
+| 8 · The cluster | More than one instance: the membership, a table created on one node and present on all, a record written to one node and read from the others, three keys' partitions each scanned from a node that may not hold it, a range delete refused wherever it is sent, and a table delete that reaches every node |
 
 ## Three things worth knowing before a red test is believed
 

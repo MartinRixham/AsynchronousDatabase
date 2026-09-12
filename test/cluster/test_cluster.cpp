@@ -50,7 +50,12 @@ std::vector<cluster::member> cluster::test_cluster::members() const
 
 cluster::placement cluster::test_cluster::replicas(const std::string &key) const
 {
-	std::vector<member> owners = owners_of(partition_name(partition_of(key)), member_list);
+	return copies_of(partition_of(key));
+}
+
+cluster::placement cluster::test_cluster::copies_of(size_t partition) const
+{
+	std::vector<member> owners = owners_of(partition_name(partition), member_list);
 	placement where;
 
 	where.local = false;

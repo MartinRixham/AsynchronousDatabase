@@ -14,7 +14,7 @@ broke came back, and an assertion that did not hold is a non-zero exit — which
 | --- | --- | --- |
 | `node-stops` | [A node does not answer](../doc/runbook/nodes.md), [an instance was replaced](../doc/runbook/nodes.md), [the rebuild](../doc/runbook/rebuild.md) | `ec2:StopInstances`, one database node |
 | `zone-lost` | [A read needs one copy](../doc/runbook/index.md), [fewer zones than the deployment has](../doc/runbook/membership.md) | A network acl on the zone's subnet, denying the other zones' subnets |
-| `scan-loses-a-node` | [A scan fails while everything else works](../doc/runbook/nodes.md) | A `DOCKER-USER` rule rejecting what arrives for port 8080, one node **per zone** |
+| `nodes-go-deaf` | [A node answers no peer](../doc/runbook/nodes.md) | A `DOCKER-USER` rule rejecting what arrives for port 8080, one node **per zone** |
 | `etcd-unreachable` | [etcd cannot be reached](../doc/runbook/membership.md) — one node, cluster of one | A `DOCKER-USER` rule rejecting what the container sends to port 2379 |
 | `node-latency` | [A node that is up but wrong](../doc/runbook/nodes.md), [threads are all waiting](../doc/runbook/nodes.md) | A `netem` qdisc delaying everything the host sends into the VPC |
 | `disk-fills` | [RocksDB returned an error](../doc/runbook/storage.md), [the disk is filling](../doc/runbook/storage.md) | `fallocate` over what is left of the root volume |
@@ -295,7 +295,7 @@ being asked anything is an instance still holding whatever was installed on it.
 
 ### The deaf node is a rule of our own
 
-`scan-loses-a-node` and `etcd-unreachable` install a rule in `DOCKER-USER`, and it has to be that
+`nodes-go-deaf` and `etcd-unreachable` install a rule in `DOCKER-USER`, and it has to be that
 chain: asyncdb is a container behind a published port, so everything a peer sends it is translated
 and forwarded and goes through `FORWARD` and never `INPUT`, and everything the container sends is
 forwarded too and never `OUTPUT`. **A rule in `INPUT` or `OUTPUT` blocks nothing here** — the node
@@ -443,9 +443,12 @@ nothing clears down.
 **Neither can be seen through the load balancer.** A read is answered by whichever copy has the key
 — the owner, or another zone when the owner holds nothing — so it says a record exists *somewhere*
 and never where. The assertions ask each node what is in its own store, over Run Command, with a
-scan carrying `X-Asyncdb-Forwarded`: a forwarded request is served where it lands, so the answer is
-that node's own share rather than its zone's merged one. It is the request a rebuild makes of each
-node of a zone. The node gzips the page before Run Command carries it, because Run Command returns
+scan of every partition carrying `X-Asyncdb-Forwarded`: a forwarded request is served where it
+lands, so the answer is that node's own share and never another node's. **A scan reads one
+partition, so a walk of a table is 256 of them** — all in the one Run Command, because Run Command
+is seconds a call however small the call is, and a partition holds a 256th of a node's share, so
+one page apiece has room to spare. The node gzips the pages before Run Command carries them,
+because Run Command returns
 the first 24,000 characters of what a command printed and says nothing about having cut the rest —
 which a page of a few hundred records is longer than, and a JSON document with no end reads as a
 node that answered nothing at all.
@@ -511,9 +514,9 @@ error code can say: every write that answered `2xx` while the disk was full is s
 afterwards.
 
 The second is that **the runbook overstates what survives**
-[a node that does not answer in every zone](../doc/runbook/nodes.md). It says reads and writes of
+[a node that answers no peer](../doc/runbook/nodes.md). It says reads and writes of
 individual keys are fine there, and neither is quite true. A write needs *every* copy, so roughly
-seven writes in eight touch one of the three deaf nodes and are refused; `scan-loses-a-node`
+seven writes in eight touch one of the three deaf nodes and are refused; `nodes-go-deaf`
 prints that number rather than asserting on it. And a read needs one copy that answers, but the
 copies of a partition are one node per zone and one node per zone is what has gone deaf — so one
 partition in eight has every copy of it deaf, and those keys are read only by a request the load
@@ -521,11 +524,14 @@ balancer happens to send to one of the deaf nodes themselves, which are still in
 hold them. The experiment asserts that every key is read, and gives the load balancer the attempts
 it takes to come round to them.
 
-The scan is the same arithmetic from the other side. A node's own zone never includes itself, so a
-deaf node answers a scan out of its own store and the one node of its zone it can still reach —
-the rule is on what arrives, and nothing stops a deaf node asking. Half the nodes are deaf, so a
-scan through the load balancer is a coin toss, and the experiment asks a node that hears over Run
-Command instead.
+**A scan is that same arithmetic and no worse.** It names a partition and is answered by one copy
+of it — this node when it holds one, else the nearest zone's, passing over a copy that does not
+answer — so what a hearing node cannot scan is the same one partition in eight that it cannot
+read, and for the same reason. The experiment asserts that every scan either answers or fails with
+a `5xx`, never a refusal, and prints how many of the sampled partitions had no copy it could
+reach. The rule is on what *arrives*, so nothing stops a deaf node asking or forwarding: half the
+nodes are deaf, so what the load balancer picks is a coin toss, and the assertions are made of a
+node that hears over Run Command instead.
 
 ## Everything is an environment variable
 
@@ -552,13 +558,13 @@ time a resized group is given to reach its new shape — named at the top of the
 which is as soon as that experiment's assertions are done; the seconds an experiment names are
 what its script sleeps for if nothing ever comes back to remove it. That is what lets them stay
 generous — **a fault that expires mid-assertion is a *false failure* and not a weaker test**,
-because `scan-loses-a-node` asserts that a scan **fails** while a node is deaf and goes red if the
-node comes back early. Shortening one buys nothing: a fault costs no more for being allowed to
+because `nodes-go-deaf` counts what a hearing node cannot reach while the fault stands, and a node
+that comes back early is a partition that answers when the experiment expected nothing to. Shortening one buys nothing: a fault costs no more for being allowed to
 last longer than the assertions take.
 
 Every fault removes itself, and none of it is taken on trust: the recovery assertion that every
 experiment runs immediately afterwards is the check that it went, **and it has to be an assertion
-the fault would fail**. `scan-loses-a-node` waits on a **write**, not on the membership: the
+the fault would fail**. `nodes-go-deaf` waits on a **write**, not on the membership: the
 membership is the one thing that fault never changes, and a recovery check that cannot fail is how
 three deaf nodes survive into the next experiment.
 

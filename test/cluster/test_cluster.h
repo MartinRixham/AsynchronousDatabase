@@ -62,6 +62,8 @@ namespace cluster
 
 		placement replicas(const std::string &key) const override;
 
+		placement copies_of(size_t partition) const override;
+
 		partition_set holdings() const override;
 
 		std::map<std::string, partition_set> holders(const partition_set &partitions) const override;

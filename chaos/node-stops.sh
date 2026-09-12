@@ -77,7 +77,7 @@ load_report "while the node was going away"
 expect_readable 40 5 "every seeded record can still be read with the node out of the membership"
 printf '  ---- reads with the node gone: %s\n' "$(codes)"
 expect_writes 20 "every write is taken with the node out of the membership"
-expect "$(scan_status)" 200 "a scan is answered by a zone that is whole"
+expect "$(scan_status)" 200 "a scan is answered by a copy of the partition that is there"
 
 echo "  Waiting for the group to replace it."
 

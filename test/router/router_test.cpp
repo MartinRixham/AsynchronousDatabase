@@ -92,6 +92,7 @@ namespace
 		scan::range whole;
 
 		whole.is_valid = true;
+		whole.partition = cluster::partition_of(key);
 
 		scan::page page = repository.scan_records(name, whole);
 
@@ -104,6 +105,23 @@ namespace
 		}
 
 		return record::version();
+	}
+
+	// The sort halves of a page. The records of one partition key are one scan's worth of answer,
+	// and what tells them apart is what they sort under.
+	std::vector<std::string> sorts(const router::response &response)
+	{
+		boost::json::array records = response.json.at("records").as_array();
+		std::vector<std::string> sorts;
+
+		for (size_t i = 0; i < records.size(); i++)
+		{
+			const boost::json::object &record = records[i].as_object();
+
+			sorts.push_back(record.contains("sort") ? std::string(record.at("sort").as_string()) : "");
+		}
+
+		return sorts;
 	}
 
 	std::vector<std::string> keys(const router::response &response)
@@ -373,7 +391,9 @@ TEST(router_test, delete_a_table_and_its_data)
 
 	create_table(router, "account");
 
-	EXPECT_EQ(router.route(get("/table/account/key")).json.at("records").as_array().size(), 0);
+	EXPECT_EQ(
+		router.route(get("/table/account/key?key=4821")).json.at("records").as_array().size(),
+		0);
 }
 
 TEST(router_test, fail_to_delete_a_table_that_is_not_there)
@@ -524,23 +544,76 @@ TEST(router_test, fail_to_write_a_value_that_is_too_large)
 	EXPECT_EQ(error_code(response), "value_too_large");
 }
 
-TEST(router_test, scan_a_table_in_key_order)
+// **A scan reads one partition.** The keys of a table are spread over all of them, so what a scan
+// of one answers with is the records of the partition keys that hashed there — here the records of
+// one partition key, which is what a scan is usually asked for.
+TEST(router_test, scan_a_partition_in_key_order)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
 	router::router router(repository, alone);
 
 	create_table(router, "account");
-	write_record(router, "account", "user%3A7203", "Marcus Hale");
-	write_record(router, "account", "user%3A4821", "Eleanor Whitmore");
-	write_record(router, "account", "order%3A1", "an order");
+	write_record(router, "account", "user/7203", "Marcus Hale");
+	write_record(router, "account", "user/4821", "Eleanor Whitmore");
+	write_record(router, "account", "order/1", "an order");
 
-	router::response response = router.route(get("/table/account/key"));
+	router::response response = router.route(get("/table/account/key?key=user"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
-	EXPECT_EQ(keys(response), (std::vector<std::string> { "order:1", "user:4821", "user:7203" }));
-	EXPECT_EQ(response.json.at("records").as_array()[1].as_object().at("value"), "Eleanor Whitmore");
+	EXPECT_EQ(sorts(response), (std::vector<std::string> { "4821", "7203" }));
+	EXPECT_EQ(response.json.at("records").as_array()[0].as_object().at("value"), "Eleanor Whitmore");
 	EXPECT_FALSE(response.json.contains("next"));
+}
+
+// A partition key is a key of its own, so the partition it hashed to is where a client asks for
+// its records without knowing the number: hashing is the server's and a client cannot do it.
+TEST(router_test, scan_the_partition_a_key_is_in)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	write_record(router, "account", "4821", "Eleanor Whitmore");
+
+	router::response named = router.route(get("/table/account/key?key=4821"));
+	router::response numbered =
+		router.route(get("/table/account/key?partition=" + std::to_string(cluster::partition_of("4821"))));
+
+	EXPECT_EQ(keys(named), (std::vector<std::string> { "4821" }));
+	EXPECT_EQ(keys(numbered), keys(named));
+}
+
+// A walk of a whole table is a scan of each partition in turn, which is what the API asks a client
+// to do rather than serialising a table nobody node holds.
+TEST(router_test, a_table_is_walked_one_partition_at_a_time)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+	write_record(router, "account", "user/7203", "Marcus Hale");
+	write_record(router, "account", "order/1", "an order");
+
+	std::vector<std::string> found;
+
+	for (size_t partition = 0; partition < cluster::partition_count; partition++)
+	{
+		router::response answer =
+			router.route(get("/table/account/key?partition=" + std::to_string(partition)));
+
+		ASSERT_EQ(answer.status, boost::beast::http::status::ok);
+
+		std::vector<std::string> read = keys(answer);
+
+		found.insert(found.end(), read.begin(), read.end());
+	}
+
+	std::sort(found.begin(), found.end());
+
+	EXPECT_EQ(found, (std::vector<std::string> { "order", "user" }));
 }
 
 TEST(router_test, scan_a_prefix)
@@ -550,13 +623,15 @@ TEST(router_test, scan_a_prefix)
 	router::router router(repository, alone);
 
 	create_table(router, "account");
-	write_record(router, "account", "user%3A7203", "Marcus Hale");
-	write_record(router, "account", "user%3A4821", "Eleanor Whitmore");
-	write_record(router, "account", "order%3A1", "an order");
+	write_record(router, "account", "user/2019", "an early year");
+	write_record(router, "account", "user/2020", "a later year");
+	write_record(router, "account", "user/1999", "a much earlier year");
 
-	router::response response = router.route(get("/table/account/key?prefix=user%3A"));
+	// The prefix is of the composed key, so a prefix inside a partition key carries the separator:
+	// "user", a zero byte, and the sort keys that begin "20".
+	router::response response = router.route(get("/table/account/key?key=user&prefix=user%0020"));
 
-	EXPECT_EQ(keys(response), (std::vector<std::string> { "user:4821", "user:7203" }));
+	EXPECT_EQ(sorts(response), (std::vector<std::string> { "2019", "2020" }));
 }
 
 TEST(router_test, scan_backwards)
@@ -566,13 +641,13 @@ TEST(router_test, scan_backwards)
 	router::router router(repository, alone);
 
 	create_table(router, "account");
-	write_record(router, "account", "1", "one");
-	write_record(router, "account", "2", "two");
-	write_record(router, "account", "3", "three");
+	write_record(router, "account", "n/1", "one");
+	write_record(router, "account", "n/2", "two");
+	write_record(router, "account", "n/3", "three");
 
-	router::response response = router.route(get("/table/account/key?reverse=true"));
+	router::response response = router.route(get("/table/account/key?key=n&reverse=true"));
 
-	EXPECT_EQ(keys(response), (std::vector<std::string> { "3", "2", "1" }));
+	EXPECT_EQ(sorts(response), (std::vector<std::string> { "3", "2", "1" }));
 }
 
 TEST(router_test, scan_keys_only)
@@ -584,7 +659,7 @@ TEST(router_test, scan_keys_only)
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
 
-	router::response response = router.route(get("/table/account/key?values=false"));
+	router::response response = router.route(get("/table/account/key?key=4821&values=false"));
 
 	boost::json::object record = response.json.at("records").as_array()[0].as_object();
 
@@ -599,19 +674,19 @@ TEST(router_test, page_through_a_scan_with_a_cursor)
 	router::router router(repository, alone);
 
 	create_table(router, "account");
-	write_record(router, "account", "1", "one");
-	write_record(router, "account", "2", "two");
-	write_record(router, "account", "3", "three");
+	write_record(router, "account", "n/1", "one");
+	write_record(router, "account", "n/2", "two");
+	write_record(router, "account", "n/3", "three");
 
-	router::response first = router.route(get("/table/account/key?limit=2"));
+	router::response first = router.route(get("/table/account/key?key=n&limit=2"));
 
-	EXPECT_EQ(keys(first), (std::vector<std::string> { "1", "2" }));
+	EXPECT_EQ(sorts(first), (std::vector<std::string> { "1", "2" }));
 	EXPECT_TRUE(first.json.contains("next"));
 
 	std::string cursor = std::string(first.json.at("next").as_string());
-	router::response second = router.route(get("/table/account/key?limit=2&cursor=" + cursor));
+	router::response second = router.route(get("/table/account/key?key=n&limit=2&cursor=" + cursor));
 
-	EXPECT_EQ(keys(second), (std::vector<std::string> { "3" }));
+	EXPECT_EQ(sorts(second), (std::vector<std::string> { "3" }));
 
 	// The absence of a cursor means the range is exhausted.
 	EXPECT_FALSE(second.json.contains("next"));
@@ -624,22 +699,23 @@ TEST(router_test, page_backwards_through_a_scan)
 	router::router router(repository, alone);
 
 	create_table(router, "account");
-	write_record(router, "account", "1", "one");
-	write_record(router, "account", "2", "two");
-	write_record(router, "account", "3", "three");
+	write_record(router, "account", "n/1", "one");
+	write_record(router, "account", "n/2", "two");
+	write_record(router, "account", "n/3", "three");
 
-	router::response first = router.route(get("/table/account/key?limit=2&reverse=true"));
+	router::response first = router.route(get("/table/account/key?key=n&limit=2&reverse=true"));
 
-	EXPECT_EQ(keys(first), (std::vector<std::string> { "3", "2" }));
+	EXPECT_EQ(sorts(first), (std::vector<std::string> { "3", "2" }));
 
 	std::string cursor = std::string(first.json.at("next").as_string());
-	router::response second = router.route(get("/table/account/key?limit=2&reverse=true&cursor=" + cursor));
+	router::response second =
+		router.route(get("/table/account/key?key=n&limit=2&reverse=true&cursor=" + cursor));
 
-	EXPECT_EQ(keys(second), (std::vector<std::string> { "1" }));
+	EXPECT_EQ(sorts(second), (std::vector<std::string> { "1" }));
 }
 
 // The page a client is given is bounded in bytes, and the cursor is how the rest is asked for —
-// so a table of large values pages rather than answering with a response the node cannot build.
+// so a partition of large values pages rather than answering with a response the node cannot build.
 TEST(router_test, page_through_a_scan_of_values_too_large_to_send_at_once)
 {
 	repository::fake_repository repository;
@@ -652,18 +728,18 @@ TEST(router_test, page_through_a_scan_of_values_too_large_to_send_at_once)
 
 	for (size_t i = 0; i < 6; i++)
 	{
-		write_record(router, "account", std::to_string(i), value);
+		write_record(router, "account", "big/" + std::to_string(i), value);
 	}
 
-	router::response first = router.route(get("/table/account/key"));
+	router::response first = router.route(get("/table/account/key?key=big"));
 
-	EXPECT_EQ(keys(first), (std::vector<std::string> { "0", "1", "2" }));
+	EXPECT_EQ(sorts(first), (std::vector<std::string> { "0", "1", "2" }));
 	EXPECT_TRUE(first.json.contains("next"));
 
 	std::string cursor = std::string(first.json.at("next").as_string());
-	router::response second = router.route(get("/table/account/key?cursor=" + cursor));
+	router::response second = router.route(get("/table/account/key?key=big&cursor=" + cursor));
 
-	EXPECT_EQ(keys(second), (std::vector<std::string> { "3", "4", "5" }));
+	EXPECT_EQ(sorts(second), (std::vector<std::string> { "3", "4", "5" }));
 	EXPECT_FALSE(second.json.contains("next"));
 }
 
@@ -675,8 +751,8 @@ TEST(router_test, fail_to_scan_with_a_cursor_this_instance_did_not_issue)
 
 	create_table(router, "account");
 
-	router::response response =
-		router.route(get("/table/account/key?cursor=" + scan::encode_cursor("1", "another instance")));
+	router::response response = router.route(
+		get("/table/account/key?partition=7&cursor=" + scan::encode_cursor("1", "another instance", 7)));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
 	EXPECT_EQ(error_code(response), "invalid_cursor");
@@ -690,10 +766,24 @@ TEST(router_test, fail_to_scan_a_range_that_is_not_below_its_end)
 
 	create_table(router, "account");
 
-	router::response response = router.route(get("/table/account/key?from=b&to=a"));
+	router::response response = router.route(get("/table/account/key?partition=7&from=b&to=a"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
 	EXPECT_EQ(error_code(response), "invalid_range");
+}
+
+TEST(router_test, fail_to_scan_without_naming_a_partition)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	create_table(router, "account");
+
+	router::response response = router.route(get("/table/account/key"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
+	EXPECT_EQ(error_code(response), "invalid_partition");
 }
 
 TEST(router_test, fail_to_scan_a_table_that_is_not_there)
@@ -702,7 +792,7 @@ TEST(router_test, fail_to_scan_a_table_that_is_not_there)
 	cluster::fake_cluster alone = lone_node();
 	router::router router(repository, alone);
 
-	EXPECT_EQ(error_code(router.route(get("/table/account/key"))), "table_not_found");
+	EXPECT_EQ(error_code(router.route(get("/table/account/key?partition=7"))), "table_not_found");
 }
 
 TEST(router_test, refuse_to_delete_a_range)
@@ -712,15 +802,14 @@ TEST(router_test, refuse_to_delete_a_range)
 	router::router router(repository, alone);
 
 	create_table(router, "account");
-	write_record(router, "account", "user%3A2019", "a user");
-	write_record(router, "account", "user%3A2020", "another user");
-	write_record(router, "account", "order%3A1", "an order");
+	write_record(router, "account", "user/2019", "a user");
+	write_record(router, "account", "user/2020", "another user");
 
-	router::response response = router.route(del("/table/account/key?prefix=user%3A"));
+	router::response response = router.route(del("/table/account/key?key=user"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::method_not_allowed);
 	EXPECT_EQ(error_code(response), "method_not_allowed");
-	EXPECT_EQ(keys(router.route(get("/table/account/key"))).size(), 3);
+	EXPECT_EQ(keys(router.route(get("/table/account/key?key=user"))).size(), 2);
 }
 
 TEST(router_test, a_method_that_is_not_a_method_of_the_route)
@@ -807,12 +896,6 @@ namespace
 		return boost::json::object { { "key", key }, { "sort", sort }, { "value", value } };
 	}
 
-	std::string cursor_key(const router::response &response)
-	{
-		std::string decoded = base64::decode(std::string(response.json.at("next").as_string())).value_or("");
-
-		return std::string(boost::json::parse(decoded).as_object().at("k").as_string());
-	}
 }
 
 TEST(router_cluster_test, read_a_record_from_the_node_that_owns_the_key)
@@ -1959,158 +2042,35 @@ TEST(router_cluster_test, order_concurrent_table_creates)
 	EXPECT_TRUE(repository.has_table("account3"));
 }
 
-TEST(router_cluster_test, scan_every_node_and_answer_in_key_order)
+// **A scan is answered by one node**, because one node of a zone holds a partition. There is
+// nothing to merge and nobody else to ask: every record of the partition is in the one answer, in
+// the one order the store holds them in.
+TEST(router_cluster_test, scan_the_node_that_holds_the_partition)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
 	router::router router(repository, nodes);
 
 	create_table(router, "account");
-	write_record(router, "account", "a", "1");
-	write_record(router, "account", "c", "3");
-	write_record(router, "account", "e", "5");
 	nodes.forget();
-	nodes.answer(there, page(boost::json::array { record_json("b", "2"), record_json("d", "4") }, false));
+	nodes.owns("b", there);
+	nodes.answer(there, page(boost::json::array { record_json("b", "2") }, false));
 
-	router::response response = router.route(get("/table/account/key"));
+	router::response response = router.route(get("/table/account/key?key=b"));
 
-	EXPECT_EQ(keys(response), (std::vector<std::string> { "a", "b", "c", "d", "e" }));
-	EXPECT_FALSE(response.json.contains("next"));
+	EXPECT_EQ(keys(response), (std::vector<std::string> { "b" }));
 
-	// The bounds of the range travel resolved, because a cursor of this node's is one no other
-	// node would take.
+	// The request travels as the client sent it: the node it lands on is the one that issues the
+	// cursor, and it is the same node for every request for that partition.
 	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].second.query, "limit=100&values=true&reverse=false");
+	EXPECT_EQ(nodes.sent()[0].first, there);
+	EXPECT_EQ(nodes.sent()[0].second.query, "key=b");
 }
 
-TEST(router_cluster_test, answer_the_values_of_every_node)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	write_record(router, "account", "a", "1");
-	nodes.answer(there, page(boost::json::array { record_json("b", "2") }, false));
-
-	boost::json::array records = router.route(get("/table/account/key")).json.at("records").as_array();
-
-	ASSERT_EQ(records.size(), 2u);
-	EXPECT_EQ(records[1].as_object().at("value").as_string(), "2");
-}
-
-// A record of two parts travels as its halves, so the merge is of the key they compose and not of
-// the partition half it arrived under: a key put back short sorts where its partition key does and
-// answers as the record sitting there.
-TEST(router_cluster_test, a_record_of_two_parts_is_merged_by_the_key_its_halves_compose)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	router.route(put("/table/account/key/4821", "the account"));
-	router.route(put("/table/account/key/48210", "another account"));
-	nodes.answer(there, page(boost::json::array { record_json("4821", "2019", "a year of it") }, false));
-
-	boost::json::array records = router.route(get("/table/account/key")).json.at("records").as_array();
-
-	ASSERT_EQ(records.size(), 3u);
-	EXPECT_EQ(records[1].as_object().at("key").as_string(), "4821");
-	EXPECT_EQ(records[1].as_object().at("sort").as_string(), "2019");
-	EXPECT_EQ(records[1].as_object().at("value").as_string(), "a year of it");
-	EXPECT_EQ(records[2].as_object().at("value").as_string(), "another account");
-}
-
-TEST(router_cluster_test, hold_the_merged_page_to_the_limit)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	write_record(router, "account", "a", "1");
-	write_record(router, "account", "c", "3");
-	write_record(router, "account", "e", "5");
-	nodes.answer(there, page(boost::json::array { record_json("b", "2"), record_json("d", "4") }, true));
-
-	router::response response = router.route(get("/table/account/key?limit=2"));
-
-	EXPECT_EQ(keys(response), (std::vector<std::string> { "a", "b" }));
-
-	// The cursor is this node's own and names the last key it answered with, so the next page
-	// starts with the keys this one dropped.
-	EXPECT_EQ(cursor_key(response), "b");
-}
-
-// Each node answered within the budget on its own, and the merge of them is the sum: two pages of
-// two megabyte records is twelve megabytes of response on the node putting them back in order. So
-// the budget is applied again to what they came to, and the cursor names the last key that
-// survived it — the same trim the limit gets, for the reason a limit cannot see.
-TEST(router_cluster_test, hold_the_merged_page_to_the_budget)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
-
-	std::string value(2 * 1024 * 1024, 'v');
-
-	create_table(router, "account");
-	write_record(router, "account", "a", value);
-	write_record(router, "account", "c", value);
-	nodes.answer(there, page(boost::json::array { record_json("b", value), record_json("d", value) }, false));
-
-	router::response response = router.route(get("/table/account/key"));
-
-	EXPECT_EQ(keys(response), (std::vector<std::string> { "a", "b", "c" }));
-	EXPECT_EQ(cursor_key(response), "c");
-}
-
-TEST(router_cluster_test, page_through_a_scan_of_every_node)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	write_record(router, "account", "a", "1");
-	write_record(router, "account", "c", "3");
-	nodes.answer(there, page(boost::json::array { record_json("b", "2") }, false));
-
-	router::response first = router.route(get("/table/account/key?limit=2"));
-
-	EXPECT_EQ(keys(first), (std::vector<std::string> { "a", "b" }));
-
-	nodes.forget();
-	nodes.answer(there, page(boost::json::array(), false));
-
-	std::string cursor = std::string(first.json.at("next").as_string());
-	router::response second = router.route(get("/table/account/key?limit=2&cursor=" + cursor));
-
-	EXPECT_EQ(keys(second), (std::vector<std::string> { "c" }));
-
-	// The other node is asked from where the last page ended rather than for a cursor it never
-	// issued.
-	EXPECT_EQ(nodes.sent()[0].second.query, "limit=2&values=true&reverse=false&from=b%00");
-}
-
-TEST(router_cluster_test, scan_every_node_backwards)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	write_record(router, "account", "a", "1");
-	write_record(router, "account", "c", "3");
-	nodes.answer(there, page(boost::json::array { record_json("b", "2"), record_json("d", "4") }, false));
-
-	router::response response = router.route(get("/table/account/key?reverse=true"));
-
-	EXPECT_EQ(keys(response), (std::vector<std::string> { "d", "c", "b", "a" }));
-}
-
-TEST(router_cluster_test, scan_a_prefix_of_every_node)
+// **A cursor belongs to the node that issued it**, which is the node that holds the partition. So
+// the node a client happens to ask must not read the cursor: it would refuse one that was never
+// its own. The partition routes the scan, and the rest of the range is read where it lands.
+TEST(router_cluster_test, forward_a_scan_carrying_a_cursor_this_node_did_not_issue)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
@@ -2118,28 +2078,31 @@ TEST(router_cluster_test, scan_a_prefix_of_every_node)
 
 	create_table(router, "account");
 	nodes.forget();
-	nodes.answer(there, page(boost::json::array(), false));
+	nodes.owns("b", there);
+	nodes.answer(there, page(boost::json::array { record_json("b", "2") }, false));
 
-	router.route(get("/table/account/key?prefix=a"));
+	std::string cursor = scan::encode_cursor("b", "another instance", cluster::partition_of("b"));
+	router::response response = router.route(get("/table/account/key?key=b&cursor=" + cursor));
 
-	// A prefix is a range, and the other node is asked for the range rather than for the prefix
-	// it was written as.
-	EXPECT_EQ(nodes.sent()[0].second.query, "limit=100&values=true&reverse=false&from=a&to=b");
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, there);
 }
 
-// A key belongs to one node, so a key from two nodes is a key whose owner changed and the copy
-// left behind is passed over rather than answered twice.
-TEST(router_cluster_test, answer_a_key_two_nodes_hold_once)
+TEST(router_cluster_test, scan_this_node_s_own_store_when_it_holds_the_partition)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
 	router::router router(repository, nodes);
 
 	create_table(router, "account");
-	write_record(router, "account", "a", "1");
-	nodes.answer(there, page(boost::json::array { record_json("a", "1") }, false));
+	write_record(router, "account", "a/1", "one");
+	nodes.forget();
 
-	EXPECT_EQ(keys(router.route(get("/table/account/key"))), (std::vector<std::string> { "a" }));
+	router::response response = router.route(get("/table/account/key?key=a"));
+
+	EXPECT_EQ(sorts(response), (std::vector<std::string> { "1" }));
+	EXPECT_TRUE(nodes.sent().empty());
 }
 
 TEST(router_cluster_test, serve_a_forwarded_scan_where_it_stands)
@@ -2151,8 +2114,9 @@ TEST(router_cluster_test, serve_a_forwarded_scan_where_it_stands)
 	create_table(router, "account");
 	write_record(router, "account", "a", "1");
 	nodes.forget();
+	nodes.owns("a", there);
 
-	router::request forwarded = get("/table/account/key");
+	router::request forwarded = get("/table/account/key?key=a");
 
 	forwarded.forwarded = true;
 
@@ -2160,44 +2124,59 @@ TEST(router_cluster_test, serve_a_forwarded_scan_where_it_stands)
 	EXPECT_TRUE(nodes.sent().empty());
 }
 
-TEST(router_cluster_test, fail_to_scan_when_a_node_does_not_answer)
+// A copy that does not answer is passed over for the next one, the way a read of a key is: every
+// zone holds the partition, so the records are on all of them.
+TEST(router_cluster_test, scan_the_next_copy_when_the_nearest_does_not_answer)
 {
 	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
+	cluster::fake_cluster nodes = three_zones();
 	router::router router(repository, nodes);
 
 	create_table(router, "account");
-	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
-
-	EXPECT_EQ(error_code(router.route(get("/table/account/key"))), "storage_error");
-}
-
-// A zone holds a copy of every key, so a scan is answered by one zone and not by every node: what
-// the other zones hold is the same records again.
-TEST(router_cluster_test, scan_this_node_s_own_zone_and_no_other)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	write_record(router, "account", "a", "1");
-	write_record(router, "account", "c", "3");
 	nodes.forget();
-	nodes.answer(partner, page(boost::json::array { record_json("b", "2") }, false));
+	nodes.copies("b", { there, elsewhere });
+	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
+	nodes.answer(elsewhere, page(boost::json::array { record_json("b", "2") }, false));
 
-	router::response response = router.route(get("/table/account/key"));
-
-	EXPECT_EQ(keys(response), (std::vector<std::string> { "a", "b", "c" }));
-
-	// The partner shares this node's zone, so the page it answers with crosses no zone boundary,
-	// and the two zones behind it are not asked at all.
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, partner);
+	EXPECT_EQ(keys(router.route(get("/table/account/key?key=b"))), (std::vector<std::string> { "b" }));
+	ASSERT_EQ(nodes.sent().size(), 2u);
+	EXPECT_EQ(nodes.sent()[1].first, elsewhere);
 }
 
-// A node that is the only one in its zone holds every key itself, so a scan asks nobody.
-TEST(router_cluster_test, scan_nobody_when_this_node_is_a_zone_of_its_own)
+TEST(router_cluster_test, fail_to_scan_when_no_copy_answers)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.copies("b", { there, elsewhere });
+	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
+	nodes.answer(elsewhere, router::error_response("storage_error", "Nor did this one."));
+
+	EXPECT_EQ(error_code(router.route(get("/table/account/key?key=b"))), "storage_error");
+}
+
+// A refusal is the answer and not a node to pass over: every copy would refuse a range that is not
+// below its end alike, so asking the next one is a round trip for the same answer.
+TEST(router_cluster_test, take_a_refusal_of_a_scan_from_the_copy_that_gave_it)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("b", { there, elsewhere });
+	nodes.answer(there, router::error_response("invalid_cursor", "Not this instance's cursor."));
+
+	EXPECT_EQ(error_code(router.route(get("/table/account/key?key=b"))), "invalid_cursor");
+	EXPECT_EQ(nodes.sent().size(), 1u);
+}
+
+// A node that holds less than it owns cannot answer for a partition it may not have filled: a page
+// short of the records it owns is one no client could tell from the whole of them.
+TEST(router_cluster_test, scan_a_copy_that_is_whole_rather_than_this_node_s_own_short_store)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
@@ -2205,71 +2184,33 @@ TEST(router_cluster_test, scan_nobody_when_this_node_is_a_zone_of_its_own)
 
 	create_table(router, "account");
 	write_record(router, "account", "a", "1");
-	write_record(router, "account", "b", "2");
 	nodes.forget();
+	nodes.copies("a", { here, there });
+	nodes.answer(there, page(boost::json::array { record_json("a", "1"), record_json("a", "2", "2") }, false));
+	router.is_incomplete(true);
 
-	EXPECT_EQ(keys(router.route(get("/table/account/key"))), (std::vector<std::string> { "a", "b" }));
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_EQ(keys(router.route(get("/table/account/key?key=a"))).size(), 2u);
+	ASSERT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(nodes.sent()[0].first, there);
 }
 
-// The zone behind it holds the same keys, so a node that does not answer is a zone to give up on
-// rather than a scan to fail.
-TEST(router_cluster_test, scan_the_next_zone_when_a_node_of_the_first_does_not_answer)
+TEST(router_cluster_test, answer_node_incomplete_to_a_scan_of_a_partition_no_other_node_holds)
 {
 	repository::fake_repository repository;
-	cluster::fake_cluster nodes = paired_zones();
+	cluster::fake_cluster nodes = two_nodes();
 	router::router router(repository, nodes);
 
 	create_table(router, "account");
 	write_record(router, "account", "a", "1");
 	nodes.forget();
-	nodes.answer(partner, router::error_response("storage_error", "Node \"" + partner + "\" did not answer."));
-	nodes.answer(there, page(boost::json::array { record_json("b", "2") }, false));
-	nodes.answer(elsewhere, page(boost::json::array { record_json("c", "3") }, false));
+	nodes.owns("a", here);
+	router.is_incomplete(true);
 
-	router::response response = router.route(get("/table/account/key"));
+	router::response response = router.route(get("/table/account/key?key=a"));
 
-	EXPECT_EQ(keys(response), (std::vector<std::string> { "a", "b", "c" }));
-
-	ASSERT_EQ(nodes.sent().size(), 3u);
-	EXPECT_EQ(nodes.sent()[0].first, partner);
-	EXPECT_EQ(nodes.sent()[1].first, there);
-	EXPECT_EQ(nodes.sent()[2].first, elsewhere);
-}
-
-// A refusal is not a node that is missing: a cursor this instance did not issue is refused by every
-// zone alike, so the first one to say so is the answer.
-TEST(router_cluster_test, take_a_refusal_of_a_scan_from_the_zone_that_gave_it)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	nodes.forget();
-	nodes.answer(partner, router::error_response("invalid_cursor", "That cursor is not this instance's."));
-
-	EXPECT_EQ(error_code(router.route(get("/table/account/key"))), "invalid_cursor");
-	EXPECT_EQ(nodes.sent().size(), 1u);
-}
-
-TEST(router_cluster_test, fail_to_scan_when_no_zone_answers)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
-
-	create_table(router, "account");
-	nodes.forget();
-	nodes.answer(partner, router::error_response("storage_error", "Node \"" + partner + "\" did not answer."));
-	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
-	nodes.answer(elsewhere, router::error_response("storage_error", "Node \"" + elsewhere + "\" did not answer."));
-
-	EXPECT_EQ(error_code(router.route(get("/table/account/key"))), "storage_error");
-
-	// Two, not three: a zone is given up on at the first node of it that does not answer, because
-	// what the rest of that zone holds is no longer a whole copy of the range.
-	EXPECT_EQ(nodes.sent().size(), 2u);
+	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
+	EXPECT_EQ(error_code(response), "node_incomplete");
+	EXPECT_TRUE(nodes.sent().empty());
 }
 
 TEST(router_cluster_test, name_the_nodes_of_the_cluster_in_the_health_of_the_instance)
@@ -2646,7 +2587,7 @@ TEST(router_test, a_scan_says_which_half_of_a_key_is_which)
 	router.route(put("/table/account/key/4821/2019", "a year of it"));
 
 	boost::json::object record =
-		router.route(get("/table/account/key")).json.at("records").as_array()[0].as_object();
+		router.route(get("/table/account/key?key=4821")).json.at("records").as_array()[0].as_object();
 
 	EXPECT_EQ(record.at("key"), "4821");
 	EXPECT_EQ(record.at("sort"), "2019");
@@ -2663,14 +2604,15 @@ TEST(router_test, a_scan_of_keys_of_one_part_says_nothing_about_sorting)
 	write_record(router, "account", "4821", "Eleanor Whitmore");
 
 	boost::json::object record =
-		router.route(get("/table/account/key")).json.at("records").as_array()[0].as_object();
+		router.route(get("/table/account/key?key=4821")).json.at("records").as_array()[0].as_object();
 
 	EXPECT_EQ(record.at("key"), "4821");
 	EXPECT_FALSE(record.contains("sort"));
 }
 
 // What the separator buys a scan: a partition key's records are together and in sort key order,
-// and they are before every key the partition key is a prefix of.
+// the record of the partition key alone in front of them. **A longer partition key is a different
+// partition**, so what used to sit behind them in one table is now no part of this answer at all.
 TEST(router_test, records_of_one_partition_key_scan_together_in_sort_key_order)
 {
 	repository::fake_repository repository;
@@ -2684,14 +2626,19 @@ TEST(router_test, records_of_one_partition_key_scan_together_in_sort_key_order)
 	router.route(put("/table/account/key/4821", "the account"));
 
 	std::vector<std::string> values;
-	boost::json::array records = router.route(get("/table/account/key")).json.at("records").as_array();
+	boost::json::array records =
+		router.route(get("/table/account/key?key=4821")).json.at("records").as_array();
 
 	for (size_t i = 0; i < records.size(); i++)
 	{
 		values.push_back(std::string(records[i].as_object().at("value").as_string()));
 	}
 
-	EXPECT_EQ(values, (std::vector<std::string> { "the account", "a year", "a later year", "another account" }));
+	EXPECT_EQ(values, (std::vector<std::string> { "the account", "a year", "a later year" }));
+
+	EXPECT_EQ(
+		keys(router.route(get("/table/account/key?key=48210"))),
+		(std::vector<std::string> { "48210" }));
 }
 
 // One partition key and nothing else is a bounded range, because a prefix is a prefix of the
@@ -2705,8 +2652,11 @@ TEST(router_test, a_partition_key_and_nothing_else_is_a_bounded_range)
 	create_table(router, "account");
 	router.route(put("/table/account/key/4821", "the account"));
 	router.route(put("/table/account/key/4821/2019", "a year"));
-	router.route(put("/table/account/key/48210", "another account"));
+	router.route(put("/table/account/key/4821/2020", "a later year"));
 
-	EXPECT_EQ(keys(router.route(get("/table/account/key?from=4821&to=4821%01"))).size(), 2u);
-	EXPECT_EQ(keys(router.route(get("/table/account/key?prefix=4821"))).size(), 3u);
+	// A prefix of the partition key carries its own records and no more, because a prefix is a
+	// prefix of the bytes: it cannot tell the separator from a key that carries those bytes and
+	// more — and a key that does is in another partition anyway.
+	EXPECT_EQ(keys(router.route(get("/table/account/key?key=4821&from=4821&to=4821%01"))).size(), 3u);
+	EXPECT_EQ(keys(router.route(get("/table/account/key?key=4821&prefix=4821"))).size(), 3u);
 }

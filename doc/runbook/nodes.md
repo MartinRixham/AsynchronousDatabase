@@ -131,24 +131,28 @@ the whole 30. Each thread keeps
 its own curl handles, so the pool is also how many connections this node holds to
 each neighbour — a very large number is more connections than a neighbour wants.
 
-## A scan fails while everything else works
+## A node answers no peer
 
-A scan is asked of **one zone**, because a zone holds a copy of the whole
-keyspace, and every node of that zone has to answer for the scan to be complete.
-A node of it that does not answer is a **zone to give up on, not a scan to
-fail**: the whole range is asked of the next zone instead.
+A node can stop answering its peers while its process carries on renewing its
+lease: it stays in the membership, keeps answering the load balancer, and no
+other node can reach it. What that costs is decided by
+[how many copies a key has left](/database/cluster#what-a-write-and-a-read-do).
 
-So a scan that fails means **every zone has a node that does not answer**, while
-reads and writes of individual keys are mostly still fine — they only need one
-copy and one leader, rather than every node of a zone.
+- **A read needs one copy** and passes over one that does not answer, so it is
+  fine unless every copy is unreachable.
+- **A scan is the same.** It names a partition and is answered by one copy of it,
+  so it passes over a copy that does not answer exactly as a read does. A scan is
+  not more fragile than a read here, and a scan that fails means the same thing a
+  failed read means.
+- **A write needs every copy**, so a write whose key touches an unreachable node
+  is refused for as long as it stays unreachable.
 
-Mostly, and not entirely, because the copies of a partition are one node per
-zone: when one node in every zone is the one that does not answer, **one
-partition in eight has every copy of it deaf**. Those keys are still held, and
-still read — but only by a request that reaches one of those nodes, because a
-node that answers no other node can still answer a client. And a write needs
-*every* copy, so a write whose key touches one of them is refused for as long as
-it does not answer, which is roughly seven writes in eight.
+When it is **one node in every zone** that has gone deaf at once, the copies of a
+partition are one node per zone, so **one partition in eight has every copy of it
+unreachable**. Those keys are still held, and still read and scanned — but only
+by a request that lands on one of those nodes, because a node that answers no
+other node can still answer a client. And roughly seven writes in eight touch
+one, so most writes are refused while it lasts.
 
 **Check** each node in each zone directly:
 
@@ -160,10 +164,11 @@ then ask each named node for `/health` on its API port. The one that does not
 answer is the one to deal with, by the sections above.
 
 A scan that fails with a `4xx` is a different thing entirely and is not about
-nodes: every zone would refuse it alike, so the refusal is the answer and no
-other zone is asked. That is
-[`invalid_cursor`](/runbook/errors#_400-invalid-cursor-part-way-through-a-scan) or
-`invalid_range`.
+nodes: every copy would refuse it alike, so the refusal is the answer and no
+other copy is asked. That is
+[`invalid_cursor`](/runbook/errors#_400-invalid-cursor-part-way-through-a-scan),
+`invalid_range` or
+[`invalid_partition`](/database/scans#a-scan-names-its-partition).
 
 ## An instance was replaced
 
@@ -176,8 +181,11 @@ holding none of what was written before. What that looks like:
 
 - **Reads still work.** A key this node holds nothing for is asked of the other
   copies before it is answered as missing, so the other zones answer for it.
-- **Scans of its zone are short.** A scan is answered by one zone, so it answers
-  what *that* zone holds. The records this node lost are not in its zone's answer.
+- **Scans it answers are short.** A scan of a partition this node holds is
+  answered out of its own store, so the records it lost are not in the answer —
+  until it has rebuilt, while it reports
+  [`node_incomplete`](/database/reference#error-codes) instead and the node
+  reading asks a copy that is whole.
 - **`table_not_found` for the keys it owns**, until the tables are declared
   again — because the tables went with the volume too.
 - **Writes land on it** and are ordered normally, so new data is fine.

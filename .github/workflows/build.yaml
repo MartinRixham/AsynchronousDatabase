@@ -156,7 +156,7 @@ jobs:
           - stack: asyncdb-three
             experiments: node-stops nodes-removed zone-retired
           - stack: asyncdb-four
-            experiments: scan-loses-a-node node-latency disk-fills etcd-quorum-lost
+            experiments: nodes-go-deaf node-latency disk-fills etcd-quorum-lost
 
     env:
       VERSION: ${{ needs.build.outputs.version }}

@@ -138,7 +138,7 @@ expect "$(echo "$retired" | grep -c .)" 1 "exactly one zone was emptied — ${re
 
 # And a write needs every copy of the membership as it now stands, which is two.
 expect_writes 20 "every write is taken by the two copies that are left"
-expect "$(scan_status)" 200 "a scan is answered by a zone of three"
+expect "$(scan_status)" 200 "a scan is answered by a copy of the partition"
 
 # Both zones went from two nodes to three, so a third of each zone's copy changed hands inside it.
 expect_copies "with the tier in two zones"

@@ -96,8 +96,9 @@ them is reached — see [the deployment](/runbook/deployment#asking-one-instance
 | `500 storage_error`, "failed:" | RocksDB itself returned an error | [The store](/runbook/storage#rocksdb-returned-an-error) |
 | `404 table_not_found` for a table that exists | A node came back empty and the tables were not redeclared | [The store](/runbook/storage#a-node-came-back-empty) |
 | `404` for a record that was written | A copy missed the write, or the table was dropped | [What a client sees](/runbook/errors#a-record-that-should-be-there-is-not) |
-| `400 invalid_cursor` mid-scan | The page was asked of a different node | [What a client sees](/runbook/errors#_400-invalid-cursor-part-way-through-a-scan) |
-| Scans fail, reads and writes fine | Every zone has a node that does not answer | [A node has failed](/runbook/nodes#a-scan-fails-while-everything-else-works) |
+| `400 invalid_cursor` mid-scan | The partition moved to another node, or the cursor was given back against another partition | [What a client sees](/runbook/errors#_400-invalid-cursor-part-way-through-a-scan) |
+| `400 invalid_partition` on a scan | The scan named no partition, both of them, or one that is not one of the 256 | [Scans](/database/scans#a-scan-names-its-partition) |
+| Most writes refused, reads fine | A node in every zone answers no peer | [A node has failed](/runbook/nodes#a-node-answers-no-peer) |
 | `health` names too few nodes | Membership has not settled, or etcd is unreachable | [Membership](/runbook/membership#the-membership-is-wrong) |
 | Instances replaced over and over | The image cannot be pulled, or the grace period is too short | [The deployment](/runbook/deployment#instances-are-replaced-in-a-loop) |
 | Everything gone after a deploy | An instance was replaced, which is an empty database | [The store](/runbook/storage#a-node-came-back-empty) |

@@ -91,113 +91,28 @@ namespace
 		return json;
 	}
 
-	std::string range_query(const scan::range &range)
+	// The records of a page, and the cursor to resume at when there are more of them. The cursor
+	// carries the partition it was issued for, so it can only be given back for this same scan.
+	router::response page_response(
+		const scan::page &page,
+		const scan::range &range,
+		const std::string &instance)
 	{
-		std::string query = "limit=" + std::to_string(range.limit);
+		boost::json::array records;
 
-		query += std::string("&values=") + (range.values ? "true" : "false");
-		query += std::string("&reverse=") + (range.reverse ? "true" : "false");
-
-		if (range.has_from)
+		for (size_t i = 0; i < page.records.size(); i++)
 		{
-			query += "&from=" + url::encode(range.from);
+			records.push_back(to_json(page.records[i], range.values));
 		}
 
-		if (range.has_to)
+		boost::json::object body { { "records", records } };
+
+		if (page.has_more && !page.records.empty())
 		{
-			query += "&to=" + url::encode(range.to);
+			body["next"] = scan::encode_cursor(page.records.back().key, instance, range.partition);
 		}
 
-		return query;
-	}
-
-	router::request forwarded_range(const router::request &request, const scan::range &range)
-	{
-		return { request.method, request.path, range_query(range), request.body, request.forwarded };
-	}
-
-	scan::page read_page(const router::response &response)
-	{
-		scan::page page;
-
-		if (!response.json.contains("records") || !response.json.at("records").is_array())
-		{
-			return page;
-		}
-
-		const boost::json::array &answered = response.json.at("records").as_array();
-
-		for (size_t i = 0; i < answered.size(); i++)
-		{
-			if (!answered[i].is_object())
-			{
-				continue;
-			}
-
-			const boost::json::object &json = answered[i].as_object();
-			std::string value;
-			std::string sort;
-
-			if (!json.contains("key") || !json.at("key").is_string())
-			{
-				continue;
-			}
-
-			if (json.contains("value") && json.at("value").is_string())
-			{
-				value = std::string(json.at("value").as_string());
-			}
-
-			if (json.contains("sort") && json.at("sort").is_string())
-			{
-				sort = std::string(json.at("sort").as_string());
-			}
-
-			page.records.push_back(
-				record::valid_record(
-					record::compose_key(std::string(json.at("key").as_string()), sort), value));
-		}
-
-		page.has_more = response.json.contains("next");
-
-		return page;
-	}
-
-	bool trim_to_budget(std::vector<record::record> *records)
-	{
-		size_t bytes = 0;
-
-		for (size_t i = 0; i < records->size(); i++)
-		{
-			bytes += (*records)[i].key.size() + (*records)[i].value.size();
-
-			if (i > 0 && bytes > scan::max_page_bytes)
-			{
-				records->resize(i);
-
-				return true;
-			}
-		}
-
-		return false;
-	}
-
-	void merge(std::vector<record::record> *records, bool reverse)
-	{
-		std::sort(
-			records->begin(),
-			records->end(),
-			[reverse](const record::record &left, const record::record &right)
-			{
-				return reverse ? right.key < left.key : left.key < right.key;
-			});
-
-		records->erase(
-			std::unique(
-				records->begin(),
-				records->end(),
-				[](const record::record &left, const record::record &right) { return left.key == right.key; }),
-			records->end());
+		return router::json_response(boost::beast::http::status::ok, body);
 	}
 }
 
@@ -836,6 +751,44 @@ router::response router::router::scan_records(const request &request, const std:
 		return table_not_found(name);
 	}
 
+	// **The partition is what routes a scan, and it is read before anything else in the range.**
+	// The rest is read by the node that answers, because the cursor is that node's own: one read
+	// here would refuse a cursor issued by the node this scan is on its way to.
+	std::optional<size_t> named = scan::read_partition(request.query);
+
+	if (!named)
+	{
+		scan::range refused = scan::parse_range(request.query, repository.instance());
+
+		return error_response(refused.code, refused.message);
+	}
+
+	// **A scan is answered by one node, because a partition is held by one node of every zone.**
+	// This node when it holds a copy, and otherwise the nearest zone's, passing over a node that
+	// does not answer — the hops a read of a key takes. There is nothing to merge: every record of
+	// the partition is in the one answer, in the one order the store holds them in.
+	cluster::placement where = request.forwarded ? cluster::placement() : nodes.copies_of(*named);
+
+	if (where.local && !incomplete)
+	{
+		return answer_page(request, name);
+	}
+
+	// A node holding less than it owns cannot answer for a partition it may not have filled: what
+	// it would send is a page short of records it owns, which no client could tell from the whole
+	// of them. So it asks a copy that can, and answers for itself only when there is no other.
+	if (!where.nodes.empty())
+	{
+		return read_record(request, where.nodes);
+	}
+
+	return incomplete ? node_incomplete() : answer_page(request, name);
+}
+
+// The page this node's own store answers with. The range is read here and not before the scan was
+// routed, so the cursor in it is one this node issued.
+router::response router::router::answer_page(const request &request, const std::string &name)
+{
 	scan::range range = scan::parse_range(request.query, repository.instance());
 
 	if (!range.is_valid)
@@ -843,99 +796,7 @@ router::response router::router::scan_records(const request &request, const std:
 		return error_response(range.code, range.message);
 	}
 
-	scan::page page = repository.scan_records(name, range);
-	std::vector<record::record> records = page.records;
-	bool has_more = page.has_more;
-
-	std::vector<std::vector<std::string>> zones = request.forwarded
-		? std::vector<std::vector<std::string>>()
-		: nodes.zones();
-	std::optional<response> failure;
-
-	for (size_t i = 0; i < zones.size(); i++)
-	{
-		zone_answer answered = scan_zone(request, range, zones[i]);
-
-		failure = answered.failure;
-
-		if (failure && failure->status < boost::beast::http::status::internal_server_error)
-		{
-			return *failure;
-		}
-
-		if (!failure)
-		{
-			records = page.records;
-
-			records.insert(records.end(), answered.page.records.begin(), answered.page.records.end());
-
-			has_more = page.has_more || answered.page.has_more;
-
-			merge(&records, range.reverse);
-
-			if (records.size() > range.limit)
-			{
-				records.resize(range.limit);
-
-				has_more = true;
-			}
-
-			if (trim_to_budget(&records))
-			{
-				has_more = true;
-			}
-
-			break;
-		}
-	}
-
-	if (failure)
-	{
-		return *failure;
-	}
-
-	boost::json::array records_json;
-
-	for (size_t i = 0; i < records.size(); i++)
-	{
-		records_json.push_back(to_json(records[i], range.values));
-	}
-
-	boost::json::object body { { "records", records_json } };
-
-	if (has_more && !records.empty())
-	{
-		body["next"] = scan::encode_cursor(records.back().key, repository.instance());
-	}
-
-	return json_response(boost::beast::http::status::ok, body);
-}
-
-router::router::zone_answer router::router::scan_zone(
-	const request &request,
-	const scan::range &range,
-	const std::vector<std::string> &zone)
-{
-	zone_answer answered;
-
-	for (size_t i = 0; i < zone.size(); i++)
-	{
-		response answer = nodes.send(zone[i], forwarded_range(request, range));
-
-		if (answer.status != boost::beast::http::status::ok)
-		{
-			answered.failure = answer;
-
-			return answered;
-		}
-
-		scan::page read = read_page(answer);
-
-		answered.page.records.insert(answered.page.records.end(), read.records.begin(), read.records.end());
-		answered.page.has_more = read.has_more || answered.page.has_more;
-	}
-
-	return answered;
+	return page_response(repository.scan_records(name, range), range, repository.instance());
 }
 
 std::set<std::string> router::router::table_names() const

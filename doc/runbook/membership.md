@@ -57,7 +57,8 @@ means:
   with, and `ASYNCDB_UNLED_WRITES=false` — which
   [the image sets](/database/reference#the-cluster) — **refuses every write**
   with `no_leader` rather than taking it with no leader and no copies;
-- it asks nobody for a scan, so a scan answers only what it holds;
+- it holds every partition itself, so a scan of one is answered out of its own
+  store and asks nobody;
 - a lease after that membership fell to one, `/health` answers `503` with
   `unled` set, which is what takes the node **out of the load balancer**: it
   goes on serving the keys it holds and answering its peers, neither of which
@@ -217,8 +218,8 @@ again every three seconds, so a difference that is a few seconds old is normal.
 
 The last one matters more than it looks: **a node in no zone is its own zone**
 as far as grouping goes, so a cluster where one node lost its `ASYNCDB_ZONE`
-keeps an extra copy in a zone that does not exist, and scans of that zone answer
-from one node. Check the environment of the container:
+keeps an extra copy in a zone that does not exist, and that node is the only
+copy of its share anything there can be answered from. Check the environment of the container:
 
 ```bash
 docker inspect asyncdb-2 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep ASYNCDB

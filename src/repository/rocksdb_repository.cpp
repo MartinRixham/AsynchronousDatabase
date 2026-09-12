@@ -28,8 +28,45 @@ namespace
 	// neither this nor a version on any value, and its values cannot be told from versioned ones.
 	const std::string format_key = "FORMAT";
 
-	// 1 is the schema in one versioned record, which is the only format there has ever been.
-	const std::string format_version = "1";
+	// 2 is a store whose records are sorted by partition: 1 sorted them by key alone, and every
+	// key in it is in the wrong place for a walk of a partition. A file of records carries the
+	// keys the store holds, so the format is the transfer's as much as the disk's.
+	const std::string format_version = "2";
+
+	// **A record is held under its partition.** The store sorts by the key it is given, so the
+	// partition goes in front of the key: a walk of a partition is then one range of the store
+	// rather than a walk of the whole table, which is what a share of a table moving between
+	// nodes asks for. It is fixed at two bytes with cluster::partition_count, big endian so that
+	// the bytes sort as the number does and the partition after this one is one range on.
+	//
+	// Nothing outside this file sees it. What the seam carries is the composed key, and the
+	// prefix is put on and taken off at the store.
+	constexpr size_t partition_prefix_size = 2;
+
+	std::string partition_prefix(size_t partition)
+	{
+		std::string prefix;
+
+		prefix += static_cast<char>((partition >> 8) & 0xff);
+		prefix += static_cast<char>(partition & 0xff);
+
+		return prefix;
+	}
+
+	// The key as the store holds it. The partition is the key's own, so a record is written and
+	// read under the same prefix without anybody being asked where it belongs.
+	std::string store_key(const std::string &key)
+	{
+		return partition_prefix(cluster::partition_of(key)) + key;
+	}
+
+	// And back again, which is what a scan answers with: a key a client gave is a key it reads.
+	std::string composed_key(const rocksdb::Slice &key)
+	{
+		return key.size() < partition_prefix_size
+			? std::string()
+			: std::string(key.data() + partition_prefix_size, key.size() - partition_prefix_size);
+	}
 
 	// Beside the table documents in the default column family, and named so that it is no table's
 	// document: what a block of write counts has been reserved up to.
@@ -465,7 +502,7 @@ void repository::rocksdb_repository::write_record(const std::string &table_name,
 		database->Put(
 			rocksdb::WriteOptions(),
 			table_handle(table_name),
-			record.key,
+			store_key(record.key),
 			record::compose_value(record.stamp, record.value)),
 		"Writing a record to \"" + table_name + "\"");
 }
@@ -476,7 +513,8 @@ std::optional<std::string> repository::rocksdb_repository::read_record(
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 	std::string value;
-	rocksdb::Status status = database->Get(rocksdb::ReadOptions(), table_handle(table_name), key, &value);
+	rocksdb::Status status =
+		database->Get(rocksdb::ReadOptions(), table_handle(table_name), store_key(key), &value);
 
 	if (status.IsNotFound())
 	{
@@ -492,18 +530,17 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 	rocksdb::ReadOptions options;
-	rocksdb::Slice lower(range.from);
-	rocksdb::Slice upper(range.to);
 
-	if (range.has_from)
-	{
-		options.iterate_lower_bound = &lower;
-	}
+	// A scan reads one partition, so the bounds are that partition's unless the range narrows
+	// them: the partition after this one is where it ends, and a key bound is inside it.
+	std::string prefix = partition_prefix(range.partition);
+	std::string from = range.has_from ? prefix + range.from : prefix;
+	std::string to = range.has_to ? prefix + range.to : partition_prefix(range.partition + 1);
+	rocksdb::Slice lower(from);
+	rocksdb::Slice upper(to);
 
-	if (range.has_to)
-	{
-		options.iterate_upper_bound = &upper;
-	}
+	options.iterate_lower_bound = &lower;
+	options.iterate_upper_bound = &upper;
 
 	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(options, table_handle(table_name)));
 	scan::page page;
@@ -518,8 +555,9 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 		}
 
 		// The size is asked of the slices rather than of strings copied out of them, so a record
-		// the budget refuses is one this never allocated.
-		size_t size = it->key().size() + (range.values ? it->value().size() : 0);
+		// the budget refuses is one this never allocated. It is the key as the client reads it,
+		// the partition in front of it being the store's own.
+		size_t size = it->key().size() - partition_prefix_size + (range.values ? it->value().size() : 0);
 
 		if (!page.records.empty() && bytes + size > scan::max_page_bytes)
 		{
@@ -532,7 +570,7 @@ scan::page repository::rocksdb_repository::scan_records(const std::string &table
 		// Not asking for the value lets the iterator stay in the index blocks, which for a table
 		// of large values is the whole saving.
 		record::record read = record::valid_record(
-			it->key().ToString(),
+			composed_key(it->key()),
 			range.values ? std::string(record::value_of(it->value().ToStringView())) : "");
 
 		read.stamp = range.values ? record::version_of(it->value().ToStringView()) : record::version();
@@ -617,43 +655,73 @@ repository::extract repository::rocksdb_repository::export_records(const std::st
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 	std::string what = "Exporting a file of \"" + table_name + "\"";
-	rocksdb::ReadOptions options;
-	rocksdb::Slice lower(wanted.from);
 	rocksdb::Slice upper(wanted.to);
-
-	if (wanted.has_from)
-	{
-		options.iterate_lower_bound = &lower;
-	}
-
-	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(options, table_handle(table_name)));
 	scratch_file written_file(transfer_directory, transfer_name());
 	rocksdb::SstFileWriter writer(rocksdb::EnvOptions(), file_options());
 	extract taken;
 	size_t bytes = 0;
+	bool done = false;
 
 	check(writer.Open(written_file.path()), what);
 
-	for (it->SeekToFirst(); it->Valid(); it->Next())
+	// **A share is one range of the store for each partition of it**, because the store holds a
+	// record under its partition. What the walk reads is what it carries and nothing else, which
+	// is what a file of a share costs: the table in between belongs to the other nodes of this
+	// zone and is never looked at.
+	//
+	// Ascending, because a file is written in the order it is read and the store's order is the
+	// partition's before the key's.
+	for (size_t partition = 0; partition < cluster::partition_count && !done && bytes < wanted.bytes; partition++)
 	{
-		// A bound is inclusive, so every file after the first begins again at the key it resumed
-		// at.
-		if (wanted.has_from && it->key().compare(lower) == 0)
+		if (!wanted.partitions.test(partition))
 		{
 			continue;
 		}
 
-		// And the end of the piece is inclusive, so that the key one worker stops at is the key
-		// the next one starts after.
-		if (wanted.has_to && it->key().compare(upper) > 0)
+		std::string start = partition_prefix(partition);
+		std::string after = partition_prefix(partition + 1);
+
+		// A piece of a walk begins after the key the piece before it ended at and ends at its own,
+		// so a partition wholly behind the resume point is one to pass over and one wholly past
+		// the end of the piece ends the walk.
+		if (wanted.has_from && wanted.from >= after)
+		{
+			continue;
+		}
+
+		if (wanted.has_to && start > wanted.to)
 		{
 			break;
 		}
 
-		std::string key = it->key().ToString();
+		std::string from = wanted.has_from && wanted.from > start ? wanted.from : start;
+		rocksdb::ReadOptions options;
+		rocksdb::Slice lower(from);
+		rocksdb::Slice end(after);
 
-		if (wanted.partitions.test(cluster::partition_of(key)))
+		options.iterate_lower_bound = &lower;
+		options.iterate_upper_bound = &end;
+
+		std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(options, table_handle(table_name)));
+
+		for (it->SeekToFirst(); it->Valid(); it->Next())
 		{
+			// A bound is inclusive, so every file after the first begins again at the key it
+			// resumed at.
+			if (wanted.has_from && it->key().compare(rocksdb::Slice(wanted.from)) == 0)
+			{
+				continue;
+			}
+
+			// And the end of the piece is inclusive, so that the key one worker stops at is the
+			// key the next one starts after.
+			if (wanted.has_to && it->key().compare(upper) > 0)
+			{
+				done = true;
+
+				break;
+			}
+
 			// A walk that is not carrying values carries the versions, which is the whole of what
 			// a node deciding whether to give a record up has to ask about.
 			rocksdb::Slice stored = it->value();
@@ -663,26 +731,23 @@ repository::extract repository::rocksdb_repository::export_records(const std::st
 			check(writer.Put(it->key(), carried), what);
 
 			taken.records++;
+
+			bytes += it->key().size() + (wanted.values ? it->value().size() : 0);
+
+			if (bytes >= wanted.bytes)
+			{
+				// Where to resume, and that there is something to resume for: a budget spent on
+				// the last record of the share is a walk that asks once more and is answered a
+				// file with nothing in it, which is the round trip that says it reached the end.
+				taken.last = it->key().ToString();
+				taken.has_more = true;
+
+				break;
+			}
 		}
 
-		// The budget is what the walk read and not what it wrote, so a node holding a share of a
-		// zone reads its way through the table once over the whole transfer rather than once for
-		// every file of it. A walk that is not carrying values has not read them either.
-		bytes += it->key().size() + (wanted.values ? it->value().size() : 0);
-
-		if (bytes >= wanted.bytes)
-		{
-			taken.last = key;
-
-			it->Next();
-
-			taken.has_more = it->Valid();
-
-			break;
-		}
+		check(it->status(), what);
 	}
-
-	check(it->status(), what);
 
 	// A file with nothing in it is one SstFileWriter refuses to finish, and one there would be
 	// nothing to send. Where the walk reached still stands: the file after this one resumes there.

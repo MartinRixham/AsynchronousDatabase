@@ -61,9 +61,9 @@ with a prefix on every key — was rejected because:
 - **Tuning is per table.** Compression, block size and bloom filters are column
   family options. A table of small hot records and a table of large cold ones
   want different settings, and prefixes cannot express that.
-- **Ranges stay honest.** With prefixes, a scan of the whole table is a scan
-  bounded by the next prefix, and one badly chosen key can walk into a
-  neighbour's data. With column families the boundary is structural.
+- **Ranges stay honest.** With prefixes, a scan is a range bounded by the next
+  prefix, and one badly chosen key can walk into a neighbour's data. With column
+  families the boundary is structural.
 
 The cost is real and is the reason tables are coarse: each column family carries
 its own memtable, so an idle table still holds memory, and hundreds of tables

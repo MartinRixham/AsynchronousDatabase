@@ -72,24 +72,42 @@ cluster::placement cluster::fake_cluster::replicas(const std::string &key) const
 
 	// A key nothing was said about is this node's own, which is what an instance standing alone
 	// answers for every key.
-	if (owner == owners.end())
+	return owner == owners.end() ? placement() : placed(owner->second);
+}
+
+// A test names the keys a node holds rather than the partitions, so a partition is held by
+// whatever was said about a key that is in it. Nothing was said about the rest, which is this
+// node's own — the same answer replicas() gives for such a key.
+cluster::placement cluster::fake_cluster::copies_of(size_t partition) const
+{
+	for (std::map<std::string, std::vector<std::string>>::const_iterator it = owners.begin();
+		it != owners.end();
+		++it)
 	{
-		return placement();
+		if (partition_of(it->first) == partition)
+		{
+			return placed(it->second);
+		}
 	}
 
+	return placement();
+}
+
+cluster::placement cluster::fake_cluster::placed(const std::vector<std::string> &nodes) const
+{
 	placement where;
 
 	where.local = false;
 
-	for (size_t i = 0; i < owner->second.size(); i++)
+	for (size_t i = 0; i < nodes.size(); i++)
 	{
-		if (owner->second[i] == self)
+		if (nodes[i] == self)
 		{
 			where.local = true;
 		}
 		else
 		{
-			where.nodes.push_back(owner->second[i]);
+			where.nodes.push_back(nodes[i]);
 		}
 	}
 

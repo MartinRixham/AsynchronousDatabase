@@ -1,24 +1,59 @@
 # Scans
 
-Reading records in key order. This is what an ordered store is for, and it is
-the part of the API worth designing carefully.
+Reading records in key order, **one partition at a time**. This is what an
+ordered store is for, and it is the part of the API worth designing carefully.
 
 ```http
-GET /table/account/key?prefix=user:&limit=100
+GET /table/transaction/key?key=4821&limit=100
 ```
 
 ```json
 {
   "records": [
-    { "key": "user:4821", "value": "Eleanor Whitmore" },
-    { "key": "user:7203", "value": "Marcus Hale" }
+    { "key": "4821", "sort": "2026-01-31", "value": "..." },
+    { "key": "4821", "sort": "2026-02-28", "value": "..." }
   ],
-  "next": "eyJrIjoidXNlcjo3MjAzIiwicyI6NDIxOTl9"
+  "next": "eyJrIjoiNDgyMVwwMDAwMjAyNi0wMi0yOCIsInMiOjQyMTk5LCJwIjo3fQ=="
 }
 ```
 
-`records` is in key order. `next` is a cursor, and its absence means the range
-is exhausted.
+`records` is in key order within the partition. `next` is a cursor, and its
+absence means the range is exhausted.
+
+## A scan names its partition
+
+**Every scan reads one of the 256 [partitions](/database/cluster#one-copy-in-every-zone),
+and says which.** A key belongs to one partition, the store holds each partition
+apart from the others, and one node of a zone holds each — so a scan of a
+partition is one range of one node's store, answered without asking any other
+node. There is no scan of a whole table: that is a scan of each partition, and
+it is the client that walks them.
+
+| Parameter | Names the partition |
+| --- | --- |
+| `key` | The one holding this partition key. Hashing is the service's, so this is how a client asks for the records of a key it knows |
+| `partition` | By number, `0` to `255`. This is how a client walks a whole table |
+
+Exactly one of them, or the scan is
+[`invalid_partition`](/database/reference#error-codes). `key` is the usual one:
+`key=4821` is the partition holding `4821`, and the range parameters below then
+bound the records inside it.
+
+Walking a whole table is 256 scans, each of them independent and each answered
+by whichever node holds that partition:
+
+```http
+GET /table/transaction/key?partition=0
+GET /table/transaction/key?partition=1
+...
+GET /table/transaction/key?partition=255
+```
+
+They can be walked in any order, and several at a time — a client that wants a
+table read quickly asks several partitions at once, and the requests land on
+different nodes. What no client can ask for is the table serialised into one
+ordered stream: that would be every node's share merged by whichever node was
+asked, and a page of it costs every node a page.
 
 A record with a [sort key](/database/records#partition-keys-and-sort-keys)
 carries its two halves as two fields, which is what a client puts back into a
@@ -27,8 +62,7 @@ path. A record of one part has no `sort` at all:
 ```json
 {
   "records": [
-    { "key": "4821", "sort": "2026-01-31", "value": "..." },
-    { "key": "4821", "sort": "2026-02-28", "value": "..." }
+    { "key": "4821", "value": "the account" }
   ]
 }
 ```
@@ -50,28 +84,25 @@ is itself a JSON document arrives here escaped, and is the client's to parse.
 | `values` | `false` returns keys only |
 
 **The bounds range over the whole key**, both halves and the zero byte between
-them, because that is the order the store holds. A partition key sorts below
-every key under it, so `prefix=4821` is the record `4821`, everything sorting
-under it — and `48210` as well, because `prefix` is a prefix of the bytes and
-knows nothing about halves. To ask for one partition key and nothing else, bound
-it below the byte after the separator:
+them, because that is the order the store holds — and they range *inside the
+partition named*, which is the only place those keys are. A partition key sorts
+below every key under it, so within `key=4821` the bounds `prefix=4821` are the
+record `4821` and everything sorting under it.
+
+`48210` is a different partition key, so it is in a different partition and no
+bound reaches it from here: what used to need a bound below the byte after the
+separator now needs nothing, because the partition is the fence.
 
 ```http
-GET /table/transaction/key?from=4821&to=4821%01
+GET /table/transaction/key?key=4821&prefix=4821
 ```
-
-Every one of those records is on
-[one node](/database/cluster#which-node-owns-a-key), because a partition key is
-never split — so however large the cluster is, one node answers the range and
-the rest of its zone answers nothing. A scan's bounds are keys and not
-partitions, so the rest of the zone is still asked.
 
 `from` inclusive and `to` exclusive is RocksDB's own convention, and it is the
 one that makes ranges compose: the `to` of one page is the `from` of the next
 with nothing dropped and nothing repeated.
 
-Omit both bounds and the scan is the whole table, which is a legitimate thing to
-ask for and an expensive one.
+Omit both bounds and the scan is the whole partition, which is what a walk of a
+table asks for 256 times.
 
 **`limit` is a maximum and not a promise.** A page is bounded in bytes as well as
 in records — 8 MiB of keys and values — because a limit of a thousand says
@@ -102,11 +133,18 @@ A cursor encodes the last key returned. Passing it resumes strictly after that
 key:
 
 ```http
-GET /table/account/key?prefix=user:&cursor=eyJrIjoidXNlcjo3MjAzIiwicyI6NDIxOTl9
+GET /table/transaction/key?key=4821&cursor=eyJrIjoiNDgyMVwwMDAwMjAyNi0wMi0yOCIsInMiOjQyMTk5LCJwIjo3fQ==
 ```
 
 The cursor is opaque. It is not a key, and a client that decodes one and builds
 its own has built a `from`, which it could have asked for honestly.
+
+**A cursor belongs to one partition and to the instance that issued it**, and
+both are checked: it carries the partition it was issued for, so a cursor given
+back against another partition is
+[`invalid_cursor`](/database/reference#error-codes) rather than an empty page.
+Since the node answering is the one that holds the partition, it is also the
+node that reads the cursor back, whichever node the client happens to ask.
 
 **A paged scan is not a consistent read.** Each page is a new RocksDB iterator,
 and an iterator sees the instance as it was when it was created. Records written
@@ -132,11 +170,10 @@ carry most of it:
 
 - **Put in the key, in order, what you will want to scan by.** A transaction
   with partition key `{account}` and sort key `{timestamp}` answers "this
-  account's transactions, newest first" with one reverse scan — and answers it
-  on [one node](/database/cluster#which-node-owns-a-key), because a partition
-  key is never split. The other way round it answers "every account's
-  transactions in time order" instead, from every node at once, and answers the
-  first question only by reading everything.
+  account's transactions, newest first" with one reverse scan of one partition,
+  on [one node](/database/cluster#which-node-owns-a-key). The other way round —
+  the timestamp as the partition key — answers that question only by walking
+  every partition of the table and throwing most of it away.
 - **A prefix scan is only cheap if the prefix is a prefix.** Asking for keys
   *containing* something is a full scan with the service throwing most of it
   away, which is why the API does not offer it: it would look like a query and

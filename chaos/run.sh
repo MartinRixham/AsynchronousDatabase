@@ -20,7 +20,7 @@ here=$(dirname "$0")
 # what the deployment *is* — a run that dies inside one leaves a stack that is a different shape
 # rather than a cluster short of a node — and they are also the longest. And etcd losing quorum is
 # last, because it is the only one that leaves the cluster having been wrong about itself.
-default="node-stops zone-lost scan-loses-a-node etcd-unreachable node-latency disk-fills"
+default="node-stops zone-lost nodes-go-deaf etcd-unreachable node-latency disk-fills"
 default="$default containers-restart nodes-added nodes-removed zone-retired etcd-quorum-lost"
 
 experiments=${CHAOS_EXPERIMENTS:-$default}

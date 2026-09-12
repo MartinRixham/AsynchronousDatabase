@@ -111,11 +111,11 @@ Two details of the API carry it:
 | --- | --- |
 | A file rather than a scan | A scan pages a hundred records at a time, so a node holding hundreds of gigabytes would need millions of round trips to be filled. A file is one round trip for as much of the table as the budget covers, and the transfer then waits on the bandwidth between the two nodes rather than on the time to ask |
 | Several pieces of the table at once | One walk at a time is *ask, wait, take it in, ask again*, with the node being read, the network and the store each idle for most of it. The pieces are read together, and the next file of each is asked for while the last is still going in |
-| The partitions named by the node asking, not the node answering | The node serving a file asks its own membership nothing: it filters by the key's partition, which is a function of the key's partition key alone. So a source a moment behind in what it thinks the cluster is still sends the right records |
+| The partitions named by the node asking, not the node answering | The node serving a file asks its own membership nothing: it seeks to each partition it was asked for, and where a key belongs is a function of its partition key alone. So a source a moment behind in what it thinks the cluster is still sends the right records — and reads nothing but the partitions it was asked for, the rest of the table belonging to its zone's other nodes |
 
 A zone with a node that does not answer is a zone that cannot give the whole of
 what it holds, so the **next zone is asked for the whole thing again** — the same
-fallback a scan already makes. If no zone answers, the node starts with what it
+fallback a read of a key makes. If no zone answers, the node starts with what it
 has, which is what it would have had anyway.
 
 **It is bounded by progress, not by a clock.** A rebuild goes on for as long as

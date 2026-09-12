@@ -604,9 +604,12 @@ await_writes()
 	return 1
 }
 
+# scan_status [key] — a scan of the partition a seeded key is in, which is what a scan is now: one
+# partition, answered by one copy of it. Every seeded key exists, so 200 is the answer and a 5xx is
+# no copy of that partition answering.
 scan_status()
 {
-	status "$base/table/$table/key?limit=100"
+	status "$base/table/$table/key?key=${1:-0}&limit=100"
 }
 
 # ---------------------------------------------------------------------------- what a node holds
@@ -628,14 +631,14 @@ scan_status()
 #
 # A thousand is the largest page the API allows. Ten of them is above what the load writes in the
 # longest experiment here — a write every CHAOS_LOAD_PAUSE seconds for as long as two stack updates
-# take — and a walk breaks out at the first page with no cursor, so a table of two hundred seeded
-# records still costs one Run Command a node whatever this is set to.
+# take.
 #
-# A walk that does reach the cap stops at the same key on every node, because the order is the
-# store's own. So what is compared is a prefix of the table rather than a different part of it on
-# each node: the cap is short coverage and never a false answer.
+# **A scan reads one partition, so a walk of a table is a scan of each of the 256 in turn** — all
+# of them in the one Run Command, because Run Command is seconds a call however small the call is.
+# A partition holds a 256th of a node's share, so this limit is a page apiece with room to spare,
+# and a partition that does not fit in one page is a walk that says so rather than one that
+# silently compares part of a table: `holdings_pages` is gone with the paging it bounded.
 holdings_limit=1000
-holdings_pages=10
 
 # What `aws ssm get-command-invocation` answers with: the first 24,000 characters the command wrote
 # to stdout, and nothing to say the rest was cut. A page of a table is longer than that at a few
@@ -664,48 +667,57 @@ forwarded_header=X-Asyncdb-Forwarded
 # bandwidth: a table whose values are kilobytes is a page that does not fit however few records it
 # carries.
 #
+# The partitions are walked on the instance and the pages come back as one line each, so nothing
+# here needs jq where the database runs: what is parsed is parsed at this end.
+#
 # A scan names the two halves of a composed key separately, and every caller here takes `.key` for
 # the whole of it, which holds because nothing this suite writes carries a sort key. Give one a sort
 # key and its records collapse onto one name: a key set that is short without saying so, and two
 # values under one name that copies_agree would call a disagreement.
 walk_store()
 {
-	local id=$1 name=$2 values=$3 filter=$4 from= url packed page keys pages=0
+	local id=$1 name=$2 values=$3 filter=$4 packed pages line
 
 	: > "$work/keys"
 
-	while [ "$pages" -lt "$holdings_pages" ]; do
-		pages=$((pages + 1))
+	# One Run Command for the whole table: the instance walks the partitions with curl, prints a
+	# page a line, and packs the lot. A partition nothing is held in is a line with no records in
+	# it, which costs a seek and a few bytes.
+	#
+	# The whole walk is bounded rather than each call, because two hundred and fifty six timeouts
+	# is an hour of Run Command and a node that is not answering should be one failed assertion.
+	packed=$(ssm_run "$id" "timeout 120 bash -c 'for p in \$(seq 0 255); do \
+		curl -s --max-time 10 -H \"$forwarded_header: true\" \
+			\"http://localhost:8080/table/$name/key?partition=\$p&limit=$holdings_limit&values=$values\"; \
+		echo; \
+	done' | gzip -c | base64 -w0")
 
-		# Every key this suite writes is unreserved in a URL, so the resume bound is not encoded.
-		url="http://localhost:8080/table/$name/key?limit=$holdings_limit&values=$values${from:+&from=$from}"
+	pages=$(printf '%s' "$packed" | base64 -d 2> /dev/null | gunzip 2> /dev/null)
 
-		packed=$(ssm_run "$id" \
-			"curl -s --max-time 30 -H '$forwarded_header: true' '$url' | gzip -c | base64 -w0")
+	# Every one of the 256, or this node said less than it holds: a walk short of a partition is a
+	# key set short without saying so, which is what both invariants would then be compared against.
+	if [ "$(printf '%s\n' "$pages" | grep -c '"records"')" != 256 ]; then
+		# The one answer here that is not a node refusing to say anything: pages that did not fit
+		# even packed, which is holdings_limit set too high for what they carry.
+		[ "${#packed}" -lt "$ssm_output_limit" ] \
+			|| echo "  ---- $id said more of $name than Run Command carries." >&2
 
-		page=$(printf '%s' "$packed" | base64 -d 2> /dev/null | gunzip 2> /dev/null)
+		return 1
+	fi
 
-		if ! echo "$page" | jq --exit-status 'has("records")' > /dev/null 2>&1; then
-			# The one answer here that is not a node refusing to say anything: a page that did
-			# not fit even packed, which is holdings_limit set too high for what it carries.
-			[ "${#packed}" -lt "$ssm_output_limit" ] \
-				|| echo "  ---- $id said more of $name than Run Command carries." >&2
+	# A partition over one page is coverage this cannot claim, so it is an error and not a walk
+	# that quietly compares a prefix of it.
+	if printf '%s\n' "$pages" | jq --slurp --exit-status 'any(.[]; has("next"))' > /dev/null 2>&1; then
+		echo "  ---- $id holds more of $name in one partition than a page carries." >&2
 
-			return 1
-		fi
+		return 1
+	fi
 
-		keys=$(echo "$page" | jq -r '.records[].key')
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
 
-		[ -n "$keys" ] || break
-
-		echo "$page" | jq -r ".records[] | $filter" >> "$work/keys"
-
-		# No cursor is a range that is exhausted. A bound is inclusive, so the next page begins
-		# again with the key it resumed at, which the sort takes back out.
-		echo "$page" | jq --exit-status 'has("next")' > /dev/null 2>&1 || break
-
-		from=$(echo "$keys" | tail -1)
-	done
+		printf '%s\n' "$line" | jq -r ".records[] | $filter" >> "$work/keys"
+	done < <(printf '%s\n' "$pages")
 
 	sort -u "$work/keys"
 }

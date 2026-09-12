@@ -189,11 +189,11 @@ every one of them is written to be safe run twice, or against a fault that never
 is as soon as that experiment's assertions are done; the seconds an experiment names are what its
 script sleeps for if nothing ever comes back to remove it. That is what lets them stay generous:
 **a fault that expires mid-assertion is a false failure and not a weaker test**, because
-`scan-loses-a-node` asserts that a scan *fails* while a node is deaf. None of it is taken on trust:
-the recovery assertion every experiment runs next is the check that the fault went, **and it has to
-be one the fault would fail**. A rule left standing changes no membership, so `scan-loses-a-node`
-waits on a write rather than on `/health`: a write needs every copy, and a node no peer can reach
-fails one.
+`nodes-go-deaf` counts the partitions a hearing node cannot reach while the fault stands. None of
+it is taken on trust: the recovery assertion every experiment runs next is the check that the fault
+went, **and it has to be one the fault would fail**. A rule left standing changes no membership, so
+`nodes-go-deaf` waits on a write rather than on `/health`: a write needs every copy, and a node no
+peer can reach fails one.
 
 - **Every experiment runs under load**, because a fault that lands on an idle cluster is not the
   fault anybody has. `start_load` keeps a client on the load balancer for the whole of an
@@ -235,12 +235,14 @@ fails one.
   while it is under test. Four of the five send the script `fault_script` builds — write the removal down,
   arm a detached timer, install, sleep, remove — and none of them waits that sleep out: `heal`
   takes the fault away over a second Run Command, and the timer is for the run that died holding
-  it. `scan-loses-a-node` and `etcd-unreachable` install their rule in the **`DOCKER-USER`** chain,
+  it. `nodes-go-deaf` and `etcd-unreachable` install their rule in the **`DOCKER-USER`** chain,
   because a container behind a published port is reached through `FORWARD` and sends through it
   too, so **a rule in `INPUT` or `OUTPUT` blocks nothing here**. A deaf node is still asked over
   Run Command, because a request the host makes to a published port never crosses `FORWARD` —
-  which is how the rule is taken out again, and how `scan-loses-a-node` asks a scan of a node that
-  hears rather than of whichever one the load balancer picked. The other three (`ec2:StopInstances`
+  which is how the rule is taken out again, and how `nodes-go-deaf` scans a node that hears rather
+  than whichever one the load balancer picked. **A scan there is a read and no more fragile than
+  one**: it names a partition and is answered by one copy of it, so the partitions it cannot answer
+  for are the ones whose every copy went deaf. The other three (`ec2:StopInstances`
   twice, and a network acl on one zone's subnet) need nothing of the instances, which is why they
   are first. `chaos/README.md` is the page.
 - **`containers-restart` is the fifth, and the only fault here that stands for no time at all**:
@@ -279,10 +281,11 @@ fails one.
   the second the clear down half, so which one fails says which half of the mechanism broke.
 - **Neither invariant can be seen through the load balancer**, which answers a read from whichever
   copy has the key and so says a record exists somewhere and never where. `holdings` in
-  `chaos/harness.sh` asks each node what is in its own store, over Run Command, with a scan carrying
-  `X-Asyncdb-Forwarded` — served where it lands, so it is that node's own share and not its zone's
-  merged answer, which is the request a rebuild makes of each node of a zone. A node that cannot be
-  asked is a failed assertion and not an empty store.
+  `chaos/harness.sh` asks each node what is in its own store, over Run Command, with a scan of
+  every partition carrying `X-Asyncdb-Forwarded` — served where it lands, so it is that node's own
+  share and never another node's. **A scan reads one partition, so a walk of a table is 256 of
+  them**, sent as one Run Command because Run Command is seconds a call however small the call is.
+  A node that cannot be asked is a failed assertion and not an empty store.
 - **What a terminated instance took with it is measured and never asserted.** A key whose owner in
   every zone was terminated by the same update went with them, and nothing in the cluster puts that
   back — no rebuild of a copy, no backup. Every resize prints how many seeded keys are still held
@@ -499,11 +502,12 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   share in several pieces at once is.
 - **`cluster::cluster`** is the second pure-virtual seam the router routes against, over "which
   nodes hold this key" and "ask that node". `cluster::replicas` answers a `cluster::placement` —
-  whether this node holds a copy, and the other nodes that do, this node's own zone first.
-  `cluster::zones` groups the membership for a scan: the nodes of each zone, this node's own first,
-  which is why a scan asks one zone rather than every node. `cluster::holdings` is `replicas` asked of
-  every partition at once, because a pass that moves records has no key to ask about: what it asks
-  another node for is a share, and a share is a set of partitions. `cluster::etcd_cluster` registers
+  whether this node holds a copy, and the other nodes that do, this node's own zone first — and
+  `cluster::copies_of` is the same question asked of a *partition*, which is what routes a scan: a
+  scan names a partition and has no key to ask about. `cluster::zones` groups the membership for a
+  pass that moves records: the nodes of each zone, this node's own first. `cluster::holdings` is
+  `replicas` asked of every partition at once, because a pass that moves records has no key to ask
+  about either: what it asks another node for is a share, and a share is a set of partitions. `cluster::etcd_cluster` registers
   `/asyncdb/node/{address}` in etcd on a lease with `{"node":...,"zone":...}` as its value (a bare
   address is still read, as a node in no zone), renews it on a thread of its own, and reads the
   membership back — and **a membership of fewer than two nodes is this node holding every key**,
@@ -517,9 +521,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   travels, `forward` and `forward_all` over the `http::client` it is handed, and it is handed to
   `etcd_cluster` in turn rather than made inside it; `member.h` is `member` and `membership`,
   the whole list held as a `shared_ptr<const vector<member>>` and swapped rather than edited, so a
-  reader loads it without excluding the thread that replaces it; and `placements.h` answers
-  `replicas` once a partition rather than once a key, which is what a pass walking a million keys
-  asks through.
+  reader loads it without excluding the thread that replaces it.
 - **`repository::repository`** is the pure-virtual seam, over tables, records, scans and
   the **files a node's share of a table travels in** — `export_records` writes one and `import_records`
   takes one. It is `cluster::partition_set` that says which records a file carries, so the seam includes
@@ -565,16 +567,23 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   `/key/a/b` and `/key/a%00b` are one record, which is why there is no error code for this and
   nothing to reject. The 4 KiB is over the whole composed key. **The separator sorts below every
   other byte**, so a partition key's records are together in the store, in sort key order, and
-  before every key the partition key is a prefix of.
-- `scan::range` is the parsed query of a scan, and a cursor is base64 of
-  `{ "k": last key, "s": instance }`; the instance is what makes a cursor this instance did not issue
-  refusable.
+  before every key of that partition the partition key is a prefix of — a longer partition key
+  hashes elsewhere, so the store holds it nowhere near.
+- **A scan names the partition it reads**, as `partition` by number or as a `key` that is in one,
+  and `scan::read_partition` is that alone: it is read before the rest of the range because it is
+  what routes the scan, and the node it routes to is the node that reads the cursor. `scan::range`
+  is the rest of the parsed query, and a cursor is base64 of
+  `{ "k": last key, "s": instance, "p": partition }`; the instance is what makes a cursor this
+  instance did not issue refusable, and the partition is what makes one given back against another
+  partition refusable rather than answered with the nothing that key holds there. A query naming
+  neither or both is `invalid_partition`, and **there is no scan of a whole table**: that is 256
+  scans, and the client walks them.
 - **A page is bounded in bytes as well as in records** — `scan::max_page_bytes`, 8 MiB of keys and
   values. `limit` caps the count and says nothing about the size, so a thousand of the largest legal
   records is a 16 GiB response built in memory on the node answering: the instance dies, is replaced,
   and comes back empty. The walk in `rocksdb_repository::scan_records` stops on the budget and sets
-  `has_more`, and `trim_to_budget` in the router applies it again to the merge, because each node
-  answered within it but a zone of two nodes is two pages of it. **A record larger than the whole
+  `has_more`, and that is the whole of it: a scan is one partition of one node's store, so there is
+  no second page to weigh against it. **A record larger than the whole
   budget is still returned, alone**, or a scan could never get past that key. `fake_repository`
   walks the same way, so a unit test sees the page a client really gets.
 - **Partitioning is by the partition key alone, never by the table and never by the sort key**, so
@@ -602,9 +611,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   and the leader holds `write_lock(cluster::table_key)` across the whole of one — the tables are
   read, validated against and written under it, so a create is weighed against what the cluster
   held when it was carried out rather than when it arrived, and two creates of one name cannot be
-  applied on two nodes at once. A scan is asked of **one zone** — this node's own, since a zone
-  holds a copy of the whole keyspace — and merged back into key order, falling back to another zone
-  when a node of that one does not answer. A forwarded request carries
+  applied on two nodes at once. A scan names a partition, and **one node of a zone holds a
+  partition**, so it is answered by one copy of it — this node when it holds one, else the nearest
+  zone's, passing over a copy that does not answer — and there is nothing to merge. A forwarded
+  request carries
   `X-Asyncdb-Forwarded` and is served where it lands, which is what stops two nodes bouncing it. A
   `GET /table/{table}/file` is the same thing by construction: it is answered out of the store it
   landed on and asks the membership nothing.
@@ -624,10 +634,13 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   the thread taking its files in, and one slot is what bounds that.
 - **A share of a table moves as a file, never a record at a time.** `GET /table/{table}/file?partitions=`
   is what a rebuild and both halves of a reconcile ask for: the partitions are the *asking* node's,
-  so the node answering filters by `partition_of` and asks its own membership nothing, and two nodes a
-  moment apart still agree on what was sent. The budget — `repository::max_file_bytes`, 64 MiB — is
-  what the walk **read** rather than what it wrote, so a node holding a sixth of a zone reads through
-  the table once over the whole transfer, and a file the partitions emptied still moves the walk along.
+  so the node answering asks its own membership nothing, and two nodes a moment apart still agree on
+  what was sent. **The store holds a record under its partition, so a share is one range of the
+  store for each partition of it** — the walk seeks to each and reads nothing in between, which is
+  what stops a file of one partition costing a read of the whole table. The budget —
+  `repository::max_file_bytes`, 64 MiB — is what the walk **read**, which is now what it carries;
+  a budget spent on the last record of a share is one more round trip, answered with a file that
+  has nothing in it.
   `X-Asyncdb-Records` and `X-Asyncdb-Next` are what the bytes cannot say: how many records, and base64
   of the key to resume at, absent at the end of the table. Paging a hundred records at a time over HTTP
   is a round trip per hundred, which is not a thing a node holding hundreds of gigabytes finishes.
@@ -645,8 +658,9 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   being the bytes the store holds. The count comes from `repository::next_count()`, reserved on disk
   a million at a time, so stamping a write costs nothing and a process that restarts carries on
   above every count the one before it issued. It is the same count a schema operation is stamped
-  with. **A store of another format refuses to open**: `check_format` holds `format_version`, 1
-  for the schema in one versioned record, and a store that names a different one or names none at
+  with. **A store of another format refuses to open**: `check_format` holds `format_version`, 2
+  for records held under their partition (1 held them under the key alone, which is the wrong place
+  for every one of them), and a store that names a different one or names none at
   all and has something in it is refused rather than read as versions that were never written.
 - **A file overwrites only what was written before it.** `import_records` keeps a record the store
   holds at a later version and replaces an earlier one, which is what catches up a copy that was
@@ -695,7 +709,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   view that is a moment out of date is answered a file without the key in it, keeps the record, and
   asks again next pass. **The clear down is two walks**: the first is local and finds which
   partitions this node holds records it no longer owns in, grouped by the node of its own zone that
-  owns them; the second asks each of those nodes for a file of the keys it holds in them. The count
+  owns them; the second asks each of those nodes for a file of the keys it holds in them. **The
+  local walk scans only the partitions this node does not own** — the store sorts them apart, so
+  the ones it owns, which are the whole of the table but for what has just moved, are passed over
+  rather than read through to find nothing out of place in them. The count
   of what is left when they are done is `deferred`, and a pass with any is not settled.
   **Neither half is safe alone**: clearing down without fetching is a shrink that loses records
   rather than staling them; fetching without clearing down is a store that only grows and a stale
@@ -744,7 +761,7 @@ network. `server_test` is an integration test: it starts a real server on port 0
 drives it with libcurl. `test/server/cluster_test.cpp` is the same thing twice over: two real servers
 on two ports, each given a `cluster::test_cluster` naming the other — the production routing with the
 membership and the leader told to it rather than read from etcd, and a `send_all` that is a real fan
-out — so forwarding, table fan-out and merged scans are exercised over real sockets. Both have to stop
+out — so forwarding, table fan-out and scans routed by partition are exercised over real sockets. Both have to stop
 the servers they start, and both wait on `server::wait_until_listening` (`test/server/listening.h`)
 first: a server binds in its constructor, which is what settles the port a test asks it for, and
 listens only in `serve()`, once the store is filled and the node has joined — so a test that started

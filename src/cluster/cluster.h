@@ -98,6 +98,12 @@ namespace cluster
 
 		virtual placement replicas(const std::string &key) const = 0;
 
+		// Where the copies of a partition are, which is replicas() asked of a partition rather
+		// than of a key. A scan names a partition and has no key to ask about: every key it could
+		// name is in that partition, and the copies of a partition are the same nodes for all of
+		// them.
+		virtual placement copies_of(size_t partition) const = 0;
+
 		// Every partition this node holds a copy of. replicas() answers the same question of one
 		// key, and a pass that moves records has no key to ask about: what it asks another node
 		// for is its share, and a share is a set of partitions.

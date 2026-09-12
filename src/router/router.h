@@ -129,15 +129,7 @@ namespace router
 
 		response scan_records(const request &request, const std::string &name);
 
-		// What one zone said to a scan: the page its nodes answered with, or the answer that failed.
-		struct zone_answer
-		{
-			std::optional<response> failure;
-
-			scan::page page;
-		};
-
-		zone_answer scan_zone(const request &request, const scan::range &range, const std::vector<std::string> &zone);
+		response answer_page(const request &request, const std::string &name);
 
 		std::set<std::string> table_names() const;
 

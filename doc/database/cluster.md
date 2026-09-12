@@ -413,7 +413,7 @@ versions for as long as neither of those happens.
 | `GET`/`HEAD` `/table/{table}/key/{key}` | Answered by one copy: this node when it holds one, else the nearest that answers. A key this node holds nothing for is asked of the other copies |
 | `PUT`/`DELETE` `/table/{table}` | Ordered by the node **leading the tables**, and carried out on **every** node from there: a record can only be written where its table is |
 | `GET` `/table`, `GET /table/{table}` | Answered where they are asked. Every node holds every table |
-| `GET` `/table/{table}/key` | Asked of **one zone** — this node's own — and the pages merged back into key order |
+| `GET` `/table/{table}/key` | A scan names a partition, so it is answered by **one copy of it**: this node when it holds one, else the nearest that answers |
 | `GET /table/{table}/file` | Answered out of **this node's own store**, and never forwarded: what is being asked for is what this node holds |
 | `GET /table/{table}/split` | The same: where this node would cut a walk of its own table up |
 | `GET /schema` | The whole schema out of **this node's own store** — every name it has heard of, the dropped ones included, each with its version. Between nodes, not for clients |
@@ -555,35 +555,37 @@ record up asks for.
 
 ## Scans across a cluster
 
-A scan is the one operation that cannot be answered by one node — but it can be
-answered by one **zone**, and that is what it asks. A zone holds a copy of the
-whole keyspace, so the nodes of one zone between them hold every key in the
-range; the answers are merged into key order and cut to the `limit`.
+**A scan names a partition, so it is answered by one node.** A partition is held
+by one node of every zone, and the store holds it as one range of keys — so the
+records of the partition are one node's answer, in the one order that node's
+store already had them in. There is nothing to merge, no page of another node's
+to hold, and no limit to cut a merged order down to.
 
-The zone asked is **this node's own**, which is the cheap one: those nodes are in
-the same availability zone as the node that was asked, so the pages cross no zone
-boundary. A node that is alone in its zone holds every key itself and asks nobody
-at all.
+Which node: **this one when it holds a copy**, and otherwise the nearest zone's,
+which is the same walk a [read of a key](#what-a-write-and-a-read-do) takes. A
+copy that does not answer is passed over for the next zone's; a copy that
+*refuses* — a cursor it did not issue, a range that is not below its end — is the
+answer, because every copy would refuse alike.
 
-Asking every node instead would return the same records once per zone, and cost
-three pages of bytes for every page of answer.
+A node that holds less than it owns answers
+[`node_incomplete`](/database/reference#error-codes) rather than a page, for the
+same reason it does for a read: a page short of the records it owns is one no
+client could tell from the whole of them, so the node reading passes over it and
+asks a copy that is whole.
 
-A node of that zone that does not answer is a **zone to give up on, not a scan to
-fail**: another zone holds the same keys, so the whole range is asked of the next
-one instead. Only when no zone has a complete set of nodes answering does the
-scan fail. A node that *refuses* — a cursor this instance did not issue, a range
-that is not below its end — is a different thing: every zone would refuse alike,
-so the refusal is the answer and the next zone is not asked.
+**A scan of a whole table is the client's to walk**, one partition at a time —
+see [scans](/database/scans#a-scan-names-its-partition). Asking one node for a
+table in key order would be that node holding a page of every other node's share
+and merging them, which costs a page of bytes per node for every page of answer,
+and puts the largest response in the cluster on whichever node a client happened
+to ask.
 
-What is over the limit is dropped rather than held: the next page asks the zone
-again from where this one ended, so the dropped keys are the keys the next page
-begins with.
-
-The cursor is issued by the node that answered, and names a position in the
-merged order. It is still
-[a cursor of one instance](/database/scans#paging-and-what-a-cursor-promises):
-**page through a scan against the node that started it**, or use `from` and `to`,
-which any node will take.
+The cursor is issued by the node that answered and names a position in that
+partition. It carries the partition beside
+[the instance](/database/scans#paging-and-what-a-cursor-promises), and it is read
+by the node that issued it whichever node the client gives it back to: the
+partition is what routes the scan, and it routes every page of it to the same
+node.
 
 ## What this is not
 
@@ -600,8 +602,8 @@ it ends.
   copies that took it keep it; there is no log to catch a copy up with, no read
   repair and no hinted handoff, so until the client runs the write again the
   zones disagree and a read may be answered by either of them. A scan is answered
-  by one zone, so it answers what *that* zone holds — a record another zone has
-  and this one does not is a record the scan does not return. What has changed is
+  by one copy of the partition, so it answers what *that* copy holds — a record
+  another zone has and this one does not is a record the scan does not return. What has changed is
   only what happens when something *does* compare two copies: a pass moving
   records can tell which of them is the later one and takes it, where before it
   kept whichever it happened to be holding. That is a repair where a pass runs and

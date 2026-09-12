@@ -49,6 +49,10 @@ namespace cluster
 		// by value.
 		std::shared_ptr<std::mutex> mutex;
 
+		// The nodes a test named, as a placement: this node taken out of the list and marked
+		// local, which is what the seam answers with.
+		placement placed(const std::vector<std::string> &nodes) const;
+
 	public:
 		fake_cluster(const std::string &node, const std::vector<std::string> &members);
 
@@ -102,6 +106,8 @@ namespace cluster
 		std::vector<member> members() const override;
 
 		placement replicas(const std::string &key) const override;
+
+		placement copies_of(size_t partition) const override;
 
 		partition_set holdings() const override;
 

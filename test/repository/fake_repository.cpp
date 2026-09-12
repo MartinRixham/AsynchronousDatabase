@@ -39,9 +39,14 @@ namespace
 		return file.substr(newline + 1, length);
 	}
 
+	// A scan reads one partition, so a key of another is out of its range however the bounds read.
+	// The real store sorts the partitions apart and never looks at the rest; this one holds every
+	// key in one map and passes over them, which is the same page from a store a test can write by
+	// hand.
 	bool is_in_range(const std::string &key, const scan::range &range)
 	{
-		return (!range.has_from || key >= range.from) && (!range.has_to || key < range.to);
+		return cluster::partition_of(key) == range.partition &&
+			(!range.has_from || key >= range.from) && (!range.has_to || key < range.to);
 	}
 }
 

@@ -6,7 +6,6 @@
 
 #include "log.h"
 #include "cluster/partition.h"
-#include "cluster/placements.h"
 #include "progress/patience.h"
 #include "scan/scan.h"
 #include "table/table.h"
@@ -87,22 +86,27 @@ namespace
 
 	// The keys alone. What is being decided is where a record belongs and not what is in it, and a
 	// page of values is sixteen megabytes a record of answer to that.
-	misplaced walk_table(
+	//
+	// **What it walks is the partitions this node does not own**, which is where a record that
+	// does not belong here can be. The store sorts the partitions apart, so the ones this node
+	// owns — the whole of the table but for what has just moved — are passed over rather than read
+	// through to find nothing in them.
+	bool walk_partition(
 		const repository::repository &repository,
-		const cluster::cluster &nodes,
+		const cluster::placement &where,
 		const std::string &name,
+		size_t partition,
 		size_t page,
 		const std::atomic<bool> &running,
-		progress::patience &waiting)
+		progress::patience &waiting,
+		misplaced *found)
 	{
-		misplaced found;
 		scan::range range;
 
 		range.is_valid = true;
+		range.partition = partition;
 		range.limit = page;
 		range.values = false;
-
-		cluster::placements placed(nodes);
 
 		while (running && !waiting.spent())
 		{
@@ -125,32 +129,24 @@ namespace
 
 				read_any = true;
 
-				const cluster::placement &where = placed.of(key);
-
-				if (where.local)
-				{
-					continue;
-				}
-
+				// Records this node holds that no node owns, which is nothing a pass can act on.
 				if (where.nodes.empty())
 				{
-					found.orphaned++;
+					found->orphaned++;
 
 					continue;
 				}
 
-				// The copy in this node's own zone is the first replicas() names, and it is the
+				// The copy in this node's own zone is the first copies_of() names, and it is the
 				// only one worth asking: the record here is this zone's copy of the key, so
 				// another zone still having one says nothing about whether this may go.
-				found.elsewhere[where.nodes.front()].set(cluster::partition_of(key));
-				found.records++;
+				found->elsewhere[where.nodes.front()].set(partition);
+				found->records++;
 			}
 
 			if (!walked.has_more || !has_last || !read_any)
 			{
-				found.finished = true;
-
-				return found;
+				return true;
 			}
 
 			range.from = last;
@@ -158,6 +154,43 @@ namespace
 
 			waiting.renew();
 		}
+
+		return false;
+	}
+
+	misplaced walk_table(
+		const repository::repository &repository,
+		const cluster::cluster &nodes,
+		const std::string &name,
+		size_t page,
+		const std::atomic<bool> &running,
+		progress::patience &waiting)
+	{
+		misplaced found;
+		cluster::partition_set held = nodes.holdings();
+
+		for (size_t partition = 0; partition < cluster::partition_count; partition++)
+		{
+			if (held.test(partition))
+			{
+				continue;
+			}
+
+			if (!walk_partition(
+				repository,
+				nodes.copies_of(partition),
+				name,
+				partition,
+				page,
+				running,
+				waiting,
+				&found))
+			{
+				return found;
+			}
+		}
+
+		found.finished = true;
 
 		return found;
 	}

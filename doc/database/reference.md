@@ -14,7 +14,7 @@ Every endpoint, status code, error code and limit in one place.
 | `HEAD` | `/table/{table}/key/{key}` | Existence and size of a record |
 | `PUT` | `/table/{table}/key/{key}` | [Write a record](/database/records#write-a-record) |
 | | `/table/{table}/key/{key}/{sort}` | The same three, of a record with a [sort key](/database/records#partition-keys-and-sort-keys) |
-| `GET` | `/table/{table}/key` | [Scan a range](/database/scans) |
+| `GET` | `/table/{table}/key` | [Scan a range of one partition](/database/scans) |
 | `GET` | `/table/{table}/file` | One node asking another for [its share of a table](/database/cluster#moving-a-share-of-a-table), as records or as `values=false` keys. Between nodes, not for clients |
 | `GET` | `/table/{table}/split` | Where the node being read would [cut a walk of its table up](/database/cluster#several-pieces-at-once), so that several pieces of it can be read at once. Between nodes, not for clients |
 | `GET` | `/schema` | The [whole schema](/database/cluster#the-schema-is-one-record-and-every-name-in-it-carries-a-version) this node holds: every name it has heard of, the dropped ones included, each with the version it stands at. Between nodes, not for clients |
@@ -45,7 +45,8 @@ status — is what a client should branch on.
 | `key_too_large` | 413 | Over 4 KiB |
 | `value_too_large` | 413 | Over 16 MiB |
 | `invalid_range` | 400 | A range whose `from` is not below its `to` |
-| `invalid_cursor` | 400 | A cursor this instance did not issue, or a file resumed at something that is not base64 |
+| `invalid_partition` | 400 | A [scan](/database/scans#a-scan-names-its-partition) that names neither a `partition` nor a `key`, or both, or a partition that is not one of the 256 |
+| `invalid_cursor` | 400 | A cursor this instance did not issue, one given back against another partition, or a file resumed at something that is not base64 |
 | `invalid_partitions` | 400 | A [file](/database/cluster#moving-a-share-of-a-table) asked for with something that is not a set of this cluster's partitions |
 | `write_stalled` | 503 | RocksDB is applying back pressure |
 | `no_leader` | 503 | No node is [leading this key's partition](/database/cluster#one-leader-for-each-partition) — or, for a table create or delete, [the tables](/database/cluster#the-tables-are-led-too) — yet. Run the write again |

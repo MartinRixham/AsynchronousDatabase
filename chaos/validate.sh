@@ -27,7 +27,7 @@ preflight_chaos || exit 1
 passed=0
 failed=0
 
-all="node-stops zone-lost scan-loses-a-node etcd-unreachable node-latency disk-fills"
+all="node-stops zone-lost nodes-go-deaf etcd-unreachable node-latency disk-fills"
 all="$all containers-restart nodes-added nodes-removed zone-retired etcd-quorum-lost"
 
 for name in ${CHAOS_EXPERIMENTS:-$all}; do

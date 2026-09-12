@@ -17,13 +17,60 @@
 
 namespace
 {
-	scan::range whole_table()
+	// A scan reads one partition, so a range is of the partition a key is in. The records of one
+	// partition key are one of them, which is what these scans are written against.
+	scan::range one_partition(const std::string &key)
 	{
 		scan::range range;
 
 		range.is_valid = true;
+		range.partition = cluster::partition_of(key);
 
 		return range;
+	}
+
+	// The sort halves of a page, which is what the records of one partition key differ by.
+	std::vector<std::string> sorts(const scan::page &page)
+	{
+		std::vector<std::string> sorts;
+
+		for (size_t i = 0; i < page.records.size(); i++)
+		{
+			sorts.push_back(std::string(record::sort_key(page.records[i].key)));
+		}
+
+		return sorts;
+	}
+
+	// Every key a store holds of a table, which is a scan of each partition in turn: the store
+	// sorts the partitions apart, so there is no answer that is a whole table.
+	std::vector<std::string> every_key(const repository::repository &store, const std::string &name)
+	{
+		std::vector<std::string> found;
+
+		for (size_t partition = 0; partition < cluster::partition_count; partition++)
+		{
+			scan::range range;
+
+			range.is_valid = true;
+			range.partition = partition;
+
+			scan::page page = store.scan_records(name, range);
+
+			for (size_t i = 0; i < page.records.size(); i++)
+			{
+				found.push_back(page.records[i].key);
+			}
+		}
+
+		std::sort(found.begin(), found.end());
+
+		return found;
+	}
+
+	record::record under(const std::string &key, const std::string &sort, const std::string &value)
+	{
+		return record::valid_record(record::compose_key(key, sort), value);
 	}
 
 	std::vector<std::string> keys(const scan::page &page)
@@ -270,73 +317,89 @@ TEST_F(repository_test, fail_to_write_a_record_to_a_table_that_is_not_there)
 		repository::storage_error);
 }
 
-TEST_F(repository_test, scan_records_in_key_order)
+// **A scan reads one partition**, because the store holds a record under its partition: the keys
+// of a table are spread over all of them, and what one scan answers with is the records that
+// hashed to the partition it named.
+TEST_F(repository_test, scan_a_partition_in_key_order)
 {
 	create_table("a_table");
 
-	repository->write_record("a_table", record::valid_record("user:7203", "Marcus Hale"));
-	repository->write_record("a_table", record::valid_record("user:4821", "Eleanor Whitmore"));
+	repository->write_record("a_table", under("user", "7203", "Marcus Hale"));
+	repository->write_record("a_table", under("user", "4821", "Eleanor Whitmore"));
 	repository->write_record("a_table", record::valid_record("order:1", "an order"));
 
-	scan::page page = repository->scan_records("a_table", whole_table());
+	scan::page page = repository->scan_records("a_table", one_partition("user"));
 
-	EXPECT_EQ(keys(page), (std::vector<std::string> { "order:1", "user:4821", "user:7203" }));
-	EXPECT_EQ(page.records[1].value, "Eleanor Whitmore");
+	EXPECT_EQ(sorts(page), (std::vector<std::string> { "4821", "7203" }));
+	EXPECT_EQ(page.records[0].value, "Eleanor Whitmore");
 	EXPECT_FALSE(page.has_more);
+}
+
+// A key of another partition is not in the range whatever the bounds say, because the store sorts
+// the partitions apart: it is not a key this scan passes over but one it never reaches.
+TEST_F(repository_test, a_scan_of_one_partition_reads_nothing_of_another)
+{
+	create_table("a_table");
+
+	repository->write_record("a_table", record::valid_record("order:1", "an order"));
+
+	EXPECT_TRUE(repository->scan_records("a_table", one_partition("user")).records.empty());
+	EXPECT_EQ(keys(repository->scan_records("a_table", one_partition("order:1"))),
+		(std::vector<std::string> { "order:1" }));
 }
 
 TEST_F(repository_test, scan_a_range)
 {
 	create_table("a_table");
 
-	repository->write_record("a_table", record::valid_record("1", "one"));
-	repository->write_record("a_table", record::valid_record("2", "two"));
-	repository->write_record("a_table", record::valid_record("3", "three"));
+	repository->write_record("a_table", under("n", "1", "one"));
+	repository->write_record("a_table", under("n", "2", "two"));
+	repository->write_record("a_table", under("n", "3", "three"));
 
-	scan::range range = whole_table();
+	scan::range range = one_partition("n");
 
-	range.from = "2";
+	range.from = record::compose_key("n", "2");
 	range.has_from = true;
-	range.to = "3";
+	range.to = record::compose_key("n", "3");
 	range.has_to = true;
 
-	EXPECT_EQ(keys(repository->scan_records("a_table", range)), (std::vector<std::string> { "2" }));
+	EXPECT_EQ(sorts(repository->scan_records("a_table", range)), (std::vector<std::string> { "2" }));
 }
 
 TEST_F(repository_test, scan_backwards)
 {
 	create_table("a_table");
 
-	repository->write_record("a_table", record::valid_record("1", "one"));
-	repository->write_record("a_table", record::valid_record("2", "two"));
-	repository->write_record("a_table", record::valid_record("3", "three"));
+	repository->write_record("a_table", under("n", "1", "one"));
+	repository->write_record("a_table", under("n", "2", "two"));
+	repository->write_record("a_table", under("n", "3", "three"));
 
-	scan::range range = whole_table();
+	scan::range range = one_partition("n");
 
 	range.reverse = true;
-	range.from = "1";
+	range.from = record::compose_key("n", "1");
 	range.has_from = true;
-	range.to = "3";
+	range.to = record::compose_key("n", "3");
 	range.has_to = true;
 
-	EXPECT_EQ(keys(repository->scan_records("a_table", range)), (std::vector<std::string> { "2", "1" }));
+	EXPECT_EQ(sorts(repository->scan_records("a_table", range)), (std::vector<std::string> { "2", "1" }));
 }
 
 TEST_F(repository_test, a_page_says_whether_there_is_another)
 {
 	create_table("a_table");
 
-	repository->write_record("a_table", record::valid_record("1", "one"));
-	repository->write_record("a_table", record::valid_record("2", "two"));
-	repository->write_record("a_table", record::valid_record("3", "three"));
+	repository->write_record("a_table", under("n", "1", "one"));
+	repository->write_record("a_table", under("n", "2", "two"));
+	repository->write_record("a_table", under("n", "3", "three"));
 
-	scan::range range = whole_table();
+	scan::range range = one_partition("n");
 
 	range.limit = 2;
 
 	scan::page page = repository->scan_records("a_table", range);
 
-	EXPECT_EQ(keys(page), (std::vector<std::string> { "1", "2" }));
+	EXPECT_EQ(sorts(page), (std::vector<std::string> { "1", "2" }));
 	EXPECT_TRUE(page.has_more);
 
 	range.limit = 3;
@@ -357,10 +420,10 @@ TEST_F(repository_test, scan_stops_at_the_page_budget_rather_than_the_limit)
 
 	for (size_t i = 0; i < 6; i++)
 	{
-		repository->write_record("a_table", record::valid_record(std::to_string(i), value));
+		repository->write_record("a_table", under("n", std::to_string(i), value));
 	}
 
-	scan::page page = repository->scan_records("a_table", whole_table());
+	scan::page page = repository->scan_records("a_table", one_partition("n"));
 
 	EXPECT_EQ(page.records.size(), 3u);
 	EXPECT_TRUE(page.has_more);
@@ -372,12 +435,12 @@ TEST_F(repository_test, a_record_larger_than_the_budget_is_a_page_of_its_own)
 {
 	create_table("a_table");
 
-	repository->write_record("a_table", record::valid_record("1", std::string(scan::max_page_bytes + 1, 'v')));
-	repository->write_record("a_table", record::valid_record("2", "small"));
+	repository->write_record("a_table", under("n", "1", std::string(scan::max_page_bytes + 1, 'v')));
+	repository->write_record("a_table", under("n", "2", "small"));
 
-	scan::page page = repository->scan_records("a_table", whole_table());
+	scan::page page = repository->scan_records("a_table", one_partition("n"));
 
-	EXPECT_EQ(keys(page), (std::vector<std::string> { "1" }));
+	EXPECT_EQ(sorts(page), (std::vector<std::string> { "1" }));
 	EXPECT_TRUE(page.has_more);
 }
 
@@ -391,10 +454,10 @@ TEST_F(repository_test, the_budget_weighs_the_values_a_scan_is_asked_for)
 
 	for (size_t i = 0; i < 6; i++)
 	{
-		repository->write_record("a_table", record::valid_record(std::to_string(i), value));
+		repository->write_record("a_table", under("n", std::to_string(i), value));
 	}
 
-	scan::range range = whole_table();
+	scan::range range = one_partition("n");
 
 	range.values = false;
 
@@ -410,7 +473,7 @@ TEST_F(repository_test, scan_keys_without_their_values)
 
 	repository->write_record("a_table", record::valid_record("a key", "a value"));
 
-	scan::range range = whole_table();
+	scan::range range = one_partition("a key");
 
 	range.values = false;
 
@@ -434,6 +497,26 @@ namespace
 		wanted.partitions.set();
 
 		return wanted;
+	}
+
+	// A partition this table holds no record in, which is what a share of one is asked for below.
+	size_t empty_partition(const repository::repository &store, const std::string &name)
+	{
+		for (size_t partition = 0; partition < cluster::partition_count; partition++)
+		{
+			scan::range range;
+
+			range.is_valid = true;
+			range.partition = partition;
+			range.values = false;
+
+			if (store.scan_records(name, range).records.empty())
+			{
+				return partition;
+			}
+		}
+
+		return 0;
 	}
 
 	record::record versioned(const std::string &key, const std::string &value, uint64_t term, uint64_t count)
@@ -485,6 +568,65 @@ TEST_F(repository_test, a_file_carries_the_partitions_it_was_asked_for_and_no_ot
 
 	EXPECT_TRUE(other_repository->read_record("a_table", "1").has_value());
 	EXPECT_FALSE(other_repository->read_record("a_table", "2").has_value());
+}
+
+// **What a walk reads is what it carries.** The budget is spent on the records of the share and
+// never on the table in between: a partition holding one record answers with it however much of
+// the table belongs to the other nodes of the zone, where a walk that read its way through the
+// table would have spent the budget before it reached the key.
+TEST_F(repository_test, a_share_of_one_partition_is_not_bounded_by_what_the_rest_of_the_table_holds)
+{
+	create_table("a_table");
+
+	std::string value(4 * 1024, 'v');
+
+	for (size_t i = 0; i < 200; i++)
+	{
+		repository->write_record("a_table", record::valid_record("key:" + std::to_string(i), value));
+	}
+
+	repository::share wanted;
+
+	wanted.partitions.set(cluster::partition_of("key:137"));
+
+	// A budget one record spends, so a walk that read anything it does not carry would carry
+	// nothing at all.
+	wanted.bytes = 1;
+
+	repository::extract taken = repository->export_records("a_table", wanted);
+
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
+
+	EXPECT_EQ(1u, taken.records);
+	EXPECT_EQ(1u, other_repository->import_records("a_table", taken.file));
+	EXPECT_TRUE(other_repository->read_record("a_table", "key:137").has_value());
+}
+
+// And a share the table holds nothing of is one file rather than a walk of the table: the store
+// seeks to each partition of the share and finds it empty, instead of reading every key to find
+// out that none of them belonged.
+TEST_F(repository_test, a_share_of_partitions_a_table_holds_nothing_in_is_read_in_one_file)
+{
+	create_table("a_table");
+
+	std::string value(4 * 1024, 'v');
+
+	for (size_t i = 0; i < 200; i++)
+	{
+		repository->write_record("a_table", record::valid_record("key:" + std::to_string(i), value));
+	}
+
+	repository::share wanted;
+
+	// One partition of the two hundred and fifty six, and the keys above are not in it.
+	wanted.partitions.set(empty_partition(*repository, "a_table"));
+	wanted.bytes = 1;
+
+	repository::extract taken = repository->export_records("a_table", wanted);
+
+	EXPECT_EQ(0u, taken.records);
+	EXPECT_FALSE(taken.has_more);
+	EXPECT_TRUE(taken.file.empty());
 }
 
 TEST_F(repository_test, a_file_that_carried_nothing_is_no_file_at_all)
@@ -634,8 +776,10 @@ TEST_F(repository_test, counts_rise_across_the_store_being_opened_again)
 	EXPECT_GT(repository->next_count(), last);
 }
 
-// A share larger than one file is several of them, resumed from the key the walk reached rather
-// than from the last key written: a file the partitions emptied still moved the walk along.
+// A share larger than one file is several of them, resumed from the key the walk reached — which
+// is a key of the store and not one a client would name, the partition being in front of it. A
+// budget spent on the last record of a share cannot know it was the last, so the walk asks once
+// more and is answered a file with nothing in it.
 TEST_F(repository_test, a_walk_larger_than_one_file_resumes_where_it_reached)
 {
 	create_table("a_table");
@@ -650,31 +794,25 @@ TEST_F(repository_test, a_walk_larger_than_one_file_resumes_where_it_reached)
 	// One record at a time, which is a budget the first record of any file spends.
 	wanted.bytes = 1;
 
-	repository::extract first = repository->export_records("a_table", wanted);
+	size_t files = 0;
+	size_t taken = 0;
 
-	ASSERT_TRUE(first.has_more);
-	EXPECT_EQ("1", first.last);
-	EXPECT_EQ(1u, other_repository->import_records("a_table", first.file));
+	for (bool going = true; going; files++)
+	{
+		ASSERT_LT(files, 10u);
 
-	wanted.from = first.last;
-	wanted.has_from = true;
+		repository::extract file = repository->export_records("a_table", wanted);
 
-	repository::extract second = repository->export_records("a_table", wanted);
+		taken += other_repository->import_records("a_table", file.file);
+		going = file.has_more;
 
-	ASSERT_TRUE(second.has_more);
-	EXPECT_EQ("2", second.last);
-	EXPECT_EQ(1u, other_repository->import_records("a_table", second.file));
+		wanted.from = file.last;
+		wanted.has_from = true;
+	}
 
-	wanted.from = second.last;
-
-	repository::extract third = repository->export_records("a_table", wanted);
-
-	EXPECT_FALSE(third.has_more);
-	EXPECT_EQ(1u, other_repository->import_records("a_table", third.file));
-
-	EXPECT_EQ(
-		keys(other_repository->scan_records("a_table", whole_table())),
-		(std::vector<std::string> { "1", "2", "3" }));
+	EXPECT_EQ(4u, files);
+	EXPECT_EQ(3u, taken);
+	EXPECT_EQ(every_key(*other_repository, "a_table"), (std::vector<std::string> { "1", "2", "3" }));
 }
 
 // The budget an operator sizes to the instance. It is the block cache and the memtables together,
@@ -739,7 +877,7 @@ TEST_F(repository_test, a_file_of_keys_is_what_a_store_gives_records_up_on)
 	// never here is not a tombstone either.
 	EXPECT_FALSE(other_repository->read_record("a_table", "1").has_value());
 	EXPECT_TRUE(other_repository->read_record("a_table", "3").has_value());
-	EXPECT_EQ(keys(other_repository->scan_records("a_table", whole_table())), (std::vector<std::string> { "3" }));
+	EXPECT_EQ(every_key(*other_repository, "a_table"), (std::vector<std::string> { "3" }));
 }
 
 // The budget is what the walk read, so a walk that is not reading values covers far more of a table
@@ -802,12 +940,31 @@ TEST_F(repository_test, says_where_a_table_would_be_cut_up)
 	EXPECT_GE(3u, points.size());
 	EXPECT_TRUE(std::is_sorted(points.begin(), points.end()));
 
-	// Every one of them is a key of the table, which is what makes it a bound records fall either
-	// side of.
-	for (size_t i = 0; i < points.size(); i++)
+	// Every one of them is a bound the records fall either side of, which is the whole of what a
+	// split point is: the pieces they cut the table into are every record and no record twice. The
+	// keys are the store's own, so what they are is never asked here — only what they bound.
+	size_t carried = 0;
+
+	for (size_t i = 0; i <= points.size(); i++)
 	{
-		EXPECT_TRUE(splitting.read_record("a_table", points[i]).has_value()) << points[i];
+		repository::share piece = every_partition();
+
+		if (i > 0)
+		{
+			piece.from = points[i - 1];
+			piece.has_from = true;
+		}
+
+		if (i < points.size())
+		{
+			piece.to = points[i];
+			piece.has_to = true;
+		}
+
+		carried += splitting.export_records("a_table", piece).records;
 	}
+
+	EXPECT_EQ(320u, carried);
 }
 
 TEST_F(repository_test, a_table_that_is_not_worth_cutting_up_is_cut_up_no_ways)
@@ -836,18 +993,27 @@ TEST_F(repository_test, the_pieces_of_a_share_are_every_record_and_no_record_twi
 	repository::share first = every_partition();
 	repository::share second = every_partition();
 
-	first.to = "2";
+	// The bound is a key the store named rather than one made up here: a walk of one record at a
+	// time reaches the second of them, and that is where the two pieces meet.
+	repository::share stepping = every_partition();
+
+	stepping.bytes = 1;
+
+	stepping.from = repository->export_records("a_table", stepping).last;
+	stepping.has_from = true;
+
+	std::string middle = repository->export_records("a_table", stepping).last;
+
+	first.to = middle;
 	first.has_to = true;
 
-	second.from = "2";
+	second.from = middle;
 	second.has_from = true;
 
 	EXPECT_EQ(2u, other_repository->import_records("a_table", repository->export_records("a_table", first).file));
 	EXPECT_EQ(2u, other_repository->import_records("a_table", repository->export_records("a_table", second).file));
 
-	EXPECT_EQ(
-		keys(other_repository->scan_records("a_table", whole_table())),
-		(std::vector<std::string> { "1", "2", "3", "4" }));
+	EXPECT_EQ(every_key(*other_repository, "a_table"), (std::vector<std::string> { "1", "2", "3", "4" }));
 }
 
 TEST_F(repository_test, a_piece_of_a_share_ends_where_it_was_told_to)
@@ -858,13 +1024,18 @@ TEST_F(repository_test, a_piece_of_a_share_ends_where_it_was_told_to)
 	repository->write_record("a_table", record::valid_record("2", "two"));
 	repository->write_record("a_table", record::valid_record("3", "three"));
 
+	repository::share stepping = every_partition();
+
+	stepping.bytes = 1;
+
 	repository::share wanted = every_partition();
 
-	wanted.to = "2";
+	// The first key the store holds of this share, which is where the piece is told to end.
+	wanted.to = repository->export_records("a_table", stepping).last;
 	wanted.has_to = true;
 
 	repository::extract taken = repository->export_records("a_table", wanted);
 
-	EXPECT_EQ(2u, taken.records);
+	EXPECT_EQ(1u, taken.records);
 	EXPECT_FALSE(taken.has_more);
 }
