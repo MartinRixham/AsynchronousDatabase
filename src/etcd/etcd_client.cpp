@@ -281,7 +281,7 @@ const std::string &etcd::client::endpoint() const
 {
 	static const std::string none;
 
-	return endpoints.empty() ? none : endpoints[current];
+	return endpoints.empty() ? none : endpoints[current.load()];
 }
 
 std::optional<boost::json::object> etcd::client::call(
@@ -299,7 +299,7 @@ std::optional<boost::json::object> etcd::client::call(
 	// lease granted twice expires on its own.
 	for (size_t i = 0; i < attempts; i++)
 	{
-		size_t member = (current + i) % endpoints.size();
+		size_t member = (current.load() + i) % endpoints.size();
 
 		http::request request { "POST",
 								endpoints[member] + "/v3/" + method,
@@ -322,7 +322,7 @@ std::optional<boost::json::object> etcd::client::call(
 			continue;
 		}
 
-		current = member;
+		current.store(member);
 
 		if (response.status != 200)
 		{

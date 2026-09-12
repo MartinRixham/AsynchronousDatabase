@@ -49,7 +49,8 @@ curl -s http://localhost:8080/asyncdb/health | jq
     "one": [ "http://asyncdb-1:8080", "http://asyncdb-2:8080" ],
     "two": [ "http://asyncdb-3:8080" ]
   },
-  "leads": 128
+  "leads": 128,
+  "etcd": { "registered": true, "endpoint": "http://10.0.3.41:2379" }
 }
 ```
 
@@ -64,6 +65,7 @@ curl -s http://localhost:8080/asyncdb/health | jq
 | `nodes` | The membership **as this node sees it**. A list naming only this node is [a node that has lost etcd](/runbook/membership#etcd-cannot-be-reached); absent entirely is an instance that was never clustered at all |
 | `zones` | The grouping, and so the number of copies. The number of zones *is* the number of copies |
 | `leads` | How many of the 256 partitions this node orders the writes of. `0` on every node is [an election that has not settled](/runbook/membership#no-partition-has-a-leader) |
+| `etcd` | Where this node reads the membership, and whether it is still in it. `registered: false` is [a node that cannot reach etcd](/runbook/membership#etcd-cannot-be-reached), said on the pass that failed rather than a lease later; `endpoint` is the member it is talking to, which is whichever one last answered it. Absent on an instance that was never clustered |
 
 **Ask every node, not one.** The answer is that node's own view, and the
 disagreements between them are the diagnosis: a node missing from one node's
@@ -74,7 +76,7 @@ that is not there.
 ```bash
 for port in 8080 8081 8082; do
   echo "== $port"
-  curl -s --max-time 5 "http://localhost:$port/asyncdb/health" | jq -c '{nodes, zones, leads, write_stalled}'
+  curl -s --max-time 5 "http://localhost:$port/asyncdb/health" | jq -c '{nodes, zones, leads, write_stalled, etcd}'
 done
 ```
 

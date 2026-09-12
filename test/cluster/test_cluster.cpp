@@ -137,6 +137,11 @@ bool cluster::test_cluster::is_unled() const
 	return false;
 }
 
+cluster::etcd_registration cluster::test_cluster::registration() const
+{
+	return etcd_registration();
+}
+
 bool cluster::test_cluster::accept(const std::string &, int64_t sent)
 {
 	return sent == 0 || sent >= term;

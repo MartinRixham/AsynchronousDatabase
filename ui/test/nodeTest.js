@@ -95,6 +95,49 @@ describe("node", () => {
 		expect(node.store().text()).toBe("short");
 	});
 
+	// Where the membership comes from, and whether this node is still in it: a lease it no longer
+	// holds is a node that cannot reach etcd, which nothing else in the panel says.
+	test("the etcd a node reads its membership from", async () => {
+
+		const client = new DatabaseClient();
+
+		client.setHealth({
+			status: "ok",
+			write_stalled: false,
+			incomplete: false,
+			nodes: ["http://one:8080", "http://two:8080"],
+			leads: 128,
+			etcd: { registered: true, endpoint: "http://etcd:2379" }
+		});
+
+		const node = await bound(client);
+
+		expect(node.registered().visible()).toBe(true);
+		expect(node.lease().text()).toBe("held");
+		expect(node.endpoint().text()).toBe("http://etcd:2379");
+	});
+
+	// A node that cannot reach etcd goes on serving what it holds, and says so where the
+	// membership it can no longer read cannot.
+	test("an etcd that stopped answering", async () => {
+
+		const client = new DatabaseClient();
+
+		client.setHealth({
+			status: "ok",
+			write_stalled: false,
+			incomplete: false,
+			nodes: ["http://one:8080"],
+			leads: 0,
+			etcd: { registered: false, endpoint: "http://etcd:2379" }
+		});
+
+		const node = await bound(client);
+
+		expect(node.lease().text()).toBe("lost");
+		expect(node.endpoint().text()).toBe("http://etcd:2379");
+	});
+
 	// An instance told no etcd owns the whole keyspace, and names no membership at all.
 	test("an instance that was never clustered", async () => {
 
@@ -107,6 +150,7 @@ describe("node", () => {
 		expect(node.alone().visible()).toBe(true);
 		expect(node.clustered().visible()).toBe(false);
 		expect(node.zoned().visible()).toBe(false);
+		expect(node.registered().visible()).toBe(false);
 		expect(node.leads().text()).toBe("");
 	});
 

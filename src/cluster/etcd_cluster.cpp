@@ -95,7 +95,7 @@ cluster::etcd_cluster::etcd_cluster(
 	const forwarder &forwarding):
 	configuration(cluster_config),
 	request_forwarder(forwarding),
-	etcd_client(etcd::client(http, cluster_config.endpoints, cluster_config.etcd_timeout_seconds)),
+	etcd_client(http, cluster_config.endpoints, cluster_config.etcd_timeout_seconds),
 	member_list(std::make_shared<const std::vector<member>>()),
 	unled_since(std::chrono::steady_clock::now())
 {
@@ -328,6 +328,17 @@ bool cluster::etcd_cluster::is_unled() const
 	return std::chrono::steady_clock::now() - since > std::chrono::seconds(configuration.lease_seconds);
 }
 
+cluster::etcd_registration cluster::etcd_cluster::registration() const
+{
+	etcd_registration state;
+
+	state.configured = configuration.is_clustered();
+	state.held = lease.load() != 0;
+	state.endpoint = etcd_client.endpoint();
+
+	return state;
+}
+
 bool cluster::etcd_cluster::accept(const std::string &key, int64_t term)
 {
 	if (term == 0)
@@ -429,9 +440,9 @@ bool cluster::etcd_cluster::register_node()
 
 	lease = *granted;
 
-	boost::json::object registration { { "node", configuration.node }, { "zone", configuration.zone } };
+	boost::json::object value { { "node", configuration.node }, { "zone", configuration.zone } };
 
-	return etcd_client.put(configuration.prefix + configuration.node, boost::json::serialize(registration), lease);
+	return etcd_client.put(configuration.prefix + configuration.node, boost::json::serialize(value), lease);
 }
 
 void cluster::etcd_cluster::read_leaders()

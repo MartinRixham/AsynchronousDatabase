@@ -2316,6 +2316,48 @@ TEST(router_cluster_test, count_the_partitions_this_node_leads_in_the_health_of_
 	EXPECT_EQ(router.route(get("/health")).json.at("leads").as_int64(), 1);
 }
 
+// Where the membership comes from is the first question of a cluster that is wrong about itself,
+// and the node answering is the only one that knows which member it is talking to.
+TEST(router_cluster_test, name_the_etcd_this_node_reads_the_membership_from)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.reads_etcd("http://etcd:2379");
+
+	boost::json::object etcd = router.route(get("/health")).json.at("etcd").as_object();
+
+	EXPECT_EQ(etcd.at("endpoint").as_string(), "http://etcd:2379");
+	EXPECT_EQ(etcd.at("registered"), true);
+}
+
+// A node that cannot reach etcd goes on serving what it holds with a membership that stands
+// still, so nothing else in the document says so.
+TEST(router_cluster_test, say_that_this_node_is_no_longer_registered_in_etcd)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+
+	nodes.reads_etcd("http://etcd:2379");
+	nodes.lost_etcd();
+
+	boost::json::object etcd = router.route(get("/health")).json.at("etcd").as_object();
+
+	EXPECT_EQ(etcd.at("registered"), false);
+	EXPECT_EQ(etcd.at("endpoint").as_string(), "http://etcd:2379");
+}
+
+TEST(router_cluster_test, name_no_etcd_when_the_instance_was_told_none)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	EXPECT_FALSE(router.route(get("/health")).json.contains("etcd"));
+}
+
 TEST(router_cluster_test, name_no_zones_when_the_cluster_has_none)
 {
 	repository::fake_repository repository;

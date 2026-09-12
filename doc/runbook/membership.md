@@ -62,8 +62,12 @@ means:
   `unled` set, which is what takes the node **out of the load balancer**: it
   goes on serving the keys it holds and answering its peers, neither of which
   arrives that way;
-- `/health` names **one** node, itself, in a `zones` of one zone, which is how
-  this is recognised. Not *no* `nodes`: an absent `nodes` is
+- `/health` says `etcd.registered: false`, which is this node holding no lease
+  there, and `etcd.endpoint` is the member it is asking. It is what tells this
+  apart from an etcd that answers and has nobody else registered in it, which
+  names one node just the same;
+- `/health` names **one** node, itself, in a `zones` of one zone. Not *no*
+  `nodes`: an absent `nodes` is
   [an instance that stands alone](/database/cluster#what-each-endpoint-does-in-a-cluster),
   one that was never given an `ASYNCDB_ETCD` to lose. A node that has lost etcd
   puts itself in the list, and a list of one is what that looks like.
@@ -95,10 +99,13 @@ below and it is a hand's work, not the load balancer's.
 
 **Do:**
 
-1. `/health` on every node. A node whose `nodes` names **only itself** has lost
-   etcd; the ones that still name the others have not. It goes on reporting a
-   non-zero `leads` — the partitions it last claimed — so `leads` does not fall
-   to zero to tell you, and the length of `nodes` is the whole diagnosis.
+1. `/health` on every node. A node whose `etcd.registered` is `false` has lost
+   etcd — `etcd.endpoint` is the member it was asking — and its `nodes` names
+   only itself; the ones that still hold a registration have not. A `nodes` of
+   one where the registration *is* still held is an etcd that answers and has
+   nobody else in it, which is the other nodes gone rather than this one
+   isolated. It goes on reporting a non-zero `leads` — the partitions it last
+   claimed — so `leads` does not fall to zero to tell you.
 2. Take that node out of service if it is behind the load balancer, or stop it.
    Its keys are held in every other zone and reads carry on without it.
 3. Fix etcd — see below — and let the node re-register. It re-registers from

@@ -417,7 +417,7 @@ versions for as long as neither of those happens.
 | `GET /table/{table}/file` | Answered out of **this node's own store**, and never forwarded: what is being asked for is what this node holds |
 | `GET /table/{table}/split` | The same: where this node would cut a walk of its own table up |
 | `GET /schema` | The whole schema out of **this node's own store** — every name it has heard of, the dropped ones included, each with its version. Between nodes, not for clients |
-| `GET /health` | Answered where it is asked, and names the nodes and zones it can see |
+| `GET /health` | Answered where it is asked, and names the nodes and zones it can see, and the etcd it read them from |
 
 Nodes keep their connections to each other open between requests, so a forwarded
 request is a request and not a handshake as well. A node that is shutting down
@@ -444,7 +444,8 @@ a membership settle:
     "eu-west-2a": [ "http://asyncdb-1:8080" ],
     "eu-west-2b": [ "http://asyncdb-2:8080" ]
   },
-  "leads": 128
+  "leads": 128,
+  "etcd": { "registered": true, "endpoint": "http://10.0.3.41:2379" }
 }
 ```
 
@@ -457,6 +458,16 @@ has claimed them.
 `zones` is absent when no node in the membership names one, so it is also the way
 to see that a cluster meant to keep a copy per zone is keeping one: the number of
 zones is the number of copies.
+
+`etcd` is where this node read that membership: `endpoint` is the member it is
+talking to, whichever one last answered it, and `registered` is whether it still
+holds the lease its own registration is written on. It is absent, the way `nodes`
+is, on an instance that was told no etcd. **`registered: false` is the node
+saying it cannot reach etcd**, and it says so on the pass that failed — a
+`nodes` of one alone says the same thing, but only once the other nodes'
+registrations have expired with their own leases. A node takes a lease again on
+the pass after a renewal fails, so it is a state a node comes back from by
+itself.
 
 ## Moving a share of a table
 

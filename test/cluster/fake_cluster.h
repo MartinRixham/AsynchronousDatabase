@@ -40,6 +40,8 @@ namespace cluster
 
 		bool unled_node = false;
 
+		etcd_registration etcd_state;
+
 		mutable std::vector<std::pair<std::string, router::request>> requests;
 
 		// A walk asks several nodes at once, so what it was asked and what it has answered are
@@ -81,6 +83,14 @@ namespace cluster
 		// load balancer.
 		void unled();
 
+		// The etcd this node reads the membership from, and that it is registered there. A test
+		// that says nothing is an instance that was told no etcd at all.
+		void reads_etcd(const std::string &endpoint);
+
+		// The same etcd, no longer answering: the node is still looking there and no longer holds
+		// the lease its registration is written on.
+		void lost_etcd();
+
 		// The membership is the one the test named, so there is nothing to join, nothing to read
 		// and nothing to leave.
 		void start() override;
@@ -104,6 +114,8 @@ namespace cluster
 		size_t leads() const override;
 
 		bool is_unled() const override;
+
+		etcd_registration registration() const override;
 
 		bool accept(const std::string &key, int64_t term) override;
 

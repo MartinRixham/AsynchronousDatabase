@@ -236,6 +236,19 @@ router::response router::router::route(const request &request)
 			{ "incomplete", incomplete.load() },
 			{ "unled", unled }
 		};
+
+		// Where this node reads the membership from, and whether it is still in it. An instance
+		// that was told no etcd names none, the way it names no nodes.
+		cluster::etcd_registration registration = nodes.registration();
+
+		if (registration.configured)
+		{
+			health["etcd"] = boost::json::object {
+				{ "registered", registration.held },
+				{ "endpoint", registration.endpoint }
+			};
+		}
+
 		std::vector<cluster::member> members = nodes.members();
 
 		if (!members.empty())

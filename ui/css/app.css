@@ -257,6 +257,14 @@ button
 	word-break: break-word;
 }
 
+/* The one address the panel draws, so it takes the width of the bar rather than the half a value beside a label has. */
+.node-detail .endpoint
+{
+	color: var(--muted);
+	padding: 5px 0;
+	word-break: break-all;
+}
+
 .node-detail .alone
 {
 	color: var(--muted);

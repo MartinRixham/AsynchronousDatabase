@@ -126,6 +126,15 @@
 									"        pm.expect(body.nodes).to.be.an(\"array\");",
 									"        pm.expect(body.nodes.length).to.be.above(1);",
 									"    }",
+									"});",
+									"",
+									"// The etcd this node reads the membership from, absent on an instance that was told none.",
+									"pm.test(\"etcd is absent alone, and a registration in a cluster\", function () {",
+									"    if (body.etcd !== undefined) {",
+									"        pm.expect(body.etcd.registered).to.eql(true);",
+									"        pm.expect(body.etcd.endpoint).to.be.a(\"string\");",
+									"        pm.expect(body.etcd.endpoint.length).to.be.above(0);",
+									"    }",
 									"});"
 								]
 							}
@@ -2970,6 +2979,11 @@
 									"    pm.test(\"the node names the cluster as it sees it\", function () {",
 									"        pm.expect(body.nodes, \"no nodes: this instance is standing alone\").to.be.an(\"array\");",
 									"        pm.expect(body.nodes.length).to.eql(size);",
+									"    });",
+									"",
+									"    pm.test(\"the node is registered in the etcd it read that membership from\", function () {",
+									"        pm.expect(body.etcd, \"no etcd: this instance was told none\").to.be.an(\"object\");",
+									"        pm.expect(body.etcd.registered).to.eql(true);",
 									"    });",
 									"}"
 								]

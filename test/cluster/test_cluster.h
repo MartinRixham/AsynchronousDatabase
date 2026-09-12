@@ -75,6 +75,9 @@ namespace cluster
 		// unable to order a write.
 		bool is_unled() const override;
 
+		// A membership a test handed in is one no etcd was read for.
+		etcd_registration registration() const override;
+
 		bool accept(const std::string &key, int64_t term) override;
 
 		router::response send(const std::string &node, const router::request &request) const override;

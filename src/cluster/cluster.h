@@ -43,6 +43,24 @@ namespace cluster
 		std::vector<std::string> nodes;
 	};
 
+	// What this node's last pass at etcd found. It is this node's own place in the membership and
+	// not the cluster's view of etcd: every node reads it for itself, and a node that cannot reach
+	// it goes on serving what it holds with a membership that stands still.
+	struct etcd_registration
+	{
+		// Whether the instance was told an etcd at all. One that was not owns the whole keyspace
+		// and asks nobody, so neither field below says anything about it.
+		bool configured = false;
+
+		// Whether this node holds the lease its registration is written on. It is what says etcd
+		// answered: the membership reads back naming this node either way, because a node that
+		// etcd did not name is added to what it read.
+		bool held = false;
+
+		// The member the next call goes to, which is whichever one last answered.
+		std::string endpoint;
+	};
+
 	struct leadership
 	{
 		bool known = false;
@@ -97,6 +115,11 @@ namespace cluster
 		// refuses every write and answers every health check is one the load balancer goes on
 		// choosing, so the refusal is reported where the load balancer can read it.
 		virtual bool is_unled() const = 0;
+
+		// Where the membership is read from and whether this node is still in it. A membership
+		// handed in rather than registered anywhere answers a registration that was never
+		// configured.
+		virtual etcd_registration registration() const = 0;
 
 		virtual bool accept(const std::string &key, int64_t term) = 0;
 

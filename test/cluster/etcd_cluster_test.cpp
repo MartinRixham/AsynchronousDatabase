@@ -324,6 +324,59 @@ TEST(etcd_cluster_test, register_the_node_and_read_the_membership)
 	EXPECT_EQ(http.sent_to("/v3/lease/revoke").size(), 1u);
 }
 
+// What health reports of etcd: a node that registered holds the lease its registration is written
+// on, and names the member that answered it.
+TEST(etcd_cluster_test, report_the_registration_it_holds_in_etcd)
+{
+	http::fake_client http;
+
+	answer_etcd(&http, { one, two });
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
+
+	cluster.start();
+
+	cluster::etcd_registration registration = cluster.registration();
+
+	EXPECT_TRUE(registration.configured);
+	EXPECT_TRUE(registration.held);
+	EXPECT_EQ(registration.endpoint, "http://etcd:2379");
+
+	cluster.stop();
+}
+
+// A membership of one and a lease that was never granted are the two halves of losing etcd, and
+// only the second of them tells etcd apart from a cluster this node is alone in.
+TEST(etcd_cluster_test, hold_no_registration_when_etcd_is_not_there)
+{
+	http::fake_client http;
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
+
+	cluster.start();
+
+	EXPECT_TRUE(cluster.registration().configured);
+	EXPECT_FALSE(cluster.registration().held);
+
+	cluster.stop();
+}
+
+TEST(etcd_cluster_test, report_no_registration_when_no_etcd_is_configured)
+{
+	http::fake_client http;
+	cluster::config config;
+
+	config.node = one;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	EXPECT_FALSE(cluster.registration().configured);
+}
+
 // A node that cannot reach etcd is a cluster of one rather than a node that refuses to answer, so
 // it keeps serving the keys it holds.
 TEST(etcd_cluster_test, be_a_member_of_its_own_cluster_when_etcd_is_not_there)

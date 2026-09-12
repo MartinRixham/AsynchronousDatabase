@@ -1,6 +1,7 @@
 #ifndef ETCD_ETCD_CLIENT_H
 #define ETCD_ETCD_CLIENT_H
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -24,14 +25,17 @@ namespace etcd
 
 	// etcd speaks gRPC, but every call it offers is also a POST of a JSON document to its gateway,
 	// where a key and a value travel base64 encoded — which is why there is no gRPC dependency
-	// here. One thread drives a client.
+	// here. One thread makes the calls; endpoint() is the exception, read by whichever thread is
+	// answering for the node.
 	class client
 	{
 		const http::client &http_client;
 
 		std::vector<std::string> endpoints;
 
-		mutable size_t current = 0;
+		// Atomic because the thread making the calls writes it and a thread answering a health
+		// check reads it.
+		mutable std::atomic<size_t> current = 0;
 
 		long timeout_seconds;
 

@@ -79,7 +79,9 @@ namespace cluster
 		// thread. Never null once the constructor has run.
 		std::atomic<membership> member_list;
 
-		int64_t lease = 0;
+		// Atomic because health reads it: whether this node holds a lease is what says etcd
+		// answered, and the membership thread is the only one that takes or renews one.
+		std::atomic<int64_t> lease = 0;
 
 		// Who leads each partition, as this node last read it from etcd. Read by every write and
 		// written only by the membership thread.
@@ -141,6 +143,8 @@ namespace cluster
 		size_t leads() const override;
 
 		bool is_unled() const override;
+
+		etcd_registration registration() const override;
 
 		bool accept(const std::string &key, int64_t term) override;
 

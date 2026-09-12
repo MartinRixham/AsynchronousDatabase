@@ -74,4 +74,13 @@ export default class Node {
 	leads = new Text(() => this.health?.nodes ? this.health.leads + " of 256" : "");
 
 	zoned = new Visible(() => this.zones.length > 0);
+
+	registered = new Visible(() => !!this.health?.etcd);
+
+	// The lease this node's registration is written on is what says etcd answered it: the
+	// membership above reads back naming this node either way, because a node etcd did not name
+	// is added to what it read.
+	lease = new Text(() => this.health?.etcd?.registered ? "held" : "lost");
+
+	endpoint = new Text(() => this.health?.etcd?.endpoint ?? "");
 }

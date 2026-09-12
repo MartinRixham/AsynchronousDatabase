@@ -121,6 +121,11 @@ namespace
 			return false;
 		}
 
+		::cluster::etcd_registration registration() const override
+		{
+			return ::cluster::etcd_registration();
+		}
+
 		bool accept(const std::string &, int64_t) override
 		{
 			return true;

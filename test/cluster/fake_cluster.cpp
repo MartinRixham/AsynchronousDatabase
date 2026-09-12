@@ -174,6 +174,23 @@ bool cluster::fake_cluster::is_unled() const
 	return unled_node;
 }
 
+void cluster::fake_cluster::reads_etcd(const std::string &endpoint)
+{
+	etcd_state.configured = true;
+	etcd_state.held = true;
+	etcd_state.endpoint = endpoint;
+}
+
+void cluster::fake_cluster::lost_etcd()
+{
+	etcd_state.held = false;
+}
+
+cluster::etcd_registration cluster::fake_cluster::registration() const
+{
+	return etcd_state;
+}
+
 size_t cluster::fake_cluster::leads() const
 {
 	return std::count_if(

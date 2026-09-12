@@ -38,4 +38,22 @@ test.describe("node health", () => {
 		await expect(page.locator(".node-detail")).toContainText(/\d+ of 256/);
 		await expect(page.locator(".node-detail").getByText(/^\d+ nodes?$/).first()).toBeVisible();
 	});
+
+	// Where the instance read that membership. The member it names is an address of the
+	// deployment rather than of this database, so what is asserted is that it holds its lease
+	// there and names one at all.
+	test("names the etcd it reads its membership from", async ({ page }) => {
+
+		await open(page);
+
+		if (await page.locator(".node-detail .alone").isVisible()) {
+
+			test.skip(true, "The instance under test is not in a cluster.");
+		}
+
+		const panel = page.locator(".node-detail");
+
+		await expect(panel).toContainText("held");
+		await expect(panel.getByText(/^https?:\/\/\S+$/).first()).toBeVisible();
+	});
 });
