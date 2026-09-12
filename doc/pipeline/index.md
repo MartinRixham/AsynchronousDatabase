@@ -12,12 +12,13 @@ rewrites the version's image in ECR. The other half of CI is
 `.github/workflows/pull-request.yaml`, which is
 [two jobs and no AWS at all](#the-pull-request-build).
 
-**Four stacks, because the chaos suite is the pipeline.** Most of the hour the
-suite would take on one stack is `chaos/run.sh`, and twenty minutes of that is the
-three experiments that resize the tier and wait for instances to launch.
-Nothing about them is parallel on one stack — an experiment has the cluster to
-itself by design — so the way to run them at once is to have several clusters, and
-[the shares](#the-shares) carry about twelve minutes of experiments each.
+**Five stacks, because the chaos suite is the pipeline.** Most of the hour and a
+half the suite would take on one stack is `chaos/run.sh`: twenty minutes of that is
+the three experiments that resize the tier and wait for instances to launch, and
+thirty is `write-storm` on its own. Nothing about them is parallel on one stack —
+an experiment has the cluster to itself by design — so the way to run them at once
+is to have several clusters. [Four of the shares](#the-shares) carry about twelve
+minutes of experiments each; the fifth carries `write-storm` and nothing else.
 
 ```
               push to main or master                     concurrency: build-and-push
@@ -224,10 +225,10 @@ concurrency:
 That is the only trigger of this workflow: no `workflow_dispatch`, so a run
 cannot be started by hand from the Actions tab, and no schedule. The
 `concurrency` group is what stops two pushes in quick succession racing for the
-same tag and, worse, for the same four CloudFormation stacks: the share names
+same tag and, worse, for the same five CloudFormation stacks: the share names
 are fixed, so a second run would find `asyncdb-one` standing and fail to create
 it. `cancel-in-progress` is **false** deliberately: a cancelled run is one whose
-`delete-stack` never runs, and now there are three of those.
+`delete-stack` never runs, and now there are five of those.
 
 ### The pull request build
 
@@ -304,8 +305,8 @@ was the one that granted them.
 
 ### The shares
 
-The matrix is four entries, and what is in each is a balance of measured time
-rather than a category:
+The matrix is five entries. Four of them are a balance of measured time rather
+than a category, and the fifth is one experiment that does not fit in any of them:
 
 | Share | Runs | About |
 | --- | --- | --- |
@@ -313,6 +314,7 @@ rather than a category:
 | `asyncdb-two` | `etcd-unreachable`, `nodes-added` | 23 min |
 | `asyncdb-three` | `node-stops`, `nodes-removed`, `zone-retired` | 23 min |
 | `asyncdb-four` | `nodes-go-deaf`, `node-latency`, `disk-fills`, `etcd-quorum-lost` | 23 min |
+| `asyncdb-five` | `write-storm` | 38 min |
 
 The suites are a lump of their own — about four minutes — so the share carrying
 them carries `containers-restart` and the shortest of the faults beside it, and
@@ -326,7 +328,7 @@ Ordering still matters *inside* a share — `etcd-quorum-lost` last, because it 
 the only one that leaves a cluster wrong about itself — but not across them: a
 share has a cluster of its own and deletes it afterwards.
 
-### Why four
+### Why four, and then a fifth
 
 Because the fixed cost of a stack is most of a share. Two numbers set the floor,
 and both are measured:
@@ -338,14 +340,30 @@ and both are measured:
 
 Fifty minutes of experiments and four of suites over four stacks is about twelve
 minutes of work a share, against eight of standing the cluster up and taking it
-down — so **a fifth stack saves two or three minutes and pays a whole VPC, a load
-balancer and nine instances for them**, and thirteen, one an experiment, finishes
-no sooner than `nodes-added` plus the eight, while asking the region for thirteen
-VPCs against a default of five.
+down — so **a fifth stack for those would save two or three minutes and pay a whole
+VPC, a load balancer and nine instances for them**, and thirteen, one an
+experiment, would finish no sooner than `nodes-added` plus the eight while asking
+the region for thirteen VPCs.
 
 Two stacks would be about **thirty-five minutes** and three about **twenty-seven**,
 against twenty-three for four. Four is the last one that takes more off the clock
 than it costs to stand up.
+
+**`asyncdb-five` is not that argument.** It exists because `write-storm` is near
+thirty minutes and indivisible: eight faults in three rounds, one of them an
+instance the auto scaling group has to replace, and two walks of every node's own
+store afterwards. Put on any of the four it would make that share thirty-eight
+minutes and leave the other three idle for fifteen; on a stack of its own it costs
+the same wall clock and gives the other four back. So the fifth stack is not
+bought by shortening a share — it is bought by an experiment that is longer than
+one. **The run's wall clock is now that share: about thirty-eight minutes**, where
+four shares of the rest finish around twenty-three.
+
+**It is also what takes the run past the default VPC quota.** Five VPCs at once
+against a default of five to a region leaves no room for the default VPC, where
+four left room for exactly one. The quota has to be raised, or the default VPC
+removed, or `write-storm` named in one of the other four shares instead — which
+costs the fifteen minutes above and nothing else.
 
 What more stacks would buy is **isolation**: inside a share, an experiment runs
 on a cluster the one before it broke and healed. `chaos/run.sh` refuses to start
@@ -537,14 +555,14 @@ long-lived IAM user keys rather than an OIDC role the job assumes. **`build` and
 `release` configure no credentials at all**, so a push on a version that has
 passed reaches AWS not at all, and the job that writes the git tag cannot touch
 the account. **What the other three need is close to everything**, because they
-do not only publish an image — they create and delete four stacks:
+do not only publish an image — they create and delete five stacks:
 
 | For | Needs |
 | --- | --- |
 | The release | `ecr:GetAuthorizationToken`, `ecr:DescribeImages`, and the layer-upload actions behind `docker push` |
 | [The repositories](#making-the-repositories) | `ecr:DescribeRepositories` and `ecr:CreateRepository`, for `asyncdb` and for [the mirror](#mirroring-etcd) alike |
 | Both parameters | `ssm:PutParameter` on `/asyncdb/*` |
-| The deploy | `cloudformation:*` on the stacks, plus **every action the template's own resources need** — VPC, subnets, endpoints, security groups, load balancer, auto scaling, and `iam:CreateRole` / `PassRole` for the two instance roles — four times over, at once |
+| The deploy | `cloudformation:*` on the stacks, plus **every action the template's own resources need** — VPC, subnets, endpoints, security groups, load balancer, auto scaling, and `iam:CreateRole` / `PassRole` for the two instance roles — five times over, at once |
 | The diagnosis | `ec2:DescribeInstances`, `ec2:GetConsoleOutput`, `ssm:SendCommand` and `ssm:GetCommandInvocation` |
 
 That is a wide key to hold statically in repository secrets, and moving it to an
@@ -591,15 +609,15 @@ next push runs it all again.
   the version number and nothing else, and every job below it with it. A change that needs the
   suite needs a `version` bump, which is also the thing that publishes it.
 - **A stack left standing by hand no longer fails the run, and costs quota
-  instead.** The pipeline's stacks are `asyncdb-one`, `-two` and `-three`, so a
+  instead.** The pipeline's stacks are `asyncdb-one` through `-five`, so a
   stack somebody stood up by hand as `asyncdb` does not collide with any of them.
-  It does count against the same limits: **four stacks at once is four VPCs,
-  four load balancers and thirty-six `t3.micro`**, and the default quota is
-  five VPCs to a region, which leaves room for the default VPC and nothing else.
-  A run that cannot create its VPC fails at `create-stack` and tears nothing
-  down, because it created nothing.
+  It does count against the same limits: **five stacks at once is five VPCs,
+  five load balancers and forty-five `t3.micro`**, and the default quota is
+  five VPCs to a region — so the run fills it exactly and **the default VPC has to
+  be gone, or the quota raised**. A run that cannot create its VPC fails at
+  `create-stack` and tears nothing down, because it created nothing.
 - **A share left standing fails the next run's share.** The teardown only deletes
   a stack that share created, and the stack names are fixed per share, so a
   `create-stack` that finds `asyncdb-two` already there fails outright and
   correctly leaves it alone. `concurrency: build-and-push` is what stops two runs
-  racing for the same three names.
+  racing for the same five names.

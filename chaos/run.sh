@@ -15,13 +15,16 @@ source "$(dirname "$0")/harness.sh"
 here=$(dirname "$0")
 
 # The three that need nothing of the instances themselves are first, because they run against a
-# stack whose agent answers nobody. The five that go in through the SSM agent follow. The three
-# that resize the tier come after all of them, because they are the only faults here that change
-# what the deployment *is* — a run that dies inside one leaves a stack that is a different shape
-# rather than a cluster short of a node — and they are also the longest. And etcd losing quorum is
-# last, because it is the only one that leaves the cluster having been wrong about itself.
+# stack whose agent answers nobody. The five that go in through the SSM agent follow, and
+# write-storm after them: it is every one of those faults at once and the longest thing here that
+# still leaves the deployment the shape it found it. The three that resize the tier come after all
+# of them, because they are the only faults here that change what the deployment *is* — a run that
+# dies inside one leaves a stack that is a different shape rather than a cluster short of a node.
+# And etcd losing quorum is last, because it is the only one that leaves the cluster having been
+# wrong about itself.
 default="node-stops zone-lost nodes-go-deaf etcd-unreachable node-latency disk-fills"
-default="$default containers-restart nodes-added nodes-removed zone-retired etcd-quorum-lost"
+default="$default containers-restart write-storm nodes-added nodes-removed zone-retired"
+default="$default etcd-quorum-lost"
 
 experiments=${CHAOS_EXPERIMENTS:-$default}
 

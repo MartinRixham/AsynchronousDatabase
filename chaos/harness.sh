@@ -158,11 +158,10 @@ ssm_all()
 	[ "$silent" = 0 ]
 }
 
-# The base image is the ECS-optimised AMI, which runs an agent container of its own, so the asyncdb
-# container is the one whose image says asyncdb and never `docker ps -q | head -1`.
+# The logs of the asyncdb container, which chaos_container is what names.
 container_logs()
 {
-	echo 'docker logs $(docker ps --format "{{.ID}} {{.Image}}" | awk "/asyncdb/{print \$1; exit}") 2>&1'
+	printf 'docker logs %s 2>&1' "$chaos_container"
 }
 
 # What one node says about itself, rather than what the load balancer happened to route to.
@@ -784,18 +783,20 @@ walk_store()
 	sort -u "$work/keys"
 }
 
-# holdings <instance> — the keys that node holds in its own store, sorted, one per line.
+# holdings <instance> [table] — the keys that node holds in its own store, sorted, one per line.
+# The table is the seeded one unless it is named: write-storm asks the same question of the table
+# its client writes into.
 holdings()
 {
-	walk_store "$1" "$table" false '.key'
+	walk_store "$1" "${2:-$table}" false '.key'
 }
 
-# collect_holdings — every node asked, into one file each named by the zone it is in. A node that
-# cannot be asked is counted rather than passed over: a silent empty answer would make both
+# collect_holdings [table] — every node asked, into one file each named by the zone it is in. A node
+# that cannot be asked is counted rather than passed over: a silent empty answer would make both
 # assertions below say the opposite of what happened.
 collect_holdings()
 {
-	local id zone
+	local id zone name=${1:-$table}
 
 	holdings_asked=0
 	holdings_total=0
@@ -806,7 +807,7 @@ collect_holdings()
 	while read -r id zone _; do
 		holdings_total=$((holdings_total + 1))
 
-		if holdings "$id" > "$work/holdings/$zone.$id"; then
+		if holdings "$id" "$name" > "$work/holdings/$zone.$id"; then
 			holdings_asked=$((holdings_asked + 1))
 		fi
 	done < <(instances asyncdb)
@@ -1795,6 +1796,75 @@ fill_clear()
 	return 0
 }
 
+# ---------------------------------------------------------------------------- a killed container
+
+# The base image runs containers of its own, so the asyncdb one is the container whose image says
+# asyncdb and never `docker ps -q | head -1`. It is written once here because three things need it:
+# the logs, the kill, and starting one that did not come back.
+chaos_container='$(docker ps -a --format "{{.ID}} {{.Image}}" | awk "/asyncdb/{print \$1; exit}")'
+
+# The container's own init, killed from the host, and then waited for until the node answers again.
+#
+# **Killing the process from the host is the one thing that makes this a crash.** A signal sent
+# from inside the container cannot kill its PID 1 — the kernel drops what a namespace sends its own
+# init unless the init handles it — and a `docker kill` is a stop the daemon was asked for, which
+# it may record as manual and a restart policy does not act on. Nothing here starts the container
+# again: `docker run --restart always` is what brings it back, which is the runbook's claim rather
+# than the suite's doing.
+#
+# It then waits on the node's own port rather than on the container, which is later: a node listens
+# only once it has opened the store and joined, so a caller that waits for this is one whose next
+# kill lands on a node that was serving. The line it leaves is what a caller counts — `answering
+# again after Ns`, or `never answered again`.
+container_kill_script()
+{
+	printf '%s' "id=$chaos_container"'
+[ -n "$id" ] || { echo "no asyncdb container"; exit 1; }
+
+pid=$(docker inspect --format "{{.State.Pid}}" "$id")
+
+[ "${pid:-0}" -gt 1 ] || { echo "no process to kill"; exit 1; }
+
+kill -9 "$pid"
+
+for i in $(seq 30); do
+	sleep 2
+
+	code=$(curl -s -o /dev/null -m 5 -w "%{http_code}" http://localhost:8080/health)
+
+	[ "$code" = 000 ] || { echo "answering again after $((i * 2))s"; exit 0; }
+done
+
+echo "never answered again"
+exit 1'
+}
+
+# kill_containers <instance>... — one kill to all of them at once, with what each of them said left
+# in $work/answer.<instance>. **One send and never one apiece**: sends in turn are kills a wait
+# apart, which is a rolling restart and not this fault.
+kill_containers()
+{
+	ssm_all "$(container_kill_script)" "$@"
+}
+
+# container_start <instance>... — a container that is still down, started. Nothing here stops one,
+# so this is only ever the case the restart policy did not: a node still down when an experiment
+# ends would leave every experiment after it a node short. Starting one that is already running is
+# nothing, which is what makes it safe from a heal that runs twice.
+container_start()
+{
+	local script
+
+	script="id=$chaos_container"'
+[ -n "$id" ] || exit 0
+
+docker start "$id" > /dev/null 2>&1 || true'
+
+	ssm_all "$script" "$@" > /dev/null 2>&1
+
+	return 0
+}
+
 # ---------------------------------------------------------------------------- a zone cut off
 
 # zone_cut <subnet> <zone> — a network acl of the suite's own on that subnet, denying every other
@@ -2085,7 +2155,7 @@ preflight_chaos()
 
 	[ "$answer" = Online ] || {
 		echo "The SSM agent does not answer on $instance — it says ${answer:-nothing}." >&2
-		echo "Four of the seven experiments inject through it." >&2
+		echo "Six of the twelve experiments inject through it." >&2
 		return 1
 	}
 }

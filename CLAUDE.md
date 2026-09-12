@@ -169,7 +169,7 @@ testing:
 make create-stack            # or the stack a build stood up
 make create-chaos-stack      # chaos/chaos.yaml: the permission to inject a fault
 chaos/validate.sh            # every experiment's preflight, nothing applied — seconds
-chaos/run.sh                 # all eleven experiments, in order
+chaos/run.sh                 # all twelve experiments, in order
 make delete-chaos-stack
 ```
 
@@ -199,8 +199,8 @@ peer can reach fails one.
   fault anybody has. `start_load` keeps a client on the load balancer for the whole of an
   experiment — reads of the seeded keys as fast as one connection answers them, and a write every
   `CHAOS_LOAD_PAUSE` (0.2 seconds) — and `CHAOS_LOAD=0` turns it off. The reads are reported a
-  phase at a time and never asserted on, a fault costing reads being the load balancer's health
-  check as much as the database. The writes are the assertion no error code can make:
+  phase at a time and never asserted on — everywhere but `write-storm` — a fault costing reads
+  being the load balancer's health check as much as the database. The writes are the assertion no error code can make:
   `expect_load_kept` is every write the cluster answered 2xx still being there and holding what was
   written, which every fault that breaks nothing permanently has to leave standing. The three that
   terminate instances call `report_load_kept` instead and print what was lost, for the same reason
@@ -225,11 +225,12 @@ peer can reach fails one.
   the shape cannot show it. A node that cannot be asked fails it. It runs at the start and after
   every experiment, which is what makes `node-stops` and the three resizes a test of the rebuild
   and not only of the records that moved.
-- **Order matters.** The three that need nothing of the instances are first; the three that
-  resize the tier come after every fault that only breaks it, because they are the only ones that
-  change what the deployment *is*; `etcd-quorum-lost` is last, because it is the only one that
-  leaves the cluster having been wrong about itself, and the pipeline deletes the stack next.
-- **Five of the eleven inject through `ssm:SendCommand`** and the `AWS-RunShellScript` document,
+- **Order matters.** The three that need nothing of the instances are first; `write-storm` comes
+  after the faults it is made of; the three that resize the tier come after every fault that only
+  breaks it, because they are the only ones that change what the deployment *is*; `etcd-quorum-lost`
+  is last, because it is the only one that leaves the cluster having been wrong about itself, and
+  the pipeline deletes the stack next.
+- **Six of the twelve inject through `ssm:SendCommand`** and the `AWS-RunShellScript` document,
   which needs the private subnets' [route out](#release): `node-latency` installs `tc` from the
   distribution repositories, so what it depends on is an instance being able to install a package
   while it is under test. Four of the five send the script `fault_script` builds — write the removal down,
@@ -257,7 +258,23 @@ peer can reach fails one.
   since the first kill is a node that came back to an empty directory. `ssm_all` in
   `chaos/harness.sh` is what sends one kill to every instance at once, because six sends in turn
   are a rolling restart and not this fault.
-- **Three of the eleven inject with a stack update**, because the shape of the database tier is two
+- **`write-storm` is the sixth, and the only one that applies two faults at once**: a zone cut off
+  while another zone's containers are killed under it, an instance stopped while a third zone's
+  container is killed, and then every zone's pair of containers killed together, twice round. What
+  makes the overlap assertable is its client, which is not the harness's: **a write is retried until
+  the cluster takes it**, so every key it issued was acknowledged in the end and the assertions
+  cover all of them rather than the ones that got through. That is what lets it assert what no other
+  experiment can — that **every zone holds every one of those keys** — because a refused write is
+  what leaves the zones apart, and it leaves none. Beside it, `copies_agree` for divergence and a
+  readback for durability. **It is also the only experiment that asserts on reads**: a read that was
+  not answered 2xx fails it unless it falls in the window the load balancer itself owns —
+  `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` from `cloudformation.yaml`, with the
+  membership lease on top for a cut off node, which answers `/health` as normal until it has decided
+  it is unled. That rule is a claim about the database and not about arithmetic because **no fault
+  here kills two zones at once**: a key's copies are one node per zone, so a zone with both its
+  nodes serving holds a copy of every key. `container_kill_script` and `kill_containers` in
+  `chaos/harness.sh` are the kill it shares with `containers-restart`.
+- **Three of the twelve inject with a stack update**, because the shape of the database tier is two
   parameters of `cloudformation.yaml` and nothing else: `Zones` is how many copies of the keyspace
   there are — a zone holds exactly one — and `Nodes` is how many ways a zone splits the copy it
   holds. `zone-retired` takes the replication factor from three to two and back, `nodes-added`
@@ -845,8 +862,8 @@ repository `asyncdb` if the account has none, writes that tag to the SSM paramet
 and writes `/asyncdb/etcd`, and `make create-chaos-stack`s the permission to inject a fault, once
 for every share below it.
 
-**`verify` is then a matrix of four, one stack each, `fail-fast: false`.** Each share
-`make create-stack`s `asyncdb-{one,two,three,four}` — `STACK` and `CHAOS_STACK` come from the matrix —
+**`verify` is then a matrix of five, one stack each, `fail-fast: false`.** Each share
+`make create-stack`s `asyncdb-{one,two,three,four,five}` — `STACK` and `CHAOS_STACK` come from the matrix —
 waits for `/health` to name six nodes **and then for those nodes' own `leads` to sum to 256**,
 asked of each instance over Run Command because `leads` is a node's own count and the load balancer
 answers from one of them — a membership is not yet a cluster that takes writes, and a suite that
@@ -854,20 +871,25 @@ starts before the claims settle is answered `no_leader`. It then runs `chaos/val
 `chaos/run.sh` over the experiments the matrix names it in `CHAOS_EXPERIMENTS`, and
 `make delete-stack`s it again whether they passed or not. **The share carrying `matrix.suites` also
 runs the Postman collection, the Playwright journeys and `perf/write.sh` / `perf/read.sh` first**,
-before anything has broken its stack. The shares are balanced by measured time — about ten minutes of experiments each out of the
-forty the ten of them take, with the suites counting as four beside them — so all four land within a
-minute or two of twenty-three. `doc/pipeline/index.md` is the page. **An experiment nobody names in
+before anything has broken its stack. Four of the shares are balanced by measured time — about ten
+minutes of experiments each out of the forty the eleven of them take, with the suites counting as
+four beside them — so those four land within a minute or two of twenty-three. **`asyncdb-five` is
+not balanced against anything**: `write-storm` is near thirty minutes on its own, which is longer
+than a whole share of the rest, so it has a stack to itself and is what the run waits for.
+`doc/pipeline/index.md` is the page. **An experiment nobody names in
 the matrix is an experiment nobody runs**: there is no default list in the workflow.
 
 `release` then pushes the git tag and `cleanup` deletes the chaos permissions. A share's teardown
-deletes only a stack that share created, so a stack standing under one of those three names makes
+deletes only a stack that share created, so a stack standing under one of those five names makes
 `create-stack` fail and is then left alone — while a stack standing by hand as `asyncdb` collides
-with nothing and only costs quota. **Four stacks at once is four VPCs, four load balancers and
-thirty-six `t3.micro`**, against a default of five VPCs to a region — so the account has room for
-the run and a default VPC and nothing else, which is what sizes it. **Four is where more stacks
-stop paying**: a share pays about eight minutes to stand its cluster up and tear it down against
-about ten of work, so a fifth stack takes two or three minutes off a twenty-three minute run and
-costs a whole VPC, a load balancer and nine instances for them.
+with nothing and only costs quota. **Five stacks at once is five VPCs, five load balancers and
+forty-five `t3.micro`**, against a default of five VPCs to a region — so **the run now needs that
+quota raised, or the default VPC gone**, where four left room for exactly one of them. The fifth
+is not there to make the run shorter: **four was where more stacks stopped paying** for the eleven
+experiments that balance, a share costing about eight minutes to stand its cluster up and tear it
+down against about ten of work. `write-storm` is the one thing that does not fit that arithmetic —
+thirty minutes that cannot be divided, because an experiment has the cluster to itself by design —
+so it buys a stack by being longer than a share rather than by shortening one.
 
 **There is one gate, and it is the `{version}` git tag.** It is the `if:` on `publish` and
 **nowhere else in the workflow** — no step repeats it, and every job that costs anything is

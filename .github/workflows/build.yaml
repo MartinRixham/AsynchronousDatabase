@@ -157,6 +157,8 @@ jobs:
             experiments: node-stops nodes-removed zone-retired
           - stack: asyncdb-four
             experiments: nodes-go-deaf node-latency disk-fills etcd-quorum-lost
+          - stack: asyncdb-five
+            experiments: write-storm
 
     env:
       VERSION: ${{ needs.build.outputs.version }}

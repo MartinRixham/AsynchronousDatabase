@@ -66,39 +66,10 @@ expect "$count" 6 "the stack is running six database nodes"
 stamp=$RANDOM
 before=before-$stamp
 
-# The base image runs containers of its own, so the one to kill is the one whose image says
-# asyncdb, as container_logs in chaos/harness.sh finds it.
-container='$(docker ps -a --format "{{.ID}} {{.Image}}" | awk "/asyncdb/{print \$1; exit}")'
-
-# The container's own init, killed from the host, which is the one way to make this a crash. A
-# signal sent from inside the container cannot kill its PID 1 — the kernel drops what a namespace
-# sends its own init unless the init handles it — and a `docker kill` is a stop the daemon was
-# asked for, which it may record as manual and a restart policy does not act on. Killing the
-# process from the host depends on neither: the container exits the way it would have if the
-# process had died on its own, which is the failure the runbook describes.
-#
-# It then waits for the node to answer on its own port, which is later than the container being
-# back: a node listens only once it has opened the store and joined, so a round that waits for
-# this is a round that kills a node that was serving.
-kill_script="id=$container"'
-[ -n "$id" ] || { echo "no asyncdb container"; exit 1; }
-
-pid=$(docker inspect --format "{{.State.Pid}}" "$id")
-
-[ "${pid:-0}" -gt 1 ] || { echo "no process to kill"; exit 1; }
-
-kill -9 "$pid"
-
-for i in $(seq 30); do
-	sleep 2
-
-	code=$(curl -s -o /dev/null -m 5 -w "%{http_code}" http://localhost:8080/health)
-
-	[ "$code" = 000 ] || { echo "answering again after $((i * 2))s"; exit 0; }
-done
-
-echo "never answered again"
-exit 1'
+# The kill, and what the container is, are `container_kill_script` and `chaos_container` in
+# chaos/harness.sh: write-storm kills containers too, and a second copy of a fault is a second
+# fault to keep true.
+container=$chaos_container
 
 # expect_seed_replicated <when> — every seeded record is in every zone's stores, and no key is in
 # two stores of one zone. It is given time the way expect_copies is: a key written to the node
@@ -216,7 +187,7 @@ inject()
 		echo "  Round $round of $rounds: killing the container on all $count nodes at once."
 
 		# shellcheck disable=SC2086
-		ssm_all "$kill_script" $ids || return 1
+		kill_containers $ids || return 1
 
 		for id in $ids; do
 			printf '%s %s\n' "$id" "$(tr '\n' ' ' < "$work/answer.$id")" >> "$work/rounds"
@@ -236,17 +207,8 @@ inject()
 # ended would leave every experiment after this one a node short.
 heal()
 {
-	local script
-
-	script="id=$container"'
-[ -n "$id" ] || exit 0
-
-docker start "$id" > /dev/null 2>&1 || true'
-
 	# shellcheck disable=SC2086
-	ssm_all "$script" $ids > /dev/null 2>&1
-
-	return 0
+	container_start $ids
 }
 
 preflight()
