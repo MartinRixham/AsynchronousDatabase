@@ -771,7 +771,68 @@ storm_lagging()
 	sort -o "$work/lag.one" "$work/lag.one"
 	sort -o "$work/lag.other" "$work/lag.other"
 
-	join -j 1 -o 0,1.2,2.2 "$work/lag.one" "$work/lag.other" | awk '$2 != $3' | grep -c .
+	# Distinct keys and not joined lines. A key is briefly in two stores of one zone while a
+	# reconcile moves it, and the join is then a cross product — which is how eight keys were once
+	# reported as thirteen differences.
+	join -j 1 -o 0,1.2,2.2 "$work/lag.one" "$work/lag.other" \
+		| awk '$2 != $3 { print $1 }' | sort -u | grep -c .
+}
+
+# storm_catchup <zone> — **how long that zone takes to hold the last acknowledged value of every
+# hot key again**, once the rule keeping it out of the membership has gone. It is the one number
+# the experiment could not answer before: every walk it makes afterwards is minutes later, so a
+# store that had already caught up and one that caught up instantly read the same.
+#
+# It asks the two nodes of the zone for the hot keys **by key**, in one Run Command, carrying
+# X-Asyncdb-Forwarded so each answers out of its own store. That is eight reads where a walk of the
+# table is 256 partitions and the better part of a minute, which is what makes it fine enough to
+# time anything. The floor of what it can measure is one Run Command, so what it reports is a
+# ceiling and never the mechanism's own latency.
+#
+# What it compares against moves, deliberately: the client is still writing, and the last value it
+# was told had been taken is read fresh from $work/hot every sample. A write is acknowledged only
+# once every copy has taken it, so a zone that is caught up matches whatever that is.
+storm_catchup()
+{
+	local zone=$1 deadline=$((SECONDS + converge)) started=$SECONDS
+	local ids script behind k n
+
+	mapfile -t ids < <(zone_nodes "$zone")
+
+	[ "${#ids[@]}" != 0 ] || { printf '%s 0\n' "$hot_keys"; return 0; }
+
+	script="for k in \$(seq 0 $((hot_keys - 1))); do
+	printf '%s ' \"\$k\"
+	curl -s --max-time 5 -H '$forwarded_header: true' \
+		\"http://localhost:8080/table/$load_table/key/hot-$storm_stamp-\$k\"
+	echo
+done"
+
+	while :; do
+		behind=0
+
+		if ssm_all "$script" "${ids[@]}"; then
+			cat "$work"/answer.* > "$work/catchup"
+
+			# A zone holds a copy of the whole keyspace split between its nodes, so a key is
+			# answered for by one of the two and the pair of them is the copy.
+			awk '{ last[$1] = $2 } END { for (k in last) print k, last[k] }' "$work/hot" \
+				> "$work/catchup.want"
+
+			while read -r k n; do
+				grep -qxF "$k $storm_stamp-$k-$n" "$work/catchup" || behind=$((behind + 1))
+			done < "$work/catchup.want"
+		else
+			behind=$hot_keys
+		fi
+
+		[ "$behind" = 0 ] && break
+		[ "$SECONDS" -lt "$deadline" ] || break
+
+		sleep 5
+	done
+
+	printf '%s %s\n' "$behind" "$((SECONDS - started))"
 }
 
 # ---------------------------------------------------------------------------- the targets
@@ -874,7 +935,7 @@ storm_rejoin()
 # on a cluster that is short of something else.
 inject()
 {
-	local from node roll zone pair lagging
+	local from node roll zone pair lagging behind caught
 
 	# ---- One. A zone cut off, and the containers of another zone killed under it, one node at a
 	# time so that the zone never loses both copies it holds at once. The cut zone falls out of
@@ -998,6 +1059,23 @@ inject()
 			fi
 
 			storm_rejoin
+
+			# **The convergence, timed**, and only on the pass that measured the divergence: the
+			# rule has just gone, the zone is holding a store that is behind by every write the
+			# other two took while it was out, and what closes that gap is the reconcile pass its
+			# rejoining starts. Everything else here looks at the stores minutes later, by which
+			# time a cluster that took a second and one that took two minutes read alike.
+			if [ "$roll" = 1 ]; then
+				read -r behind caught <<< "$(storm_catchup "$zone")"
+
+				if [ "$behind" = 0 ]; then
+					result 0 "$zone caught up on what it missed once it was let back in"
+					printf '  ---- it held the last acknowledged value of every key again %ss after the rule went\n' \
+						"$caught"
+				else
+					result 1 "$zone caught up on what it missed once it was let back in — $behind of $hot_keys still behind after ${caught}s"
+				fi
+			fi
 
 			sleep "$between"
 		done

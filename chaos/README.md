@@ -444,6 +444,14 @@ is [`etcd-unreachable`](#the-faults-that-go-in-through-ssm)'s rule and deliberat
 `CHAOS_STORM_HOLD` is how long it is held — six leases by default, which at a write every
 `CHAOS_STORM_PAUSE` is a copy a hundred or so writes behind by the time it is let back in.
 
+**And then it is timed.** Once the rule goes, the zone's two nodes are asked for the hot keys **by
+key**, in one Run Command carrying `X-Asyncdb-Forwarded` so each answers out of its own store, and
+that is repeated until every one of them holds the last value the client was told had been taken.
+Eight reads rather than a walk of 256 partitions is what makes it fine enough to time anything: the
+walks this experiment makes afterwards are minutes later, by which point a cluster that caught up
+in a second and one that took two minutes read exactly alike. The floor is one Run Command, so the
+number is a ceiling on the catch-up and never the mechanism's own latency.
+
 What makes that question answerable is the client, and it is not the harness's. A write here is
 **retried until the cluster takes it**, however long that takes and however many times it is
 refused, so every write it ever issued was acknowledged in the end. That is what entitles the
