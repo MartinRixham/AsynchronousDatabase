@@ -267,6 +267,30 @@ cluster::partition_set cluster::etcd_cluster::holdings() const
 	return held;
 }
 
+std::map<std::string, cluster::partition_set> cluster::etcd_cluster::holders(
+	const partition_set &partitions) const
+{
+	membership registered = snapshot();
+
+	// A membership of fewer than two nodes is this node holding every key, and so nobody holding
+	// any of it to be asked.
+	if (registered->size() < 2)
+	{
+		return std::map<std::string, partition_set>();
+	}
+
+	return ::cluster::holders_of(partitions, *registered, configuration.node, configuration.zone);
+}
+
+std::map<std::string, cluster::partition_set> cluster::etcd_cluster::holders_in(
+	const partition_set &partitions,
+	const std::vector<std::string> &zone) const
+{
+	// The zone is the list the caller was given by zones(), so there is no membership to read
+	// again: which of its nodes holds a partition is the hashing and nothing else.
+	return ::cluster::holders_in(partitions, zone);
+}
+
 std::vector<std::string> cluster::etcd_cluster::peers() const
 {
 	membership registered = snapshot();

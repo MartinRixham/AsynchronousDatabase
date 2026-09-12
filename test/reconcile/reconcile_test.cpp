@@ -214,6 +214,24 @@ namespace
 		return asked == sent.end() ? "" : asked->first;
 	}
 
+	// The queries of the files asked of a node, in the order they were asked for, so that a test
+	// about resuming a walk does not also depend on which node a pass asks first.
+	std::vector<std::string> file_queries_of(const cluster::fake_cluster &nodes, const std::string &node)
+	{
+		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+		std::vector<std::string> queries;
+
+		for (size_t i = 0; i < sent.size(); i++)
+		{
+			if (sent[i].first == node && is_file(sent[i].second, true))
+			{
+				queries.push_back(sent[i].second.query);
+			}
+		}
+
+		return queries;
+	}
+
 	size_t files_asked_of(const cluster::fake_cluster &nodes, const std::string &node, bool values)
 	{
 		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
@@ -608,10 +626,11 @@ TEST(reconcile_test, asks_for_the_next_file_from_the_key_the_one_before_it_reach
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 	EXPECT_TRUE(repository.read_record("account", "b").has_value());
 
-	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+	std::vector<std::string> asked = file_queries_of(nodes, mate);
 
-	ASSERT_LE(3u, sent.size());
-	EXPECT_NE(std::string::npos, sent[2].second.query.find("from=" + url::encode(base64::encode("a"))));
+	ASSERT_EQ(2u, asked.size());
+	EXPECT_EQ(std::string::npos, asked[0].find("from="));
+	EXPECT_NE(std::string::npos, asked[1].find("from=" + url::encode(base64::encode("a"))));
 }
 
 TEST(reconcile_test, walks_a_store_larger_than_one_page)

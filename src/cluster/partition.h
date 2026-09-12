@@ -4,6 +4,7 @@
 #include <bitset>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -53,6 +54,35 @@ namespace cluster
 	std::string leader_of(const std::string &key, const std::vector<member> &members);
 
 	std::vector<std::vector<std::string>> zones_of(
+		const std::vector<member> &members,
+		const std::string &node,
+		const std::string &zone);
+
+	// Which nodes of one zone hold these partitions, and which of them each node holds. A zone
+	// holds a copy of the whole keyspace split between its nodes, so one node of it holds each
+	// partition and the rest would answer a file with nothing of it in them.
+	//
+	// The list is the zone as the node asking sees it, so a zone this node is in is a zone with
+	// this node left out — which makes the answer the node that held the partition before this
+	// one did.
+	std::map<std::string, partition_set> holders_in(
+		const partition_set &partitions,
+		const std::vector<std::string> &nodes);
+
+	// Which nodes hold the records of these partitions, and which of the partitions to ask each of
+	// them for. A zone holds a copy of the whole keyspace, so one node of every other zone holds
+	// each of them; and in this node's own zone it is the owner among that zone's other nodes,
+	// which is the node this one took the partition from.
+	//
+	// **It is bounded by the partitions and not by the membership**: the more nodes a zone has, the
+	// smaller the share of it one node holds, so a share of 256 partitions never names more than
+	// sixteen nodes of a zone however many are in it.
+	//
+	// Two nodes joining a zone at once can name each other rather than the node that held the
+	// partition, which is a share fetched from the other zones instead — they are asked as well,
+	// because a zone that lost a node has no copy of its share left to ask.
+	std::map<std::string, partition_set> holders_of(
+		const partition_set &partitions,
 		const std::vector<member> &members,
 		const std::string &node,
 		const std::string &zone);

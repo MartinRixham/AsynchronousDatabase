@@ -134,6 +134,12 @@ namespace cluster
 
 		partition_set holdings() const override;
 
+		std::map<std::string, partition_set> holders(const partition_set &partitions) const override;
+
+		std::map<std::string, partition_set> holders_in(
+			const partition_set &partitions,
+			const std::vector<std::string> &zone) const override;
+
 		std::vector<std::string> peers() const override;
 
 		std::vector<std::vector<std::string>> zones() const override;

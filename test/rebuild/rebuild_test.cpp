@@ -215,7 +215,7 @@ TEST(rebuild_test, asks_for_the_next_file_from_the_key_the_one_before_it_reached
 	EXPECT_NE(std::string::npos, sent[2].second.query.find("from=" + url::encode(base64::encode("b"))));
 }
 
-TEST(rebuild_test, asks_every_node_of_the_zone_it_reads_from)
+TEST(rebuild_test, reads_a_share_that_more_than_one_node_of_a_zone_holds_from_each_of_them)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, std::vector<cluster::member> {
@@ -227,7 +227,9 @@ TEST(rebuild_test, asks_every_node_of_the_zone_it_reads_from)
 	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }) });
 	nodes.answer_in_turn(other, { file({ "b" }) });
 
-	// A zone holds a copy of the whole keyspace between its nodes, so both of them are asked.
+	// A zone holds a copy of the whole keyspace split between its nodes, so a share of it that two
+	// of them hold is read from both. Which of them holds a partition is the cluster's to say, and
+	// partition_test's to prove.
 	EXPECT_EQ(2u, rebuilt(repository, nodes).records);
 
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());

@@ -212,9 +212,9 @@ curl -s http://asyncdb-1:8080/health | jq '.nodes'
   is a slower start-up, and the load balancer will hold traffic off until it is
   done.
 - **It is not as parallel as the cluster is.** One node reads from one node at a
-  time, in four pieces. What it is *not* doing is reading from every node of the
-  zone at once, so a share spread over eight nodes is eight walks one after
-  another.
+  time, in four pieces. What it is *not* doing is reading from several nodes of
+  the zone at once, so a share the zone splits between eight of its nodes is
+  eight walks one after another.
 
 ## The one hazard
 
@@ -272,9 +272,17 @@ left standing. A name the peer holds as a tombstone stamped after the create thi
 node holds *is* the delete this node missed, and that one goes.
 
 **Both halves ask for a file, and neither asks about a record at a time.** The
-fetch asks each node for
+fetch asks for
 [a file of the partitions this node now holds](/database/cluster#moving-a-share-of-a-table),
 so the only records that cross the network are the ones being taken over.
+
+**And it asks the nodes that hold them rather than all of them.** A zone holds a
+copy of a partition on one of its nodes, so what the fetch asks is that node of
+each zone — and, in this node's own zone, the node the partition was taken from,
+which is the owner of it among that zone's other nodes. A node that holds none of
+the share would answer a file with nothing in it, having read its whole table to
+find that out. The nodes asked are therefore a handful whatever the tier's size:
+the more nodes a zone has, the smaller the share of it one node owns.
 
 Both are read in [several pieces at once](/database/cluster#several-pieces-at-once),
 the same as a rebuild.
@@ -348,8 +356,8 @@ node whose peer is not running its own pass — check that peer's membership bef
 anything else.
 
 **A pass is bounded by its own clock, and each half has half of it.** The fetch
-walks every node of every zone, so a store of large values is one it does not
-reach the end of — and the clear down behind it runs on a budget the fetch cannot
+walks every node that holds part of this node's share, so a store of large values
+is one it does not reach the end of — and the clear down behind it runs on a budget the fetch cannot
 spend. A pass its clock ended is never settled, however little it found to do, so
 it runs again: a line reporting nothing cleared is not a pass that had nothing to
 clear.

@@ -678,7 +678,11 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   the schema, not a delete.
 - **Records move when ownership moves, and only then.** A membership change redraws the split inside
   a zone without moving a record, so `reconcile::reconcile` does: it **fetches** what this node now
-  owns and holds nothing for, from every other node, and **clears down** what it no longer owns.
+  owns and holds nothing for, and **clears down** what it no longer owns. What it asks for a share
+  is the nodes that hold it — `cluster::holders` is one node of every zone and, in this node's own
+  zone, the node it took the share from — rather than every node of every zone, which is a cluster
+  reading itself through once a node for each membership change. `rebuild::rebuild` asks
+  `cluster::holders_in` the same question of the one zone it is reading.
   `server::server` runs it on a thread of its own, one tick — `server::reconcile_interval()`, three
   seconds — *after* the membership it saw changed, and one change buys `server::reconcile_attempts`
   (12) passes **of getting nowhere**: a pass that moved records buys them all back, because how many

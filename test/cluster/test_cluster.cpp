@@ -90,6 +90,19 @@ cluster::partition_set cluster::test_cluster::holdings() const
 	return held;
 }
 
+std::map<std::string, cluster::partition_set> cluster::test_cluster::holders(
+	const partition_set &partitions) const
+{
+	return holders_of(partitions, member_list, self, zone);
+}
+
+std::map<std::string, cluster::partition_set> cluster::test_cluster::holders_in(
+	const partition_set &partitions,
+	const std::vector<std::string> &zone_nodes) const
+{
+	return ::cluster::holders_in(partitions, zone_nodes);
+}
+
 std::vector<std::string> cluster::test_cluster::peers() const
 {
 	std::vector<std::string> peers;

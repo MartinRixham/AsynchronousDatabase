@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -62,6 +63,12 @@ namespace cluster
 		placement replicas(const std::string &key) const override;
 
 		partition_set holdings() const override;
+
+		std::map<std::string, partition_set> holders(const partition_set &partitions) const override;
+
+		std::map<std::string, partition_set> holders_in(
+			const partition_set &partitions,
+			const std::vector<std::string> &zone_nodes) const override;
 
 		std::vector<std::string> peers() const override;
 

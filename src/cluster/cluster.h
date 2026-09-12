@@ -2,6 +2,7 @@
 #define CLUSTER_CLUSTER_H
 
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -101,6 +102,19 @@ namespace cluster
 		// key, and a pass that moves records has no key to ask about: what it asks another node
 		// for is its share, and a share is a set of partitions.
 		virtual partition_set holdings() const = 0;
+
+		// Which nodes to ask for the records of these partitions, and which of them to ask each
+		// node for. A pass filling a share asks the nodes that hold it rather than every node of
+		// every zone: one node of a zone holds that zone's copy of a partition, so asking the
+		// whole zone is asking every node of it for a share one of them has.
+		virtual std::map<std::string, partition_set> holders(const partition_set &partitions) const = 0;
+
+		// The same question of one zone rather than of the membership, which is what a rebuild
+		// asks: it fills an empty store from one zone's copy and moves on to the next zone when
+		// that one comes up short, so what it needs is the nodes of the zone it is reading.
+		virtual std::map<std::string, partition_set> holders_in(
+			const partition_set &partitions,
+			const std::vector<std::string> &zone) const = 0;
 
 		virtual std::vector<std::string> peers() const = 0;
 

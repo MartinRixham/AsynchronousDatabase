@@ -286,9 +286,16 @@ reconcile::outcome reconcile::reconcile(
 
 	std::set<table::table> tables = repository.list_tables();
 
-	// Read once, because every file of every table of every node is asked for against it and the
-	// membership this pass is acting on is one moment of it.
-	cluster::partition_set partitions = nodes.holdings();
+	// The nodes holding what this node owns and which partitions of it to ask each of them for.
+	// Read once, because every file of every table is asked for against it and the membership this
+	// pass is acting on is one moment of it.
+	//
+	// **A pass asks the nodes that hold a share and not every node there is**: one node of a zone
+	// holds that zone's copy of a partition, and in this node's own zone it is the node this one
+	// took the partition from. A node it does not ask because the records moved on inside another
+	// zone while this pass ran is a node the next pass asks, which is the same thing the clear
+	// down is answered a file without a key in it by.
+	std::map<std::string, cluster::partition_set> holders = nodes.holders(nodes.holdings());
 
 	// A half that has run out of patience is what a walk it is given answers, so the loops carry no
 	// clock of their own: what is left of them is asked and does nothing.
@@ -300,24 +307,23 @@ reconcile::outcome reconcile::reconcile(
 
 	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
 	{
-		for (size_t zone = 0; zone < zones.size(); zone++)
+		for (std::map<std::string, cluster::partition_set>::const_iterator holder = holders.begin();
+			holder != holders.end();
+			++holder)
 		{
-			for (size_t node = 0; node < zones[zone].size(); node++)
+			outcome taken = fetch_from(
+				repository, nodes, holder->first, it->name, holder->second, workers, running, fetching);
+
+			done.fetched += taken.fetched;
+
+			if (!taken.finished)
 			{
-				outcome taken = fetch_from(
-					repository, nodes, zones[zone][node], it->name, partitions, workers, running, fetching);
+				finished = false;
+			}
 
-				done.fetched += taken.fetched;
-
-				if (!taken.finished)
-				{
-					finished = false;
-				}
-
-				if (taken.refused)
-				{
-					refused = true;
-				}
+			if (taken.refused)
+			{
+				refused = true;
 			}
 		}
 	}

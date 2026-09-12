@@ -118,6 +118,39 @@ cluster::partition_set cluster::fake_cluster::holdings() const
 	return held;
 }
 
+// Every peer, because which of them holds a partition is what the hashing answers rather than
+// something a test hands in: what a test says here is what each node answers when it is asked.
+// Which nodes a share names is holders_of()'s to say, and partition_test's to prove.
+std::map<std::string, cluster::partition_set> cluster::fake_cluster::holders(
+	const partition_set &partitions) const
+{
+	std::map<std::string, partition_set> asking;
+	std::vector<std::string> nodes = peers();
+
+	for (size_t i = 0; i < nodes.size(); i++)
+	{
+		asking[nodes[i]] = partitions;
+	}
+
+	return asking;
+}
+
+// Every node of the zone, for the same reason: a fake cluster hashes nothing, so what a test says
+// here is what each node answers when it is asked for a share.
+std::map<std::string, cluster::partition_set> cluster::fake_cluster::holders_in(
+	const partition_set &partitions,
+	const std::vector<std::string> &zone) const
+{
+	std::map<std::string, partition_set> asking;
+
+	for (size_t i = 0; i < zone.size(); i++)
+	{
+		asking[zone[i]] = partitions;
+	}
+
+	return asking;
+}
+
 std::vector<std::string> cluster::fake_cluster::peers() const
 {
 	std::vector<std::string> peers;

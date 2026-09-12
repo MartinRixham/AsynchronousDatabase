@@ -82,6 +82,51 @@ namespace
 
 		return found == owners.end() ? "" : found->node;
 	}
+
+	std::string zone_of(const std::vector<cluster::member> &members, const std::string &node)
+	{
+		std::vector<cluster::member>::const_iterator found = std::find_if(
+			members.begin(),
+			members.end(),
+			[&node](const cluster::member &member) { return member.node == node; });
+
+		return found == members.end() ? "" : found->zone;
+	}
+
+	// The partitions a node holds, which is every one it owns in its own zone.
+	cluster::partition_set held_by(const std::vector<cluster::member> &members, const std::string &node)
+	{
+		cluster::partition_set held;
+
+		for (size_t partition = 0; partition < cluster::partition_count; partition++)
+		{
+			if (owner_in(cluster::owners_of(cluster::partition_name(partition), members), zone_of(members, node)) ==
+				node)
+			{
+				held.set(partition);
+			}
+		}
+
+		return held;
+	}
+
+	// A deployment of several zones with several nodes in each.
+	std::vector<cluster::member> spread(size_t zones, size_t per_zone)
+	{
+		std::vector<cluster::member> members;
+
+		for (size_t zone = 0; zone < zones; zone++)
+		{
+			for (size_t i = 0; i < per_zone; i++)
+			{
+				members.push_back(cluster::member {
+					"http://asyncdb-" + std::to_string(zone * per_zone + i) + ":8080",
+					std::string(1, static_cast<char>('a' + zone)) });
+			}
+		}
+
+		return members;
+	}
 }
 
 TEST(partition_test, no_node_owns_a_key_when_there_are_no_nodes)
@@ -497,4 +542,184 @@ TEST(partition_test, partition_keys_are_spread_over_the_partitions)
 	}
 
 	EXPECT_EQ(partitions.size(), cluster::partition_count);
+}
+
+// A zone's copy is split between its nodes, so a partition is asked of the one that holds it. What
+// the rest would answer is a file with nothing of the share in it, having read their whole table to
+// find that out.
+TEST(partition_test, a_partition_is_asked_of_the_one_node_of_a_zone_that_holds_it)
+{
+	const std::vector<std::string> zone { "http://asyncdb-3:8080", "http://asyncdb-4:8080" };
+	cluster::partition_set every;
+
+	every.set();
+
+	std::map<std::string, cluster::partition_set> holders = cluster::holders_in(every, zone);
+
+	ASSERT_EQ(holders.size(), zone.size());
+
+	cluster::partition_set asked;
+
+	for (std::map<std::string, cluster::partition_set>::const_iterator it = holders.begin();
+		it != holders.end();
+		++it)
+	{
+		// No partition is asked of two nodes of one zone: the two sets have nothing in common, and
+		// between them they are the whole of what was asked about.
+		EXPECT_TRUE((asked & it->second).none());
+
+		asked |= it->second;
+
+		for (size_t partition = 0; partition < cluster::partition_count; partition++)
+		{
+			if (it->second.test(partition))
+			{
+				EXPECT_EQ(cluster::owner_of(cluster::partition_name(partition), zone), it->first);
+			}
+		}
+	}
+
+	EXPECT_TRUE(asked.all());
+}
+
+// A zone of no nodes at all, which is the zone a node alone in its own is asked to read from.
+TEST(partition_test, a_zone_of_no_nodes_holds_nothing_to_ask_for)
+{
+	cluster::partition_set every;
+
+	every.set();
+
+	EXPECT_TRUE(cluster::holders_in(every, std::vector<std::string>()).empty());
+}
+
+// Every zone holds a copy of a partition, and one node of the zone holds it, so a share is asked
+// of one node of each of them and not of every node of any.
+TEST(partition_test, a_partition_is_asked_of_one_node_of_every_zone)
+{
+	const std::string node = "http://asyncdb-1:8080";
+	cluster::partition_set held = held_by(zoned, node);
+	std::map<std::string, cluster::partition_set> holders = cluster::holders_of(held, zoned, node, "a");
+
+	ASSERT_GT(held.count(), 0u);
+
+	for (size_t partition = 0; partition < cluster::partition_count; partition++)
+	{
+		if (!held.test(partition))
+		{
+			continue;
+		}
+
+		std::multiset<std::string> asked;
+
+		for (std::map<std::string, cluster::partition_set>::const_iterator it = holders.begin();
+			it != holders.end();
+			++it)
+		{
+			if (it->second.test(partition))
+			{
+				asked.insert(zone_of(zoned, it->first));
+			}
+		}
+
+		EXPECT_EQ(asked, (std::multiset<std::string> { "a", "b", "c" }));
+	}
+}
+
+// The node asked in this node's own zone is the one the partition was taken from: a zone that
+// gains a node redraws its split, and the records are on whichever of its other nodes owned the
+// partition while this one was not there.
+TEST(partition_test, the_node_asked_in_this_node_s_own_zone_held_the_partition_before_it)
+{
+	const std::string node = "http://asyncdb-1:8080";
+	cluster::partition_set held = held_by(zoned, node);
+	std::map<std::string, cluster::partition_set> holders = cluster::holders_of(held, zoned, node, "a");
+	std::vector<cluster::member> before = without(zoned, node);
+	size_t asked = 0;
+
+	for (size_t partition = 0; partition < cluster::partition_count; partition++)
+	{
+		if (!held.test(partition))
+		{
+			continue;
+		}
+
+		std::string took_from =
+			owner_in(cluster::owners_of(cluster::partition_name(partition), before), "a");
+
+		ASSERT_FALSE(took_from.empty());
+		EXPECT_TRUE(holders[took_from].test(partition));
+
+		asked++;
+	}
+
+	EXPECT_GT(asked, 0u);
+}
+
+// What grouping a share by the node that holds it is for. A zone of many nodes splits the keyspace
+// so finely that one node's share of it names few of them, and every node a pass asks reads its
+// whole table to answer — so asking all of them is a cluster reading itself through once a node
+// for every membership change.
+TEST(partition_test, a_share_of_a_large_cluster_is_asked_of_a_handful_of_its_nodes)
+{
+	std::vector<cluster::member> large = spread(3, 32);
+	const std::string node = large[0].node;
+	cluster::partition_set held = held_by(large, node);
+	std::map<std::string, cluster::partition_set> holders = cluster::holders_of(held, large, node, "a");
+
+	// One node of each zone for each partition held, and a share of a cluster this size is a
+	// handful of partitions.
+	EXPECT_LE(holders.size(), 3 * held.count());
+	EXPECT_LT(holders.size(), large.size() / 2);
+}
+
+// A node that is the only one of its zone took its share from nobody there, so what it asks is the
+// other zones — which is the only place a zone that lost a node can be filled from.
+TEST(partition_test, a_node_alone_in_its_zone_asks_only_the_other_zones)
+{
+	std::vector<cluster::member> one_each {
+		cluster::member { "http://asyncdb-1:8080", "a" },
+		cluster::member { "http://asyncdb-2:8080", "b" },
+		cluster::member { "http://asyncdb-3:8080", "c" }
+	};
+	cluster::partition_set every;
+
+	every.set();
+
+	std::map<std::string, cluster::partition_set> holders =
+		cluster::holders_of(every, one_each, "http://asyncdb-1:8080", "a");
+
+	ASSERT_EQ(holders.size(), 2u);
+	EXPECT_TRUE(holders["http://asyncdb-2:8080"].all());
+	EXPECT_TRUE(holders["http://asyncdb-3:8080"].all());
+}
+
+TEST(partition_test, no_node_is_asked_about_a_partition_the_share_does_not_name)
+{
+	cluster::partition_set one;
+
+	one.set(7);
+
+	std::map<std::string, cluster::partition_set> holders =
+		cluster::holders_of(one, zoned, "http://asyncdb-1:8080", "a");
+
+	ASSERT_FALSE(holders.empty());
+
+	for (std::map<std::string, cluster::partition_set>::const_iterator it = holders.begin();
+		it != holders.end();
+		++it)
+	{
+		EXPECT_EQ(it->second.count(), 1u);
+		EXPECT_TRUE(it->second.test(7));
+	}
+}
+
+// An instance standing alone holds every key and has nobody to ask for any of it.
+TEST(partition_test, a_node_that_is_the_whole_membership_has_nobody_to_ask)
+{
+	std::vector<cluster::member> alone { cluster::member { "http://asyncdb-1:8080", "a" } };
+	cluster::partition_set every;
+
+	every.set();
+
+	EXPECT_TRUE(cluster::holders_of(every, alone, "http://asyncdb-1:8080", "a").empty());
 }

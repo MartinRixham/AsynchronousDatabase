@@ -1,4 +1,5 @@
 #include <atomic>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -84,13 +85,22 @@ namespace
 
 		std::set<std::string> named = tables->names();
 
+		// The nodes of this zone that hold the share, and which partitions of it to ask each of
+		// them for. **A zone's copy is split between its nodes**, so a node that owns none of this
+		// share would answer a file with nothing of it in it — having read its whole table to find
+		// that out, which is what a share asked of every node of a zone costs.
+		std::map<std::string, cluster::partition_set> holders = nodes.holders_in(partitions, zone);
+
 		for (std::set<std::string>::const_iterator it = named.begin(); it != named.end(); ++it)
 		{
 			const std::string &name = *it;
 
-			for (size_t j = 0; j < zone.size(); j++)
+			for (std::map<std::string, cluster::partition_set>::const_iterator holder = holders.begin();
+				holder != holders.end();
+				++holder)
 			{
-				restored copied = copy_table(repository, nodes, zone[j], name, partitions, workers, waiting);
+				restored copied =
+					copy_table(repository, nodes, holder->first, name, holder->second, workers, waiting);
 
 				taken.records += copied.records;
 

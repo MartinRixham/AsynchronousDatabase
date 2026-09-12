@@ -1,6 +1,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -94,6 +95,19 @@ namespace
 			held.set();
 
 			return held;
+		}
+
+		std::map<std::string, ::cluster::partition_set> holders(
+			const ::cluster::partition_set &) const override
+		{
+			return std::map<std::string, ::cluster::partition_set>();
+		}
+
+		std::map<std::string, ::cluster::partition_set> holders_in(
+			const ::cluster::partition_set &,
+			const std::vector<std::string> &) const override
+		{
+			return std::map<std::string, ::cluster::partition_set>();
 		}
 
 		std::vector<std::string> peers() const override

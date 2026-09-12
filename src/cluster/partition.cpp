@@ -202,3 +202,55 @@ std::vector<std::vector<std::string>> cluster::zones_of(
 
 	return zones;
 }
+
+std::map<std::string, cluster::partition_set> cluster::holders_in(
+	const partition_set &partitions,
+	const std::vector<std::string> &nodes)
+{
+	std::map<std::string, partition_set> holders;
+
+	for (size_t partition = 0; partition < partition_count; partition++)
+	{
+		if (!partitions.test(partition))
+		{
+			continue;
+		}
+
+		std::string holder = owner_of(partition_name(partition), nodes);
+
+		// A zone of no nodes, which is a zone this node is the only node of and one with nobody
+		// to ask.
+		if (!holder.empty())
+		{
+			holders[holder].set(partition);
+		}
+	}
+
+	return holders;
+}
+
+std::map<std::string, cluster::partition_set> cluster::holders_of(
+	const partition_set &partitions,
+	const std::vector<member> &members,
+	const std::string &node,
+	const std::string &zone)
+{
+	// This node's own zone first and this node itself left out of it, so the owner among what is
+	// left of that zone is the node that owned the partition before this one did.
+	std::vector<std::vector<std::string>> grouped = zones_of(members, node, zone);
+	std::map<std::string, partition_set> holders;
+
+	for (size_t group = 0; group < grouped.size(); group++)
+	{
+		std::map<std::string, partition_set> holding = holders_in(partitions, grouped[group]);
+
+		for (std::map<std::string, partition_set>::const_iterator it = holding.begin();
+			it != holding.end();
+			++it)
+		{
+			holders[it->first] |= it->second;
+		}
+	}
+
+	return holders;
+}
