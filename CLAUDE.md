@@ -262,11 +262,22 @@ peer can reach fails one.
   while another zone's containers are killed under it, an instance stopped while a third zone's
   container is killed, and then every zone's pair of containers killed together, twice round. What
   makes the overlap assertable is its client, which is not the harness's: **a write is retried until
-  the cluster takes it**, so every key it issued was acknowledged in the end and the assertions
-  cover all of them rather than the ones that got through. That is what lets it assert what no other
-  experiment can — that **every zone holds every one of those keys** — because a refused write is
-  what leaves the zones apart, and it leaves none. Beside it, `copies_agree` for divergence and a
-  readback for durability. **It is also the only experiment that asserts on reads**: a read that was
+  the cluster takes it** — the same bytes again, a repair of the first write rather than a second
+  value — so every write it issued was acknowledged in the end and the assertions cover all of them
+  rather than the ones that got through. That is what lets it assert what no other experiment can —
+  that **every zone holds every one of those keys** — because a refused write is what leaves the
+  zones apart, and it leaves none. **It writes a few keys many times over rather than many keys
+  once each**, and that is what makes divergence reachable at all: a key written once has one
+  value, so its copies cannot hold two without the store inventing bytes, and a lagging copy is
+  simply *missing* it — which `import_records` repairs by taking a file whole. A key written a
+  hundred times leaves a lagging copy holding something **different**, which is the other half of
+  `import_records`, the `record::is_newer` comparison against what is already under the key. So it
+  writes two populations: `hot-` keys over and over, and a `storm-` key once every
+  `CHAOS_STORM_SPREAD` of them. It asserts that no copy of a key disagrees with another and that
+  **every hot key holds the value last acknowledged for it**, both given `CHAOS_CONVERGE` — a copy
+  that was away is entitled to lag until the reconcile fetch catches it up, so **lagging is allowed
+  and staying behind is not**, which is what separates this from `copies_agree`, where every key is
+  written once and the question needs no time at all. Beside them, a readback for durability. **It is also the only experiment that asserts on reads**: a read that was
   not answered 2xx fails it unless it falls in the window the load balancer itself owns —
   `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` from `cloudformation.yaml`, with the
   membership lease on top for a cut off node, which answers `/health` as normal until it has decided

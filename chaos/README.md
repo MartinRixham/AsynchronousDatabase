@@ -93,6 +93,14 @@ key it compares was written once and never again, so there is no moment at which
 legitimately hold two values. One value was ever written, and a second is a cluster that invented
 it. A disagreement here is permanent by construction.
 
+**The cost of that is that it can never fail**, which is why [`write-storm` asks it
+differently](#few-keys-many-values): a key with one value is a key whose copies cannot hold two, so
+a suite that only ever writes one value a key asserts non-divergence without being able to produce
+it. The keys that suite compares are the right ones for every *other* claim here — a write that was
+acknowledged once and never touched again is what says a fault cost nothing — and reaching the
+divergence itself takes a key written over and over, and a budget to tell a copy that is catching
+up from one that never will.
+
 `containers-restart` asks it of the seeded table as well, where the value is the one written before
 the first `kill -9` and never again.
 
@@ -416,29 +424,53 @@ is never left alone can be driven back into agreeing with itself.**
 
 What makes that question answerable is the client, and it is not the harness's. A write here is
 **retried until the cluster takes it**, however long that takes and however many times it is
-refused, so every key it ever issued was acknowledged in the end. That is what entitles the
+refused, so every write it ever issued was acknowledged in the end. That is what entitles the
 assertions to ask about *all* of them rather than about the ones that happened to get through, and
 it is what closes the hole every other experiment has to leave open:
 
 | | Every other experiment | `write-storm` |
 | --- | --- | --- |
-| A **refused** write | May have been taken by one copy and no other, and nothing puts the rest back — so it is [measured and not asserted](#why-the-load-has-a-table-of-its-own) | Is retried until it is taken, which writes every copy of it again |
+| A **refused** write | May have been taken by one copy and no other, and nothing puts the rest back — so it is [measured and not asserted](#why-the-load-has-a-table-of-its-own) | Is retried until it is taken, which writes every copy of it again. The retry carries the **same bytes**: a repair of the first write, not a second value for the key |
 | The keys the assertions cover | The ones the cluster acknowledged | Every one the client issued |
 | Zones holding the **same** keys of the load table | Cannot be asked — a refused write leaves them apart with nothing wrong | **Asserted**, because there are no refused writes left |
 
-So it asserts four things, in the order of what losing them would mean:
+#### Few keys, many values
+
+The other half of the client, and the half that makes divergence reachable at all. **It writes a
+handful of keys over and over rather than a key each to many**, and the difference is not a matter
+of coverage:
+
+| | A key written once | A key written a hundred times |
+| --- | --- | --- |
+| How many values it ever has | One | A hundred |
+| What a copy that missed a write holds | Nothing under that key | The value before it — something **different** from the others |
+| What repairs it | A reconcile file taken whole: `held == 0` in `import_records`, ingested as it stands | The second walk, `record::is_newer` deciding between the record the file carries and the record already under that key |
+| Whether the copies can disagree | **No.** The store would have to invent bytes | Yes, and permanently |
+
+So a suite of write-once keys can assert non-divergence and never once reach the code that prevents
+it. `write-storm` writes both populations, because neither mechanism covers the other:
+`hot-<stamp>-<k>` is `CHAOS_STORM_KEYS` keys taking a new value every time round, and
+`storm-<stamp>-<i>` is a fresh key every `CHAOS_STORM_SPREAD` of those, written once and never
+again.
+
+So it asserts five things, in the order of what losing them would mean:
 
 | Asserted | Losing it is |
 | --- | --- |
 | No read failed | A key with no copy answering for it. Every fault here leaves at least one whole zone serving, and a zone with both its nodes up holds a copy of every key |
 | Every write the client issued is there, holding what was written | A retry that never arrived, or a 2xx that was not durable |
-| No copy of a key answers a different value from another copy | Divergence — a cluster that invented a value. Every key here is written once, with one value, retry or no retry, so there is no moment at which two copies legitimately differ |
-| Every zone holds every one of those keys, one node of it apiece | A copy that never caught up. A zone that was cut off missed every write taken while it was gone, and what fetches them is the [reconcile pass](../doc/runbook/rebuild.md#when-ownership-moves) its rejoining starts |
+| No copy of a key disagrees with another about what is in it | Divergence — two live values for one key, which only a key written more than once can have |
+| Every hot key holds the value the cluster **last acknowledged** for it | A copy that stayed behind. It is the sharper of the two: a copy holding an older value is what a fault can actually make, where two copies holding two values needs one of them to be wrong about which write was last |
+| Every zone holds every one of those keys, one node of it apiece | A copy that is missing one. A zone that was cut off missed every write taken while it was gone, and what fetches them is the [reconcile pass](../doc/runbook/rebuild.md#when-ownership-moves) its rejoining starts |
 
-The last one is the point of the retry. A reconcile pass fetches every partition the node owns from
-a holder in each zone rather than only the partitions whose owner moved, so a node that comes back
-from a cut catches up on what it missed — and this is the only experiment that asserts it does,
-because it is the only one whose load table has no refused write in it to confuse the answer.
+**The third and fourth are given `CHAOS_CONVERGE`, and that is the one place this differs from
+[`copies_agree`](#still-there-and-the-same-everywhere).** There the question can be asked the moment
+the load stops, because every key it compares was written once: two copies holding two values is a
+cluster that invented one and no waiting would put it right. Here a copy that was out of the
+membership for a write legitimately holds the value before it, and the reconcile fetch is what
+brings it up to date. **Lagging is allowed and staying behind is not**, and the budget is what tells
+them apart — a copy still behind when it runs out is divergence nothing in the cluster would ever
+repair.
 
 #### It is the one experiment that asserts on reads
 
@@ -641,7 +673,9 @@ As in [`perf/`](../perf).
 | `CHAOS_CONVERGE` | How long a resized cluster is given to move the records whose owner changed | 300 seconds |
 | `CHAOS_LOAD` | 0 for an experiment against an idle cluster | 1 |
 | `CHAOS_LOAD_PAUSE` | Seconds between the load's writes | 0.2 |
-| `CHAOS_STORM_PAUSE` | `write-storm` only: seconds between its client's writes | 1 |
+| `CHAOS_STORM_KEYS` | `write-storm` only: how few keys its client writes over and over | 8 |
+| `CHAOS_STORM_SPREAD` | `write-storm` only: a key written once every this many of those | 10 |
+| `CHAOS_STORM_PAUSE` | `write-storm` only: seconds between its client's writes | 0.5 |
 | `CHAOS_STORM_RETRY` | `write-storm` only: seconds between the retries of a refused write | 2 |
 | `CHAOS_STORM_GRACE` | `write-storm` only: the window the load balancer's own health check owns | 25 seconds |
 | `CHAOS_STORM_ROLLS` | `write-storm` only: times round the zones killing both containers of one | 2 |
