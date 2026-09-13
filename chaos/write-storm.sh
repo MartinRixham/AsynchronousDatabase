@@ -279,9 +279,13 @@ storm_excuse()
 
 expect_reads_held()
 {
-	local failed outside excused
+	local refused failed outside excused
 
-	failed=$(grep -c . "$work/reads.failed") || failed=0
+	awk '$3 == "database"' "$work/reads.failed" > "$work/reads.database"
+	awk '$3 != "database"' "$work/reads.failed" > "$work/reads.passed"
+
+	refused=$(grep -c . "$work/reads.database") || refused=0
+	failed=$(grep -c . "$work/reads.passed") || failed=0
 
 	: > "$work/reads.inside"
 
@@ -292,7 +296,7 @@ expect_reads_held()
 	# the first when the first is empty, which would excuse a failure by matching it against
 	# itself. No window at all is every failure outside one, which is the answer a run that
 	# applied no fault has to give.
-	if [ -s "$work/windows" ]; then
+	if [ -s "$work/windows" ] && [ -s "$work/reads.passed" ]; then
 		awk -v inside="$work/reads.inside" \
 			'NR == FNR { from[NR] = $1; to[NR] = $2; windows = NR; next }
 			{
@@ -302,9 +306,9 @@ expect_reads_held()
 				}
 
 				print
-			}' "$work/windows" "$work/reads.failed" > "$work/reads.outside"
+			}' "$work/windows" "$work/reads.passed" > "$work/reads.outside"
 	else
-		cp "$work/reads.failed" "$work/reads.outside"
+		cp "$work/reads.passed" "$work/reads.outside"
 	fi
 
 	outside=$(grep -c . "$work/reads.outside") || outside=0
@@ -328,6 +332,15 @@ expect_reads_held()
 
 		awk '{ print $2, $3 }' "$work/reads.outside" | sort | uniq -c | sort -rn | head -5 \
 			| awk '{ printf "       %s×%s, refused by the %s\n", $1, $2, $3 }'
+	fi
+
+	if [ "$refused" = 0 ]; then
+		result 0 "no read was refused by the database, inside a window or out of one"
+	else
+		result 1 "no read was refused by the database, inside a window or out of one — $refused were"
+
+		awk '{ print $2 }' "$work/reads.database" | sort | uniq -c | sort -rn | head -5 \
+			| awk '{ printf "       %s×%s\n", $1, $2 }'
 	fi
 }
 

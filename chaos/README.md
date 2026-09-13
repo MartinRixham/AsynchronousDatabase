@@ -518,21 +518,30 @@ repair.
 
 Everywhere else the reads are [reported and never asserted on](#every-experiment-runs-under-load),
 because a fault costs reads through the load balancer's own health check as much as through the
-database. Here the rule is that **a read that was not answered 2xx fails the experiment**, and the
-one thing that excuses one is the window the load balancer itself owns:
+database. Here the rule is that **a read that was not answered 2xx fails the experiment**, and it
+is split by **who refused**: a 404 or any error document of the API is the database, because the
+API answers a 404 with no body and every key read here exists; `unavailable` out of
+`server/50x.json` is nginx saying the database on that node was not there; and no document at all
+is the load balancer answering for a target that is not either.
+
+**A read the database refused fails the experiment wherever it falls.** No round takes more than
+one zone's copy out of reach and every key read exists, so a node that answers anything but the
+value is answering wrongly — a 404 from a node that has taken itself to hold keys it does not, a
+`node_incomplete` from a replacement short of its share — and there is no window in which that is
+the load balancer's to own.
+
+The proxy and the load balancer are excused inside the window the load balancer itself owns, and
+nowhere else:
 
 | The fault | The window | Because |
 | --- | --- | --- |
-| A container killed, an instance stopped | `CHAOS_STORM_GRACE`, 25 seconds | `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` in `cloudformation.yaml` is ten seconds and two checks, and the five on top is a request that was already in flight |
-| A zone cut off | That, plus the ten second membership lease | The isolated node answers `/health` as normal until it has decided it is [unled](../doc/runbook/membership.md), and it cannot decide that sooner than a lease. Until then it is still chosen, and it answers 404 for the keys it does not hold |
+| An instance stopped | `CHAOS_STORM_GRACE`, 25 seconds | `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` in `cloudformation.yaml` is ten seconds and two checks, and the five on top is a request that was already in flight |
+| A zone cut off, a node losing etcd | That, plus the ten second membership lease | A node losing etcd answers `/health` as normal until it has decided it is [unled](../doc/runbook/membership.md), and it cannot decide that sooner than a lease |
 
 A window opens when the fault is applied and closes that many seconds after the call that applied
-it came back — which for a kill is after the node is answering again, because the whole of that is
-a node that is down. Every failure inside one is counted and printed by status and by **who
-refused**: a 404 is the database, because the API answers one with no body and every key read here
-exists; `unavailable` out of `server/50x.json` is nginx saying the database on that node was not
-there; and no document at all is the load balancer answering for a target that is not either. Every
-failure outside a window is a failed assertion, and there is nothing left to blame for one.
+it came back — which for a stop is after the node is answering again, because the whole of that is
+a node that is down. Every failure inside one is counted and printed by status and by who refused,
+and every failure outside one is a failed assertion.
 
 **No fault here kills two zones at once**, which is what makes that a claim about the database
 rather than about arithmetic: a key's copies are one node per zone, so as long as one zone has both

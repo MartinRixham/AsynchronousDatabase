@@ -290,11 +290,12 @@ peer can reach fails one.
   **every hot key holds the value last acknowledged for it**, both given `CHAOS_CONVERGE` — a copy
   that was away is entitled to lag until the reconcile fetch catches it up, so **lagging is allowed
   and staying behind is not**, which is what separates this from `copies_agree`, where every key is
-  written once and the question needs no time at all. Beside them, a readback for durability. **It is also the only experiment that asserts on reads**: a read that was
-  not answered 2xx fails it unless it falls in the window the load balancer itself owns —
-  `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` from `cloudformation.yaml`, with the
-  membership lease on top for a cut off node, which answers `/health` as normal until it has decided
-  it is unled. That rule is a claim about the database and not about arithmetic because **no fault
+  written once and the question needs no time at all. Beside them, a readback for durability. **It is also the only experiment that asserts on reads**: a read the
+  **database** refused — a 404 or any API error document — fails it wherever it falls, and a read
+  the proxy or the load balancer failed fails it unless it falls in the window the load balancer
+  itself owns — `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` from `cloudformation.yaml`,
+  with the membership lease on top for a node losing etcd, which answers `/health` as normal until
+  it has decided it is unled. That rule is a claim about the database and not about arithmetic because **no fault
   here kills two zones at once**: a key's copies are one node per zone, so a zone with both its
   nodes serving holds a copy of every key. `blackhole` and `blackhole_clear` in `chaos/harness.sh` are the rule, the
   same pair `nodes-go-deaf` and `etcd-unreachable` install.
