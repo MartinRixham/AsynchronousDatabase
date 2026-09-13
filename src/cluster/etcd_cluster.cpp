@@ -385,11 +385,36 @@ std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::stri
 
 	size_t partition = ::cluster::partition_of(key);
 
-	std::shared_lock<std::shared_mutex> lock(leader_mutex);
+	{
+		std::shared_lock<std::shared_mutex> lock(leader_mutex);
 
-	std::map<size_t, leadership>::const_iterator found = leader_list.find(partition);
+		std::map<size_t, leadership>::const_iterator found = leader_list.find(partition);
 
-	return found == leader_list.end() ? leadership() : found->second;
+		if (found != leader_list.end())
+		{
+			return found->second;
+		}
+	}
+
+	// A partition changing hands is one the node giving it up has deleted and the node named now
+	// claims a moment later, and the list is not read again for a third of a lease: asking etcd for
+	// the one key is a write taken rather than refused for as long as that.
+	std::string claim = configuration.leader_prefix + std::to_string(partition);
+	std::optional<std::map<std::string, std::string>> held = etcd_client.get(claim);
+
+	if (!held || held->count(claim) == 0)
+	{
+		return leadership();
+	}
+
+	leadership led;
+
+	led.known = true;
+	led.local = held->at(claim) == configuration.node;
+	led.node = held->at(claim);
+	led.term = term_of(led.node, partition);
+
+	return led;
 }
 
 size_t cluster::etcd_cluster::leads() const

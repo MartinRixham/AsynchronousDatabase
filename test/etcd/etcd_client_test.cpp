@@ -170,6 +170,36 @@ TEST(etcd_client_test, read_no_range_when_etcd_answers_something_that_is_not_one
 	EXPECT_FALSE(client.range("/asyncdb/node/").has_value());
 }
 
+TEST(etcd_client_test, read_one_key_and_nothing_under_it)
+{
+	http::fake_client http;
+	boost::json::object seven { { "key", base64::encode("/asyncdb/leader/7") },
+								{ "value", base64::encode("http://asyncdb-2:8080") } };
+
+	boost::json::object answer { { "kvs", boost::json::array { seven } } };
+
+	http.answer("/v3/kv/range", http::answer(200, "application/json", boost::json::serialize(answer)));
+
+	etcd::client client(http, { "http://etcd:2379" });
+	std::optional<std::map<std::string, std::string>> read = client.get("/asyncdb/leader/7");
+
+	ASSERT_TRUE(read.has_value());
+	EXPECT_EQ(read->at("/asyncdb/leader/7"), "http://asyncdb-2:8080");
+
+	boost::json::object body = body_of(http.sent()[0]);
+
+	EXPECT_EQ(decoded(body, "key"), "/asyncdb/leader/7");
+	EXPECT_FALSE(body.contains("range_end"));
+}
+
+TEST(etcd_client_test, read_no_key_when_etcd_is_not_there)
+{
+	http::fake_client http;
+	etcd::client client(http, { "http://etcd:2379" });
+
+	EXPECT_FALSE(client.get("/asyncdb/leader/7").has_value());
+}
+
 TEST(etcd_client_test, revoke_a_lease)
 {
 	http::fake_client http;

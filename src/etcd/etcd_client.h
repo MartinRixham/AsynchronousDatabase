@@ -25,8 +25,8 @@ namespace etcd
 
 	// etcd speaks gRPC, but every call it offers is also a POST of a JSON document to its gateway,
 	// where a key and a value travel base64 encoded — which is why there is no gRPC dependency
-	// here. One thread makes the calls; endpoint() is the exception, read by whichever thread is
-	// answering for the node.
+	// here. The membership thread makes most of the calls, and a thread answering a request may make
+	// one too: the member being asked is atomic, and the curl handles are the thread's own.
 	class client
 	{
 		const http::client &http_client;
@@ -60,12 +60,18 @@ namespace etcd
 		// Nothing when etcd did not answer, which is a different answer from no key under the prefix.
 		std::optional<std::map<std::string, std::string>> range(const std::string &prefix) const;
 
+		// The one key and nothing under it, which a range cannot ask for: a prefix of
+		// "/asyncdb/leader/1" is every partition from 10 to 199 as well.
+		std::optional<std::map<std::string, std::string>> get(const std::string &key) const;
+
 		bool revoke(int64_t lease) const;
 
 		// The member the next call will be made to.
 		const std::string &endpoint() const;
 
 	private:
+		std::optional<std::map<std::string, std::string>> read(const boost::json::object &request) const;
+
 		std::optional<boost::json::object> call(
 			const std::string &method,
 			const boost::json::object &body,

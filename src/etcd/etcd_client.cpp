@@ -231,6 +231,16 @@ std::optional<std::map<std::string, std::string>> etcd::client::range(const std:
 	boost::json::object request { { "key", base64::encode(prefix) },
 								  { "range_end", base64::encode(range_end(prefix)) } };
 
+	return read(request);
+}
+
+std::optional<std::map<std::string, std::string>> etcd::client::get(const std::string &key) const
+{
+	return read(boost::json::object { { "key", base64::encode(key) } });
+}
+
+std::optional<std::map<std::string, std::string>> etcd::client::read(const boost::json::object &request) const
+{
 	std::optional<boost::json::object> response = call("kv/range", request, true);
 
 	if (!response)

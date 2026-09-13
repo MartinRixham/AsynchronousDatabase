@@ -1214,6 +1214,41 @@ TEST(etcd_cluster_test, lead_nothing_that_etcd_does_not_answer_for)
 	cluster.stop();
 }
 
+TEST(etcd_cluster_test, name_the_leader_etcd_holds_for_a_partition_the_leaders_read_did_not)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
+	std::string key = key_led_by(members, two);
+	std::string claim = "/asyncdb/leader/" + std::to_string(cluster::partition_of(key));
+
+	boost::json::object held { { "kvs",
+								 boost::json::array { boost::json::object { { "key", base64::encode(claim) },
+																			{ "value", base64::encode(two) } } } } };
+
+	// The one key and not the prefix, so the pass reads no leader for the partition and only the
+	// write asks for it.
+	http.answer(
+		"/v3/kv/range",
+		base64::encode(claim),
+		http::answer(200, "application/json", boost::json::serialize(held)));
+
+	answer_etcd(&http, members);
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+
+	cluster.start();
+
+	std::optional<cluster::leadership> led = cluster.leader(key);
+
+	ASSERT_TRUE(led.has_value());
+	EXPECT_TRUE(led->known);
+	EXPECT_FALSE(led->local);
+	EXPECT_EQ(led->node, two);
+
+	cluster.stop();
+}
+
 // The fence: a write ordered in a term older than one this node has already applied is a leader
 // that has been replaced and does not know it.
 TEST(etcd_cluster_test, refuse_a_write_ordered_in_a_term_that_has_passed)
