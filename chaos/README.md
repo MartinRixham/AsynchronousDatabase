@@ -710,9 +710,9 @@ As in [`perf/`](../perf).
 | `CHAOS_TABLE` | The table the suite seeds and reads | `chaos` |
 | `CHAOS_RECORDS` | How many records it seeds | 200 |
 | `CHAOS_SETTLE` | How long a membership change is given | 150 seconds |
-| `CHAOS_RECOVERY` | How long an instance replacement is given | 900 seconds |
+| `CHAOS_RECOVERY` | How long an instance replacement is given | 600 seconds |
 | `CHAOS_ONSET` | How long a started fault is given to bite | 20 seconds |
-| `CHAOS_CONVERGE` | How long a resized cluster is given to move the records whose owner changed | 300 seconds |
+| `CHAOS_CONVERGE` | How long a resized cluster is given to move the records whose owner changed | 200 seconds |
 | `CHAOS_LOAD` | 0 for an experiment against an idle cluster | 1 |
 | `CHAOS_LOAD_PAUSE` | Seconds between the load's writes | 0.2 |
 | `CHAOS_STORM_KEYS` | `write-storm` only: how few keys its client writes over and over | 8 |

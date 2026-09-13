@@ -89,6 +89,8 @@ namespace cluster
 		// answered, and the membership thread is the only one that takes or renews one.
 		std::atomic<int64_t> lease = 0;
 
+		std::atomic<size_t> registrations = 0;
+
 		// Who leads each partition, as this node last read it from etcd. Read by every write and
 		// written only by the membership thread.
 		mutable std::shared_mutex leader_mutex;

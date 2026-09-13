@@ -155,8 +155,9 @@ curl -s http://asyncdb-3:8080/health | jq '.incomplete'
 
 **What clears it is a reconcile pass that settles**, which is this node having
 fetched everything it owns and holds nothing for. A pass runs when the membership
-moves, so a node that came up short and then sees no membership change at all
-stays short — the rebuild will not run again, because an empty store is its only
+moves, or when the node registers in etcd again after its lease ran out — it was
+dropped for that long and missed what was written meanwhile, whatever membership
+it reads back. So a node that came up short and then sees neither stays short — the rebuild will not run again, because an empty store is its only
 trigger and the store is no longer empty. Declaring the tables again, or any
 change that moves the membership, is what starts the pass that fills it.
 

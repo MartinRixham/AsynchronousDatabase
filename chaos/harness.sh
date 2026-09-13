@@ -15,7 +15,7 @@
 #   CHAOS_TABLE        the table the suite seeds and reads          chaos
 #   CHAOS_RECORDS      how many records it seeds                    200
 #   CHAOS_SETTLE       how long a membership change is given        150 seconds
-#   CHAOS_RECOVERY     how long an instance replacement is given    900 seconds
+#   CHAOS_RECOVERY     how long an instance replacement is given    600 seconds
 #   CHAOS_ONSET        how long a started fault is given to bite    20 seconds
 #   CHAOS_CONVERGE     how long a resized cluster is given to move   300 seconds
 #                      the records whose owner changed

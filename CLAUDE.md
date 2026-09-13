@@ -744,7 +744,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   reading itself through once a node for each membership change. `rebuild::rebuild` asks
   `cluster::holders_in` the same question of the one zone it is reading.
   `server::server` runs it on a thread of its own, one tick — `server::reconcile_interval()`, three
-  seconds — *after* the membership it saw changed, and one change buys `server::reconcile_attempts`
+  seconds — *after* the membership it saw changed or this node registered in etcd again (a node cut
+  off from etcd keeps the membership it last read, so the one it reads back on its return can be the
+  one it had, while the others dropped it and took writes it never saw — `etcd_registration::registrations`
+  is what says it was away), and one change buys `server::reconcile_attempts`
   (12) passes **of getting nowhere**: a pass that moved records buys them all back, because how many
   passes a share takes is how large the share is and never a count of tries. A membership is a
   moment, and a store that matches the one it was left with is never walked, which is why a test

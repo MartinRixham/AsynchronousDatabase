@@ -369,6 +369,7 @@ cluster::etcd_registration cluster::etcd_cluster::registration() const
 	state.configured = configuration.is_clustered();
 	state.held = lease.load() != 0;
 	state.endpoint = etcd_client.endpoint();
+	state.registrations = registrations.load();
 
 	return state;
 }
@@ -476,7 +477,14 @@ bool cluster::etcd_cluster::register_node()
 
 	boost::json::object value { { "node", configuration.node }, { "zone", configuration.zone } };
 
-	return etcd_client.put(configuration.prefix + configuration.node, boost::json::serialize(value), lease);
+	if (!etcd_client.put(configuration.prefix + configuration.node, boost::json::serialize(value), lease))
+	{
+		return false;
+	}
+
+	registrations++;
+
+	return true;
 }
 
 void cluster::etcd_cluster::read_leaders()

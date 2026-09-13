@@ -100,6 +100,9 @@ namespace cluster
 		// the lease its registration is written on.
 		void lost_etcd();
 
+		// The same etcd answering again, and the registration written again on a new lease.
+		void registered_again();
+
 		// The membership is the one the test named, so there is nothing to join, nothing to read
 		// and nothing to leave.
 		void start() override;

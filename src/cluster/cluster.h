@@ -60,6 +60,11 @@ namespace cluster
 
 		// The member the next call goes to, which is whichever one last answered.
 		std::string endpoint;
+
+		// How many times this node has written its registration. Writing it again is a lease that
+		// ran out, so the other nodes may have dropped this one and taken writes it never saw — a
+		// change the membership read back afterwards need not show.
+		size_t registrations = 0;
 	};
 
 	struct leadership

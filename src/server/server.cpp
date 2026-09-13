@@ -294,6 +294,11 @@ void server::server::reconcile(bool returning)
 	// own cluster, an instance standing alone — never runs a pass at all.
 	std::vector<cluster::member> seen = nodes.members();
 
+	// A node that registered again was dropped by the others when its lease ran out, and they took
+	// writes without it. It keeps the membership it last read while it cannot reach etcd, so the one
+	// it reads back can be the very one it had, and only the registration says it was away.
+	size_t registered = nodes.registration().registrations;
+
 	// A node that came back to a store it was left with is the exception, and it is not a
 	// membership this node can see the change in: the share it owns moved to another node while
 	// it was away, and the records it no longer owns are still here. The rebuild that would have
@@ -305,12 +310,14 @@ void server::server::reconcile(bool returning)
 		lock.unlock();
 
 		std::vector<cluster::member> now = nodes.members();
+		size_t registrations = nodes.registration().registrations;
 
-		if (!same_membership(seen, now))
+		if (!same_membership(seen, now) || registrations != registered)
 		{
-			DEBUG("The membership moved, so the records whose owner moved with it are next.");
+			DEBUG("The membership moved, or this node was out of it, so the records it missed or moved are next.");
 
 			seen = now;
+			registered = registrations;
 			attempts = reconcile_attempts;
 		}
 		else if (attempts > 0)

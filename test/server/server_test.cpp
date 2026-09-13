@@ -546,3 +546,36 @@ TEST(server_reconcile_test, reconciles_nothing_after_a_store_this_node_filled)
 
 	EXPECT_TRUE(nodes.sent().empty());
 }
+
+// A node cut off from etcd keeps the membership it last read, so when it registers again it reads
+// back the membership it already had — while the others dropped it and took writes it never saw.
+TEST(server_reconcile_test, reconciles_once_this_node_registers_again)
+{
+	std::filesystem::remove_all("/tmp/asyncdb/");
+
+	cluster::fake_cluster nodes(
+		"http://asyncdb-1:8080",
+		std::vector<std::string> { "http://asyncdb-1:8080", "http://asyncdb-2:8080" });
+
+	nodes.reads_etcd("http://etcd:2379");
+
+	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, "/tmp/asyncdb");
+	boost::asio::ip::port_type port = database_server->port();
+	std::thread thread([server = database_server]() { server->serve(); });
+
+	server::wait_until_listening(port);
+
+	std::this_thread::sleep_for(server::reconcile_interval() + std::chrono::seconds(1));
+
+	nodes.lost_etcd();
+	nodes.registered_again();
+
+	// One tick to see the change and the next to run the pass it buys.
+	std::this_thread::sleep_for(2 * server::reconcile_interval() + std::chrono::seconds(1));
+
+	database_server->close();
+	thread.join();
+	database_server = nullptr;
+
+	EXPECT_FALSE(nodes.sent().empty());
+}

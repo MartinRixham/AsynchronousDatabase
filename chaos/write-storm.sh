@@ -723,6 +723,11 @@ expect_storm_replicated()
 		result 0 "every write the client issued is in every zone $1"
 	else
 		result 1 "every write the client issued is in every zone $1 — short:$short"
+
+		# The keys, because a count says a zone is short and never which write it lost.
+		for zone in $(zones_held); do
+			comm -23 "$work/wanted" "$work/held.$zone" | head -5 | sed "s/^/       $zone is missing /"
+		done
 	fi
 
 	if [ -z "$duplicates" ]; then

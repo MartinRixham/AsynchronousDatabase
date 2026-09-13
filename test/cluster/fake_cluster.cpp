@@ -237,18 +237,34 @@ bool cluster::fake_cluster::is_alone() const
 
 void cluster::fake_cluster::reads_etcd(const std::string &endpoint)
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	etcd_state.configured = true;
 	etcd_state.held = true;
 	etcd_state.endpoint = endpoint;
+	etcd_state.registrations = 1;
 }
 
 void cluster::fake_cluster::lost_etcd()
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	etcd_state.held = false;
+}
+
+// A server reads the registration from a thread of its own while the test changes it.
+void cluster::fake_cluster::registered_again()
+{
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	etcd_state.held = true;
+	etcd_state.registrations++;
 }
 
 cluster::etcd_registration cluster::fake_cluster::registration() const
 {
+	std::lock_guard<std::mutex> lock(*mutex);
+
 	return etcd_state;
 }
 

@@ -1143,6 +1143,56 @@ TEST(etcd_cluster_test, never_stand_alone_when_never_clustered)
 	EXPECT_FALSE(cluster.is_alone());
 }
 
+TEST(etcd_cluster_test, count_a_registration_written_again_once_its_lease_ran_out)
+{
+	http::fake_client http;
+
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+
+	cluster::config config = configuration(one, "a");
+
+	config.lease_seconds = 1;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	EXPECT_EQ(cluster.registration().registrations, 1u);
+
+	size_t before = passes(http);
+
+	http.forget("/v3/lease/keepalive");
+
+	ASSERT_TRUE(wait_for_passes(http, before + 2));
+
+	EXPECT_GE(cluster.registration().registrations, 2u);
+
+	cluster.stop();
+}
+
+TEST(etcd_cluster_test, count_no_registration_for_a_lease_that_was_renewed)
+{
+	http::fake_client http;
+
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
+
+	cluster::config config = configuration(one, "a");
+
+	config.lease_seconds = 1;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	ASSERT_TRUE(wait_for_passes(http, passes(http) + 2));
+
+	EXPECT_EQ(cluster.registration().registrations, 1u);
+
+	cluster.stop();
+}
+
 // A cluster whose leaders cannot be read from etcd is a partition that is led by nobody, which is
 // a write with nowhere to be ordered rather than one that races.
 TEST(etcd_cluster_test, lead_nothing_that_etcd_does_not_answer_for)
