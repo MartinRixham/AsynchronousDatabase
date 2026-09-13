@@ -594,9 +594,11 @@ one-line fix, and it is not in this repository.
   principle and the etcd tier is not, but the template asks for neither.
 - **The account's other free tiers.** The 100 GB egress allowance is
   account-wide, not this stack's, so a busy account has already spent it.
-- **CloudWatch.** Basic EC2 and ALB metrics are free and the template enables
-  nothing else. Turning on detailed monitoring, access logs to S3 or a log
-  driver on the container all add lines that are currently zero.
+- **CloudWatch.** Basic EC2 and ALB metrics are free. The containers of both
+  tiers [log into one group](/deployment/database#the-logs) kept seven days,
+  which is ingestion by the gigabyte and a week of storage — a line or two a
+  request, and not costed here. Detailed monitoring and access logs to S3 are
+  not turned on.
 - **The build itself.** GitHub Actions minutes for the image build, which is
   where [every test runs](/pipeline/), are not an AWS charge.
 - **A second region.** There is not one:

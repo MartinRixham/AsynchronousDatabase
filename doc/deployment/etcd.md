@@ -223,6 +223,12 @@ membership that splits.
 
 ```bash
 docker run -d --restart always --name etcd -p 2379:2379 -p 2380:2380 \
+  --log-driver awslogs \
+  --log-opt awslogs-region=$REGION \
+  --log-opt awslogs-endpoint=https://logs.$REGION.api.aws \
+  --log-opt awslogs-group=asyncdb \
+  --log-opt awslogs-stream=asyncdb-three/$NAME \
+  --log-opt mode=non-blocking \
   -v /var/lib/etcd:/etcd-data \
   $IMAGE /usr/local/bin/etcd \
   --name $NAME \
@@ -236,7 +242,7 @@ docker run -d --restart always --name etcd -p 2379:2379 -p 2380:2380 \
   --initial-cluster-token asyncdb
 ```
 
-Four things about it, three of which have not changed:
+Five things about it:
 
 - **It advertises private addresses.** Peers and clients are told to come in over
   the VPC, which is what lets both ports be closed to everything but the two
@@ -256,6 +262,11 @@ Four things about it, three of which have not changed:
   says — and user data does not run again on a reboot in any case. The
   `--initial-cluster-token` is what keeps this cluster's members from ever
   joining another one by accident.
+- **It logs to CloudWatch**, with the options the
+  [database tier's run](/deployment/database#the-logs) carries and for the same
+  reasons, into the same group `asyncdb`, as a stream named `{stack}/$NAME` —
+  `etcd-i-0abc…`, the member name — so a member that was pruned and replaced
+  can still be read. `EtcdRole` carries the same `logs` policy as `InstanceRole`.
 
 ## The group
 

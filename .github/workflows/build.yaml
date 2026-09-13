@@ -133,6 +133,14 @@ jobs:
           --value "$ETCD_VERSION" \
           --overwrite
 
+    - name: Create the log group
+      run: |
+        aws logs describe-log-groups --log-group-name-prefix asyncdb \
+          --query "logGroups[?logGroupName=='asyncdb'].logGroupName" --output text | grep -qx asyncdb \
+          || aws logs create-log-group --log-group-name asyncdb
+
+        aws logs put-retention-policy --log-group-name asyncdb --retention-in-days 7
+
     - name: The chaos permissions
       id: chaos_policy
       run: |

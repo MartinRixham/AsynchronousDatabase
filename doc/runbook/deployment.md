@@ -79,6 +79,17 @@ sudo cat /var/log/cloud-init-output.log
 `cloud-init-output.log` is where a failed `docker pull` or a failed `docker
 login` actually appears. Nothing else records it.
 
+**An instance that is gone cannot be asked**, whether its group terminated it or
+its stack was deleted. What its container wrote is still in
+[CloudWatch](/deployment/database#the-logs) for seven days, one stream an
+instance under the stack's name:
+
+```bash
+aws logs describe-log-streams --log-group-name asyncdb --log-stream-name-prefix asyncdb/ \
+  --query 'logStreams[].logStreamName' --output text
+aws logs tail asyncdb --log-stream-name-prefix asyncdb/asyncdb-i-0123456789abcdef0 --since 1d
+```
+
 ## An instance never comes up
 
 The user data has to finish inside `HealthCheckGracePeriod`, which is **200

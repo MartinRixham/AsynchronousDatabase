@@ -896,8 +896,13 @@ the tag in the `version` file not having passed the suite already, so it runs on
 rather than once per push.** `publish` loads the artifact and pushes it to ECR, creating the
 repository `asyncdb` if the account has none, writes that tag to the SSM parameter
 `/asyncdb/version`, mirrors the etcd tag `etcd-version` names into ECR if it is not there already
-and writes `/asyncdb/etcd`, and `make create-chaos-stack`s the permission to inject a fault, once
-for every share below it.
+and writes `/asyncdb/etcd`, creates the CloudWatch Logs group `asyncdb` and sets it to seven days,
+and `make create-chaos-stack`s the permission to inject a fault, once for every share below it.
+**The log group is outside every stack on purpose**: the containers of both tiers log into it through
+Docker's `awslogs` driver, a stream per instance named `{stack}/asyncdb-{instance id}` or
+`{stack}/etcd-{instance id}`, and a group in the template would be deleted with the stack a share
+tears down — taking with it the logs of the instances a failed experiment terminated, which are
+the ones nothing else can still read.
 
 **`verify` is then a matrix of five, one stack each, `fail-fast: false`.** Each share
 `make create-stack`s `asyncdb-{one,two,three,four,five}` — `STACK` and `CHAOS_STACK` come from the matrix —
@@ -986,7 +991,10 @@ endpoint is IPv4-only otherwise: both user data scripts export `AWS_USE_DUALSTAC
 for the CLI (`ecr.…api.aws`, `ec2.…api.aws`), pull from `332187735950.dkr-ecr.eu-west-2.on.aws`
 rather than `dkr.ecr.eu-west-2.amazonaws.com`, and write `UseDualStackEndpoint` into
 `/etc/amazon/ssm/amazon-ssm-agent.json` before restarting the agent, which is what keeps Session
-Manager and the Run Commands `chaos/` injects with working. Get one of those wrong and the instance boots
+Manager and the Run Commands `chaos/` injects with working. The `awslogs` driver runs in the Docker
+daemon and reads none of that, so both `docker run`s name `awslogs-endpoint=https://logs.….api.aws`
+themselves, with `mode=non-blocking` so that CloudWatch being unreachable costs log lines and never
+the database. Get one of those wrong and the instance boots
 with no container and is replaced by another that does the same. `doc/deployment/network.md` is
 the page.
 

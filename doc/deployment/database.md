@@ -8,13 +8,14 @@ scaling group, and the load balancer, its target group and its listener.
 ## The role
 
 `InstanceRole` is assumable by `ec2.amazonaws.com` and carries two AWS managed
-policies and one inline policy of its own:
+policies and two inline policies of its own:
 
 | Policy | For |
 | --- | --- |
 | `AmazonEC2ContainerRegistryReadOnly` | `aws ecr get-login-password` and the `docker pull` that follows |
 | `AmazonSSMManagedInstanceCore` | Session Manager, which is [the only way onto an instance](/deployment/network#getting-onto-an-instance) |
 | `discovery`, inline | `ec2:DescribeInstances`, which is how the user data below [finds the etcd tier](/deployment/etcd#how-the-database-tier-finds-it) |
+| `logs`, inline | `logs:CreateLogStream` and `logs:PutLogEvents` on the group `asyncdb` alone, which is [where the container logs](#the-logs) |
 
 `service-role/AmazonEC2ContainerServiceforEC2Role`, the policy the ECS agent
 needs, is deliberately **not** among them. The instances launch from the
@@ -22,7 +23,7 @@ ECS-optimised image because of
 [the Docker daemon on it and not for ECS](/deployment/#parameters), and there is
 no cluster in this stack for an agent to register with.
 
-The inline one is the tier's own, and it is the same policy
+The inline ones are the tier's own, and they are the same two policies
 [the etcd tier carries](/deployment/etcd). `ec2:DescribeInstances` takes no
 resource, so `"Resource": "*"` is the only form it has — the `vpc-id` filter in
 the query is what narrows the answer, not the grant.
@@ -64,6 +65,7 @@ TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-met
 PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
   http://169.254.169.254/latest/meta-data/placement/availability-zone)
+INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
 VPC=vpc-0123456789abcdef0                  # ${VPC}
 for attempt in $(seq 12); do
   ASYNCDB_ETCD=$(aws ec2 describe-instances --region $REGION \
@@ -74,6 +76,12 @@ for attempt in $(seq 12); do
   sleep 5
 done
 docker run -d --restart always -p 80:80 -p 8080:8080 \
+  --log-driver awslogs \
+  --log-opt awslogs-region=$REGION \
+  --log-opt awslogs-endpoint=https://logs.$REGION.api.aws \
+  --log-opt awslogs-group=asyncdb \
+  --log-opt awslogs-stream=asyncdb-three/asyncdb-$INSTANCE_ID \
+  --log-opt mode=non-blocking \
   -v /var/lib/asyncdb:/var/lib/asyncdb \
   -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
   -e ASYNCDB_NODE=http://$PRIVATE_IP:8080 \
@@ -160,6 +168,38 @@ and reopens what the last one wrote: the store is the host's `/var/lib/asyncdb`
 and not the container's. What that does not cover is an instance that never got a
 container at all: the group's
 [health check is `EC2`](#the-auto-scaling-group), and it leaves that one running.
+
+### The logs
+
+The container logs to CloudWatch through Docker's own `awslogs` driver, into the
+group `asyncdb`, one stream an instance named `{stack}/asyncdb-{instance id}` —
+the stack name is `${AWS::StackName}` in the template. **The logs outlive the
+instance**, and that is the point of them: the root volume goes when an instance
+is terminated, and the instance a failure is about — the node a chaos experiment
+stopped, the one the group replaced — is the one nobody can run `docker logs` on
+afterwards.
+
+- **The group is not in this stack.** A group the template made would be deleted
+  by `make delete-stack`, and the pipeline deletes a stack as soon as its
+  experiments finish. [The build creates it](/pipeline/#keeping-the-logs) and
+  keeps seven days of it, so every stack of every run writes into one group and
+  a stream goes a week after it was written, whatever became of its stack.
+- **`awslogs-endpoint` is the dual-stack name.** The driver runs in the Docker
+  daemon on the host, which [has no IPv4 route out](/deployment/network#the-route-out)
+  and does not read `AWS_USE_DUALSTACK_ENDPOINT`, and `logs.eu-west-2.amazonaws.com`
+  answers on IPv4 alone.
+- **`mode=non-blocking`** buffers lines rather than making the process wait on
+  CloudWatch for its own stdout, so a logging outage costs lines and never stalls
+  the database.
+- **`docker logs` still answers**: Docker keeps a local copy beside a remote
+  driver, so the [Session Manager commands](/runbook/deployment) and the
+  pipeline's diagnosis read what they always did.
+
+A node that is gone is read by its stream:
+
+```bash
+aws logs tail asyncdb --log-stream-name-prefix asyncdb-three/asyncdb-i-0123456789abcdef0 --since 1d
+```
 
 ## The root volume
 

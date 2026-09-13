@@ -272,6 +272,7 @@ workspace and a `$GITHUB_ENV` do not — and takes `$VERSION` from
 | Tag and push Docker image to ECR | `docker load`, then `docker tag` and `docker push` — [overwriting the tag](/pipeline/release#overwriting-the-tag) if this version has been published and not yet passed |
 | Record published version in SSM | `put-parameter /asyncdb/version` — this is what [the template resolves at deploy time](/deployment/#parameters) |
 | Mirror etcd into ECR | [below](#mirroring-etcd) |
+| Create the log group | `aws logs describe-log-groups` or else `create-log-group`, then a retention of seven days — [below](#keeping-the-logs) |
 | The chaos permissions | `make create-chaos-stack` — the policy every share injects with, one stack for all of them, with a `created` output `cleanup` keys off |
 
 Then `verify`, four times over, `fail-fast: false` so that one share failing
@@ -290,7 +291,7 @@ harness as `STACK` and `CHAOS_STACK`:
 | Validate the experiments | `chaos/validate.sh` — this share's preflights, nothing applied |
 | Run the chaos suite | `chaos/run.sh` — this share's experiments, in the order the matrix names them |
 | Stack events | `make describe-stack`, `if: failure()` |
-| What the nodes say for themselves | `if: failure()` — `docker logs` over SSM Run Command and `get-console-output`, per instance, every command best effort so that a diagnosis cannot fail the run |
+| What the nodes say for themselves | `if: failure()` — `docker logs` over SSM Run Command and `get-console-output`, per instance, every command best effort so that a diagnosis cannot fail the run. It reaches the instances still running; the ones already terminated are in [the log group](#keeping-the-logs) |
 | Tear down the stack | `make delete-stack`, `if: always()` — but only if this share created it |
 
 Then `release`, which `needs: verify` and so runs only when **every** share went
@@ -407,6 +408,39 @@ first there is nothing to do.
 **Where it sits does not matter.** Nothing between it and the push asks the
 registry a question, so this step is only what the `docker push` needs, and the
 mirror below creates its own repository beside its own push for the same reason.
+
+## Keeping the logs
+
+The containers of both tiers log to the CloudWatch Logs group `asyncdb`, one
+stream an instance, named by stack and instance —
+[the database tier](/deployment/database#the-logs) says how. `publish` makes the
+group:
+
+```bash
+aws logs describe-log-groups --log-group-name-prefix asyncdb \
+  --query "logGroups[?logGroupName=='asyncdb'].logGroupName" --output text | grep -qx asyncdb \
+  || aws logs create-log-group --log-group-name asyncdb
+
+aws logs put-retention-policy --log-group-name asyncdb --retention-in-days 7
+```
+
+**The group belongs to the build and not to the template**, because a share
+deletes its stack as soon as its experiments are done and a group in the stack
+would go with it. The instance a failed experiment is about is often gone before
+that — `node-stops` stops a node and its group terminates it within a minute or
+two — so [what the nodes say for themselves](#the-jobs) is only what the
+survivors say.
+
+**The retention is set on every run**, so seven days in the workflow is the
+retention there is. It is `describe` and then `create` rather than a `create`
+whose failure is ignored, so that a key that may not create a group fails the
+step rather than every container of every share logging nowhere.
+
+A share's nodes, after its stack is gone:
+
+```bash
+aws logs tail asyncdb --log-stream-name-prefix asyncdb-three/ --since 1d
+```
 
 ## Carrying the image
 
@@ -563,6 +597,7 @@ do not only publish an image — they create and delete five stacks:
 | The release | `ecr:GetAuthorizationToken`, `ecr:DescribeImages`, and the layer-upload actions behind `docker push` |
 | [The repositories](#making-the-repositories) | `ecr:DescribeRepositories` and `ecr:CreateRepository`, for `asyncdb` and for [the mirror](#mirroring-etcd) alike |
 | Both parameters | `ssm:PutParameter` on `/asyncdb/*` |
+| [The log group](#keeping-the-logs) | `logs:DescribeLogGroups`, `logs:CreateLogGroup` and `logs:PutRetentionPolicy` — which the key holds through `AmazonSSMFullAccess`, and not through anything granted for the purpose |
 | The deploy | `cloudformation:*` on the stacks, plus **every action the template's own resources need** — VPC, subnets, endpoints, security groups, load balancer, auto scaling, and `iam:CreateRole` / `PassRole` for the two instance roles — five times over, at once |
 | The diagnosis | `ec2:DescribeInstances`, `ec2:GetConsoleOutput`, `ssm:SendCommand` and `ssm:GetCommandInvocation` |
 

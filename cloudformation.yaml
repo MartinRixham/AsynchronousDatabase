@@ -319,6 +319,13 @@ Resources:
               - Effect: Allow
                 Action: [ec2:DescribeInstances]
                 Resource: "*"
+        - PolicyName: logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:asyncdb:*"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
@@ -376,6 +383,7 @@ Resources:
             TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
             PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
             ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+            INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
             VPC=${VPC}
 
             for attempt in $(seq 12); do
@@ -388,6 +396,12 @@ Resources:
             done
 
             docker run -d --restart always -p 80:80 -p 8080:8080 \
+              --log-driver awslogs \
+              --log-opt awslogs-region=$REGION \
+              --log-opt awslogs-endpoint=https://logs.$REGION.api.aws \
+              --log-opt awslogs-group=asyncdb \
+              --log-opt awslogs-stream=${AWS::StackName}/asyncdb-$INSTANCE_ID \
+              --log-opt mode=non-blocking \
               -v /var/lib/asyncdb:/var/lib/asyncdb \
               -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
               -e ASYNCDB_NODE=http://$PRIVATE_IP:8080 \
@@ -475,6 +489,13 @@ Resources:
               - Effect: Allow
                 Action: [ec2:DescribeInstances]
                 Resource: "*"
+        - PolicyName: logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:asyncdb:*"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
@@ -585,6 +606,12 @@ Resources:
             fi
 
             docker run -d --restart always --name etcd -p 2379:2379 -p 2380:2380 \
+              --log-driver awslogs \
+              --log-opt awslogs-region=$REGION \
+              --log-opt awslogs-endpoint=https://logs.$REGION.api.aws \
+              --log-opt awslogs-group=asyncdb \
+              --log-opt awslogs-stream=${AWS::StackName}/$NAME \
+              --log-opt mode=non-blocking \
               -v /var/lib/etcd:/etcd-data \
               $IMAGE /usr/local/bin/etcd \
               --name $NAME \

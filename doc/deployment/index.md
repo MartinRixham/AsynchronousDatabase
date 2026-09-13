@@ -135,7 +135,7 @@ parameter override away.
 
 ## Before the first deploy
 
-Three things the template needs and does not create. **A key pair is not one of
+Four things the template needs and does not create. **A key pair is not one of
 them**: the instances are in
 [private subnets with no SSH](/deployment/network#getting-onto-an-instance) and
 neither tier sets `KeyName`. Neither is the `asyncdb` repository: it is
@@ -161,6 +161,15 @@ on every push and not only on a release.
   before it deploys, on every push and not only on a release — so this is a
   precondition only for a stack stood up before CI has ever run against the
   account.
+- **A CloudWatch Logs group named `asyncdb`**, which the containers of both tiers
+  [log into](/deployment/database#the-logs). It is outside the stack so that it
+  outlives one, and [the build makes it](/pipeline/#keeping-the-logs) before it
+  deploys; an account CI has never run against needs it made by hand:
+
+  ```bash
+  aws logs create-log-group --log-group-name asyncdb
+  aws logs put-retention-policy --log-group-name asyncdb --retention-in-days 7
+  ```
 - **The image tag itself**, pushed under that name. An instance that cannot pull
   simply has no container: `docker run` fails and the load balancer takes the
   instance out of service on the health check. The group's health check is
