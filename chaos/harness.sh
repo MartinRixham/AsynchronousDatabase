@@ -33,10 +33,10 @@ export LC_ALL=C
 stack=${CHAOS_STACK:-asyncdb}
 table=${CHAOS_TABLE:-chaos}
 records=${CHAOS_RECORDS:-200}
-settle=${CHAOS_SETTLE:-150}
-recovery=${CHAOS_RECOVERY:-900}
+settle=${CHAOS_SETTLE:-100}
+recovery=${CHAOS_RECOVERY:-600}
 onset=${CHAOS_ONSET:-20}
-converge=${CHAOS_CONVERGE:-300}
+converge=${CHAOS_CONVERGE:-200}
 
 # The lease is ten seconds and it is renewed every three, so a node that stops answering is out
 # of the membership within one of them. Everything here that waits for a membership to change
