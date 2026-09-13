@@ -34,7 +34,7 @@ retry=${CHAOS_STORM_RETRY:-2}
 hot_keys=${CHAOS_STORM_KEYS:-8}
 
 spread=${CHAOS_STORM_SPREAD:-10}
-grace=${CHAOS_STORM_GRACE:-20}
+grace=${CHAOS_STORM_GRACE:-25}
 rolls=${CHAOS_STORM_ROLLS:-2}
 between=${CHAOS_STORM_SETTLE:-20}
 hold=${CHAOS_STORM_HOLD:-60}
@@ -57,7 +57,9 @@ storm_reader()
 	while :; do
 		key=$((RANDOM % records))
 
-		answered=$(curl --silent --max-time 15 --write-out '\n%{http_code}' \
+		# Longer than the load balancer's idle timeout, so a read it left waiting on a target that
+		# went away is its 504 and not a client that gave up first.
+		answered=$(curl --silent --max-time 20 --write-out '\n%{http_code}' \
 			"$base/table/$table/key/$key")
 		code=${answered##*$'\n'}
 

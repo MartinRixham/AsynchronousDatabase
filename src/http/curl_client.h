@@ -15,8 +15,13 @@ namespace http
 		// sixteen megabytes.
 		long connect_timeout_seconds;
 
+		// A node that went from the network after the connection was made — stopped, or cut off
+		// — acknowledges nothing it is sent, where a node that is slow still does. So this is
+		// what a connection that has gone dead costs, rather than the whole timeout.
+		long unacknowledged_timeout_seconds;
+
 	public:
-		explicit curl_client(long connect_timeout);
+		curl_client(long connect_timeout, long unacknowledged_timeout);
 
 		response send(const request &request, long timeout_seconds) const override;
 

@@ -5,6 +5,7 @@
 #include <curl/curl.h>
 
 #include "log.h"
+#include "bound_unacknowledged.h"
 #include "group.h"
 #include "handle.h"
 #include "curl_client.h"
@@ -67,6 +68,17 @@ namespace
 		return length;
 	}
 
+	// A socket that refuses the bound is still used, unbounded, rather than failing the request.
+	int unacknowledged(void *seconds, curl_socket_t socket, curlsocktype purpose)
+	{
+		if (purpose == CURLSOCKTYPE_IPCXN)
+		{
+			http::bound_unacknowledged(socket, *static_cast<long *>(seconds));
+		}
+
+		return CURL_SOCKOPT_OK;
+	}
+
 	CURL *thread_handle()
 	{
 		thread_local http::handle handle;
@@ -93,7 +105,8 @@ namespace
 		const http::request &request,
 		http::response *response,
 		long timeout,
-		long connect_timeout)
+		long connect_timeout,
+		const long *unacknowledged_timeout)
 	{
 		struct curl_slist *headers = NULL;
 
@@ -115,6 +128,8 @@ namespace
 		curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response->headers);
 		curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
 		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connect_timeout);
+		curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, unacknowledged);
+		curl_easy_setopt(curl, CURLOPT_SOCKOPTDATA, unacknowledged_timeout);
 		curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
 		// A fan out runs in a multi handle, whose own cache is sized from how many transfers were
@@ -224,8 +239,9 @@ namespace
 	}
 }
 
-http::curl_client::curl_client(long connect_timeout):
-	connect_timeout_seconds(connect_timeout)
+http::curl_client::curl_client(long connect_timeout, long unacknowledged_timeout):
+	connect_timeout_seconds(connect_timeout),
+	unacknowledged_timeout_seconds(unacknowledged_timeout)
 {
 }
 
@@ -241,7 +257,13 @@ http::response http::curl_client::send(const request &request, long timeout_seco
 		return response;
 	}
 
-	struct curl_slist *headers = apply(curl, request, &response, timeout_seconds, connect_timeout_seconds);
+	struct curl_slist *headers = apply(
+		curl,
+		request,
+		&response,
+		timeout_seconds,
+		connect_timeout_seconds,
+		&unacknowledged_timeout_seconds);
 
 	complete(curl, curl_easy_perform(curl), request.url, &response);
 
@@ -297,7 +319,13 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 			continue;
 		}
 
-		lists[i] = apply(easy, requests[i], &responses[i], timeout_seconds, connect_timeout_seconds);
+		lists[i] = apply(
+			easy,
+			requests[i],
+			&responses[i],
+			timeout_seconds,
+			connect_timeout_seconds,
+			&unacknowledged_timeout_seconds);
 
 		// The answers are held still for the whole fan out, so a handle can carry a pointer to
 		// its own.

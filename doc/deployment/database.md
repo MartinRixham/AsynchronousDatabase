@@ -286,8 +286,8 @@ There is also no `UpdatePolicy`, so
 
 | Resource | Is |
 | --- | --- |
-| `ApplicationLoadBalancer` | Named `${AWS::StackName}-alb`, `internet-facing`, in the three public subnets — [the only thing in them](/deployment/network) — in `ALBSecurityGroup`. The name is the stack's because a load balancer name is unique to a region, and [the pipeline stands up four stacks at once](/pipeline/#the-shares) |
-| `ALBTargetGroup` | HTTP, port 80, `TargetType: instance`, health check `GET /asyncdb/health` every ten seconds, two checks either way, thirty second deregistration delay |
+| `ApplicationLoadBalancer` | Named `${AWS::StackName}-alb`, `internet-facing`, in the three public subnets — [the only thing in them](/deployment/network) — in `ALBSecurityGroup`. The name is the stack's because a load balancer name is unique to a region, and [the pipeline stands up four stacks at once](/pipeline/#the-shares). Fifteen second idle timeout |
+| `ALBTargetGroup` | HTTP, port 80, `TargetType: instance`, health check `GET /asyncdb/health` every five seconds with a four second timeout, two checks either way, thirty second deregistration delay |
 | `ALBListener` | HTTP on port 80, one default action forwarding to the target group |
 
 Port 80 on an instance is nginx, so the target group is the UI and the
@@ -319,9 +319,10 @@ other, so checking the static file would be checking the wrong process.
 or one in a membership too small to claim a leader, refuses every write, and
 after a lease it says so here with a `503` — [`unled`](/runbook/#health). That is
 the only way a load balancer can be told, and without it an isolated node is
-chosen for as long as the fault lasts: up, answering and refusing every write. **Ten seconds and two checks** is how long that lasts — the defaults are
-thirty seconds and five checks to come back, which is two and a half minutes of
-a node that is whole again being left out. The group's health check is
+chosen for as long as the fault lasts: up, answering and refusing every write. **Five seconds and two checks** is how long that lasts, and it is the
+least the load balancer allows — the defaults are thirty seconds and five checks
+to come back, which is two and a half minutes of a node that is whole again
+being left out. The group's health check is
 [`EC2`](/runbook/deployment#the-group-does-not-replace-a-failed-application), so
 nothing replaces the instance over it; it is taken out of service and put back
 when it answers `200` again.
@@ -330,6 +331,21 @@ A target group with **no** healthy target left in it is one the load balancer
 sends to all of them, so etcd lost altogether — where every node is in that
 state at once — is a cluster that goes on serving reads rather than one nothing
 can reach.
+
+**The idle timeout is fifteen seconds, and not the sixty it defaults to.** The
+health check stops *new* requests going to a target that has gone, and does
+nothing for one already sent to it. A stopped instance or a zone cut off by the
+network sends no reset, so a request on a connection the load balancer was
+already holding to it hears nothing at all, and the load balancer answers `504`
+only once the connection has been idle this long. Sixty seconds of silence is a
+client that gave up without an answer; fifteen is an answer it can retry on.
+
+It is not shorter because a node goes quiet on a request while it is working:
+a read or a write that finds a copy gone waits
+[`unacknowledged_timeout_seconds`](/runbook/nodes#a-node-that-is-up-but-wrong),
+five, before it asks the next copy or refuses, and a read can pass over two.
+The timeout counts silence and not the length of a request, so a 16 MiB body
+that is still moving is not cut off by it.
 
 **Deregistration is thirty seconds, and not the five minutes it defaults to.** A
 draining target is a running instance: it goes on renewing its etcd lease

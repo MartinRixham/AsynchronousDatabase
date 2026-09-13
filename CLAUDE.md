@@ -293,8 +293,8 @@ peer can reach fails one.
   written once and the question needs no time at all. Beside them, a readback for durability. **It is also the only experiment that asserts on reads**: a read the
   **database** refused — a 404 or any API error document — fails it wherever it falls, and a read
   the proxy or the load balancer failed fails it unless it falls in the window the load balancer
-  itself owns — `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` from `cloudformation.yaml`,
-  with the membership lease on top for a node losing etcd, which answers `/health` as normal until
+  itself owns — `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` from `cloudformation.yaml`
+  and its idle timeout, with the membership lease on top for a node losing etcd, which answers `/health` as normal until
   it has decided it is unled. That rule is a claim about the database and not about arithmetic because **no fault
   here kills two zones at once**: a key's copies are one node per zone, so a zone with both its
   nodes serving holds a copy of every key. `blackhole` and `blackhole_clear` in `chaos/harness.sh` are the rule, the
@@ -400,8 +400,9 @@ serving what it holds. The four are read in one place,
 `cluster::from_environment()` in `cluster/etcd_cluster.h`, which fills a `cluster::config`: the
 endpoints, this node and its zone, that flag, and beside them the tunables nothing sets from
 outside — a ten second membership lease, the `/asyncdb/node/` and `/asyncdb/leader/` prefixes,
-`claims_per_refresh`, and three timeouts (two seconds to connect at all, thirty to finish, and five
-for etcd, which is on a shorter leash because a node that cannot reach it carries on serving what
+`claims_per_refresh`, and four timeouts (two seconds to connect at all, five for what was sent to
+go unacknowledged — a node gone from the network, kept under the load balancer's fifteen second idle
+timeout — thirty to finish, and five for etcd, which is on a shorter leash because a node that cannot reach it carries on serving what
 it holds). `config::is_clustered()` — endpoints and a node name, both set — is that rule as the
 code puts it, and `main.cpp` builds the config, constructs the `etcd_cluster` from it and hands
 that to the server.

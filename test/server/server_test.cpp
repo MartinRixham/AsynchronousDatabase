@@ -467,7 +467,7 @@ TEST_F(server_test, a_file_of_records_says_what_it_carries_in_a_header)
 
 	every.set();
 
-	http::curl_client curl(2);
+	http::curl_client curl(2, 5);
 	http::request asked {
 		"GET",
 		"http://localhost:" + std::to_string(port) + "/table/account/file?partitions=" +

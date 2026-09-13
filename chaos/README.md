@@ -223,7 +223,7 @@ finish around twenty-three minutes and the fifth around forty.
 They also cost money for as long as they run: `nodes-added` is nine database instances rather than
 six for the length of it. Nothing is left behind — every one of them puts the shape back, and the
 suite stops if it did not. The faults themselves are minutes; the waiting is the
-deployment's own timings — a ten second lease, a load balancer health check of two ten second
+deployment's own timings — a ten second lease, a load balancer health check of two five second
 intervals either way, a
 [thirty second deregistration delay](../doc/deployment/database.md#the-load-balancer), a two
 hundred second grace period — and `CHAOS_SETTLE` and `CHAOS_RECOVERY` are how much of each is
@@ -327,8 +327,8 @@ forwarded too and never `OUTPUT`. **A rule in `INPUT` or `OUTPUT` blocks nothing
 would answer its peers throughout and every assertion would be made against a cluster in which
 nothing had happened. `DOCKER-USER` is the chain docker leaves in `FORWARD` for exactly this.
 
-The rule **rejects** rather than drops. A node waits thirty seconds on another node, so a dropped
-packet is a node that hangs and a reset is a node that does not answer, which is what these two
+The rule **rejects** rather than drops. A node waits five seconds on a request another node has
+stopped acknowledging, so a dropped packet is a node that hangs and a reset is a node that does not answer, which is what these two
 are about — the copy that does answer is asked next, and `node-latency` is the experiment about
 waiting.
 
@@ -535,7 +535,7 @@ nowhere else:
 
 | The fault | The window | Because |
 | --- | --- | --- |
-| An instance stopped | `CHAOS_STORM_GRACE`, 25 seconds | `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` in `cloudformation.yaml` is ten seconds and two checks, and the five on top is a request that was already in flight |
+| An instance stopped | `CHAOS_STORM_GRACE`, 25 seconds | `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` in `cloudformation.yaml` is five seconds and two checks, and the fifteen on top is its idle timeout: a request already sent to the target is answered `504` that long after it went silent |
 | A zone cut off, a node losing etcd | That, plus the ten second membership lease | A node losing etcd answers `/health` as normal until it has decided it is [unled](../doc/runbook/membership.md), and it cannot decide that sooner than a lease |
 
 A window opens when the fault is applied and closes that many seconds after the call that applied

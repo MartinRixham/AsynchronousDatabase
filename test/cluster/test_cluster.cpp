@@ -2,7 +2,7 @@
 #include "test_cluster.h"
 
 cluster::test_cluster::test_cluster():
-	curl(http::curl_client(2)),
+	curl(http::curl_client(2, 5)),
 	request_forwarder(forwarder(curl))
 {
 }

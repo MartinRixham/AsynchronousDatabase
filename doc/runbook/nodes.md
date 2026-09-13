@@ -94,6 +94,12 @@ costs, and it does nothing for one that accepts the connection and then says
 nothing. The transfer timeout stays long because a value may be sixteen
 megabytes and a slow one is still an answer.
 
+A node that has gone from the network since the connection was made — stopped,
+or cut off — is the third case, and costs `unacknowledged_timeout_seconds`,
+**5 seconds**: nothing sent to it is acknowledged, where a node that is up but
+wrong still acknowledges what it is sent and says nothing back. So a forward
+that spends the whole 30 seconds is a node that is there.
+
 **Check that node directly** rather than through the load balancer:
 
 ```bash

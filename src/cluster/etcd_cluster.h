@@ -61,6 +61,11 @@ namespace cluster
 		// the whole timeout, which is as long as it is because a value may be sixteen megabytes.
 		long connect_timeout_seconds = 2;
 
+		// How long what was sent to a node may go unacknowledged. It is kept under the load
+		// balancer's idle timeout in cloudformation.yaml, so that a request passing over a copy
+		// that has gone is answered by the node rather than cut off by the load balancer.
+		long unacknowledged_timeout_seconds = 5;
+
 		bool is_clustered() const;
 	};
 

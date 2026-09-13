@@ -18,7 +18,7 @@
 class curl_client_test : public ::testing::Test
 {
 protected:
-	http::curl_client client { http::curl_client(2) };
+	http::curl_client client { http::curl_client(2, 5) };
 
 	cluster::forwarder forwarder = cluster::forwarder(client);
 
