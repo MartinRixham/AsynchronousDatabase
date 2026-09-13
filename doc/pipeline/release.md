@@ -107,7 +107,8 @@ which is how the suite comes to test what the job above it built.
 
 Neither ECR repository is a thing anybody creates by hand, and `asyncdb`'s is made
 by the step before the push — `describe-repositories` or else `create-repository`,
-[as the mirror does for `etcd`](/pipeline/#making-the-repositories). It is what
+[as the mirror does for `etcd`](/pipeline/#making-the-repositories), with a
+lifecycle policy that keeps five images and none older than a week. It is what
 the `docker push` needs and nothing more.
 
 ## Cutting a release

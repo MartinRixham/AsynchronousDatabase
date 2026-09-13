@@ -895,7 +895,8 @@ gate and hands the image on.
 **Everything that publishes or costs anything is downstream of the second job, `publish`, gated on
 the tag in the `version` file not having passed the suite already, so it runs once per version
 rather than once per push.** `publish` loads the artifact and pushes it to ECR, creating the
-repository `asyncdb` if the account has none, writes that tag to the SSM parameter
+repository `asyncdb` if the account has none (with `ecr-lifecycle.json`, set only at creation: five
+images at most and none older than a week, which is also the most a released version stays pullable), writes that tag to the SSM parameter
 `/asyncdb/version`, mirrors the etcd tag `etcd-version` names into ECR if it is not there already
 and writes `/asyncdb/etcd`, creates the CloudWatch Logs group `asyncdb` and sets it to seven days,
 and `make create-chaos-stack`s the permission to inject a fault, once for every share below it.

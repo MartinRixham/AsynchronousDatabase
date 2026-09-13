@@ -398,12 +398,35 @@ by the step before the push:
 
 ```bash
 aws ecr describe-repositories --repository-name asyncdb > /dev/null 2>&1 \
-  || aws ecr create-repository --repository-name asyncdb > /dev/null
+  || { aws ecr create-repository --repository-name asyncdb > /dev/null \
+    && aws ecr put-lifecycle-policy --repository-name asyncdb \
+      --lifecycle-policy-text file://ecr-lifecycle.json > /dev/null; }
 ```
 
-and `etcd`'s by the same two lines inside [the mirror](#mirroring-etcd). Both
+and `etcd`'s by the same lines inside [the mirror](#mirroring-etcd). Both
 are idempotent — the `describe` is the whole test, and on every run after the
 first there is nothing to do.
+
+**Both repositories keep five images and a week of them.** `ecr-lifecycle.json`
+expires any image pushed more than seven days ago and, of what is left, all but
+the newest five — untagged ones included, which is what a republished version
+leaves behind. It is two rules for the week rather than one because ECR allows a
+single rule over `any` tag status, and that rule has to be evaluated last. ECR
+applies a policy in its own time, within a day of an image qualifying.
+
+**The policy is set when the repository is created and never after**, so a
+change to `ecr-lifecycle.json` reaches a repository only by deleting it and
+letting the next `publish` make it again — or by a `put-lifecycle-policy` by
+hand.
+
+**A version is therefore in ECR for a week at most.** A stack launches its
+instances from the tag `/asyncdb/version` names, and `publish` pushes that tag
+only while the version has not passed, so an instance that boots more than a
+week after the last push has no image to pull and no container — the
+[no-container row](/runbook/deployment#the-stack-will-not-create) of the runbook. The etcd
+mirror recovers by itself on the next `publish`, which finds the tag gone and
+mirrors it again; the asyncdb image comes back with
+`git push --delete origin {version}` and a push, or a bump of `version`.
 
 **Where it sits does not matter.** Nothing between it and the push asks the
 registry a question, so this step is only what the `docker push` needs, and the
@@ -488,7 +511,9 @@ this is what puts it there.
 ETCD_VERSION=$(cat etcd-version)
 
 aws ecr describe-repositories --repository-name etcd > /dev/null 2>&1 \
-  || aws ecr create-repository --repository-name etcd > /dev/null
+  || { aws ecr create-repository --repository-name etcd > /dev/null \
+    && aws ecr put-lifecycle-policy --repository-name etcd \
+      --lifecycle-policy-text file://ecr-lifecycle.json > /dev/null; }
 
 if aws ecr describe-images --repository-name etcd --image-ids imageTag=$ETCD_VERSION > /dev/null 2>&1
 then
@@ -595,7 +620,7 @@ do not only publish an image — they create and delete five stacks:
 | For | Needs |
 | --- | --- |
 | The release | `ecr:GetAuthorizationToken`, `ecr:DescribeImages`, and the layer-upload actions behind `docker push` |
-| [The repositories](#making-the-repositories) | `ecr:DescribeRepositories` and `ecr:CreateRepository`, for `asyncdb` and for [the mirror](#mirroring-etcd) alike |
+| [The repositories](#making-the-repositories) | `ecr:DescribeRepositories`, `ecr:CreateRepository` and `ecr:PutLifecyclePolicy`, for `asyncdb` and for [the mirror](#mirroring-etcd) alike |
 | Both parameters | `ssm:PutParameter` on `/asyncdb/*` |
 | [The log group](#keeping-the-logs) | `logs:DescribeLogGroups`, `logs:CreateLogGroup` and `logs:PutRetentionPolicy` — which the key holds through `AmazonSSMFullAccess`, and not through anything granted for the purpose |
 | The deploy | `cloudformation:*` on the stacks, plus **every action the template's own resources need** — VPC, subnets, endpoints, security groups, load balancer, auto scaling, and `iam:CreateRole` / `PassRole` for the two instance roles — five times over, at once |
