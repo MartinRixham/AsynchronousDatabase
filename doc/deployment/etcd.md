@@ -66,23 +66,9 @@ Tuesday.
 `EtcdLaunchTemplate` is `BaseAmi`, `InstanceType`, thirty gigabytes of gp3,
 `EtcdSecurityGroup`, `EtcdInstanceProfile`, a `Name=etcd` tag — **which is what
 discovery filters on** — and user data. There is no `KeyName`, because
-[there is no SSH](/deployment/network#getting-onto-an-instance).
-
-```bash
-#! /bin/bash
-systemctl enable --now docker
-mkdir -p /var/lib/etcd
-REGION=eu-west-2
-REGISTRY_URL=332187735950.dkr.ecr.eu-west-2.amazonaws.com
-IMAGE=$REGISTRY_URL/etcd:v3.5.9    # { "Ref": "EtcdVersion" } for the tag
-aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URL
-docker pull $IMAGE
-VPC=vpc-0123456789abcdef0          # { "Ref": "VPC" }
-SIZE=3
-TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-SELF=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
-NAME=etcd-$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
-```
+[there is no SSH](/deployment/network#getting-onto-an-instance). The script is
+`EtcdLaunchTemplate` in `cloudformation.yaml`, and the sections below take it in
+the order it runs.
 
 The identity is the **instance id**, and the address is the private one, both
 read over [IMDSv2](/deployment/database#the-launch-template). A member is
@@ -109,21 +95,13 @@ the build mirrors and then writes to `/asyncdb/etcd` for `EtcdVersion` to resolv
 at deploy time. `docker-compose.yml` pins the same version against quay.io
 directly, because a laptop has an internet connection and no ECR login.
 
-The `docker pull` is **not** redundant with the `docker run` at the end of this
-script: `etcdctl()` below runs out of the same image, and it runs first.
+The `docker pull` is **not** redundant with the `docker run` at the end of the
+script: `etcdctl` runs out of the same image, and it runs first.
 
 ### The membership the instances imply
 
-```bash
-discover() {
-  aws ec2 describe-instances --region $REGION \
-    --filters Name=tag:Name,Values=etcd Name=vpc-id,Values=$VPC Name=instance-state-name,Values=pending,running \
-    --query 'Reservations[].Instances[].[InstanceId,PrivateIpAddress]' --output text \
-    | awk 'NF == 2 { print "etcd-" $1 "=http://" $2 ":2380" }' | sort | paste -sd,
-}
-```
-
-Three filters and a `--query`, and the shape of the output is deliberate: it is
+`discover()` is a `describe-instances` with three filters and a `--query`, sorted
+and joined, and the shape of the output is deliberate: it is
 **exactly the `--initial-cluster` string** etcd wants, built from instances
 rather than written down.
 
@@ -138,16 +116,9 @@ and gets the same set in whatever order the API felt like; sorting it means the
 three of them bootstrap from **the same string**, which is what stops a
 simultaneous start becoming three clusters of one.
 
-```bash
-for attempt in $(seq 60); do
-  CLUSTER=$(discover)
-  [ $(echo $CLUSTER | tr ',' ' ' | wc -w) -ge $SIZE ] && break
-  sleep 5
-done
-```
-
-`SIZE` is the group's desired capacity written a second time, and this loop is
-the only reason it has to be. **An instance that bootstraps before its peers are
+The script calls it every five seconds, sixty times at most, until it names
+`SIZE` members. `SIZE` is the group's desired capacity written a second time, and
+that wait is the only reason it has to be. **An instance that bootstraps before its peers are
 visible bootstraps a smaller cluster**, so a node waits up to five minutes for
 the API to show it three of them. A replacement sees three at once — itself and
 the two survivors — so the wait costs a launch nothing; it is the first minute of
@@ -155,11 +126,8 @@ a `create-stack` it is there for.
 
 ### Bootstrap or join
 
-```bash
-MEMBERS=$(etcdctl member list)      # against the other instances' 2379
-```
-
-That one call is the decision, and it has three outcomes.
+One `etcdctl member list`, against the other instances' 2379, is the decision,
+and it has three outcomes.
 
 | `member list` | Means | The node |
 | --- | --- | --- |
@@ -173,25 +141,14 @@ by the time the third one asks there is a two-node cluster that **already counts
 it as a member**. Adding itself again would fail, so it does not: it starts with
 the same string the others did, and joins the cluster it was already part of.
 
-etcdctl is the image the AMI already carries, run for one command at a time:
-
-```bash
-etcdctl() {
-  docker run --rm --network host $IMAGE /usr/local/bin/etcdctl --endpoints=$PEERS "$@"
-}
-```
+`etcdctl` is a shell function running the etcd image the instance just pulled,
+`--network host`, for one command at a time.
 
 ### The member dance, automated
 
-The member dance, in the boot script rather than in a runbook page:
-
-```bash
-echo "$MEMBERS" | while IFS=, read -r ID STATUS MEMBER PEER REST; do
-  echo "$ENTRIES" | grep -qx "$MEMBER=$PEER" || etcdctl member remove $ID
-done
-ADDED=$(etcdctl member add $NAME --peer-urls=http://$SELF:2380)
-INITIAL=$(echo "$ADDED" | grep '^ETCD_INITIAL_CLUSTER=' | cut -d'"' -f2)
-```
+The member dance, in the boot script rather than in a runbook page: every member
+`member list` names that `discover()` does not is removed, and then the node
+`member add`s itself.
 
 **A member is pruned when its name and peer URL together are not an instance
 that is running.** Matching on both matters: a replacement can be handed the
@@ -206,11 +163,8 @@ own answer, which is the only thing `--initial-cluster-state existing` will
 accept — etcd validates the list against the members it knows and refuses a node
 whose count disagrees.
 
-```bash
-[ -z "$INITIAL" ] && exit 1
-```
-
-**A node that found a cluster and could not join it does not start.** That is the
+**A node that found a cluster and could not join it does not start**: the script
+exits when the add printed no cluster. That is the
 one deliberate refusal in the script: if `member add` fails — which is what
 losing two of three looks like, because a cluster with no quorum cannot agree to
 admit anybody — then falling back to a bootstrap would build a *second* cluster
@@ -221,28 +175,8 @@ membership that splits.
 
 ### The run
 
-```bash
-docker run -d --restart always --name etcd -p 2379:2379 -p 2380:2380 \
-  --log-driver awslogs \
-  --log-opt awslogs-region=$REGION \
-  --log-opt awslogs-endpoint=https://logs.$REGION.api.aws \
-  --log-opt awslogs-group=asyncdb \
-  --log-opt awslogs-stream=asyncdb-three/$NAME \
-  --log-opt mode=non-blocking \
-  -v /var/lib/etcd:/etcd-data \
-  $IMAGE /usr/local/bin/etcd \
-  --name $NAME \
-  --data-dir /etcd-data \
-  --advertise-client-urls http://$SELF:2379 \
-  --listen-client-urls http://0.0.0.0:2379 \
-  --initial-advertise-peer-urls http://$SELF:2380 \
-  --listen-peer-urls http://0.0.0.0:2380 \
-  --initial-cluster $INITIAL \
-  --initial-cluster-state $STATE \
-  --initial-cluster-token asyncdb
-```
-
-Five things about it:
+The last line of the script runs etcd itself, publishing 2379 and 2380 and
+binding `/var/lib/etcd` as its data directory. Five things about it:
 
 - **It advertises private addresses.** Peers and clients are told to come in over
   the VPC, which is what lets both ports be closed to everything but the two
@@ -270,21 +204,8 @@ Five things about it:
 
 ## The group
 
-```yaml
-EtcdAutoScalingGroup:
-  Type: AWS::AutoScaling::AutoScalingGroup
-  DependsOn: [PrivateRoute, EtcdClientIngress, EtcdPeerIngress]
-  Properties:
-    VPCZoneIdentifier: […PrivateSubnet1, …2, …3]
-    LaunchTemplate: { …: EtcdLaunchTemplate at LatestVersionNumber }
-    DesiredCapacity: 3
-    MinSize: "1"
-    MaxSize: "3"
-    HealthCheckType: EC2
-    HealthCheckGracePeriod: 300
-```
-
-Three subnets and three instances is one per availability zone, arrived at by
+`EtcdAutoScalingGroup` spans the three private subnets and launches three
+instances from `EtcdLaunchTemplate` at `LatestVersionNumber`. Three subnets and three instances is one per availability zone, arrived at by
 counting instances exactly as
 [the database tier's six](/deployment/database#the-auto-scaling-group) are. Two
 of the numbers are load-bearing:
@@ -313,18 +234,10 @@ and has the same remedy: terminate it and let the group launch another.
 
 ## How the database tier finds it
 
-The same query, without the join:
-
-```bash
-for attempt in $(seq 12); do
-  ASYNCDB_ETCD=$(aws ec2 describe-instances --region eu-west-2 \
-    --filters Name=tag:Name,Values=etcd Name=vpc-id,Values=$VPC Name=instance-state-name,Values=running \
-    --query 'Reservations[].Instances[].PrivateIpAddress' --output text \
-    | tr '\t' '\n' | grep . | sort | sed -e 's|^|http://|' -e 's|$|:2379|' | paste -sd,)
-  [ -n "$ASYNCDB_ETCD" ] && break
-  sleep 5
-done
-```
+The same query, without the join: the
+[database tier's user data](/deployment/database#the-launch-template) asks for the
+running etcd instances' private addresses, retried every five seconds up to twelve
+times, and joins them on 2379 into `ASYNCDB_ETCD`.
 
 `ASYNCDB_ETCD` takes
 [every member separated by commas](/database/cluster#turning-it-on) and stays

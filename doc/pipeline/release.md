@@ -55,39 +55,12 @@ on, and neither its bytes nor its number mean anything yet.
 
 ## Where the gate is
 
-```yaml
-- name: Check whether this version has passed already
-  id: check_verified
-  run: |
-    if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" > /dev/null 2>&1
-    then
-      echo "verify=false" >> $GITHUB_OUTPUT
-    else
-      echo "verify=true" >> $GITHUB_OUTPUT
-    fi
-```
-
-It runs in `build`, and its output is what
+The gate runs in `build`, and its output is what
 [gates the whole `publish` job, and everything downstream of it](/pipeline/#the-gate) — see there for
 what it reads and how it fails. The publish is two of that job's steps, and
-neither carries a condition of its own:
-
-```yaml
-- name: Tag and push Docker image to ECR
-  run: |
-    IMAGE_URI=${{ steps.ecr-login.outputs.registry }}/asyncdb:$VERSION
-    docker load --input image.tar.gz
-    docker tag asyncdb:latest $IMAGE_URI
-    docker push $IMAGE_URI
-
-- name: Record published version in SSM
-  run: |
-    aws ssm put-parameter \
-      --name /asyncdb/version \
-      --type String \
-      --value "$VERSION" \
-      --overwrite
-```
+neither carries a condition of its own: `Tag and push Docker image to ECR` loads
+the image, tags it `asyncdb:$VERSION` in the registry and pushes it, and
+`Record published version in SSM` writes `$VERSION` to `/asyncdb/version`.
 
 `docker load` is there because the image was built on the *other* job's runner
 and [travels as an artifact](/pipeline/#carrying-the-image); the load, the tag

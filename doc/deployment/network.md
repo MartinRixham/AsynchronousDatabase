@@ -234,11 +234,8 @@ Port 80 is not a way round that. A request marked as forwarded is served where i
 lands rather than sent on to the node that owns the key, so a client that set the
 header itself would be answered by whichever instance the load balancer picked —
 and answered wrongly, since that instance holds the key only when it happens to
-own it. `server/server.conf` therefore clears the header on the way through:
-
-```nginx
-proxy_set_header X-Asyncdb-Forwarded "";
-```
+own it. `server/server.conf` therefore clears the header on the way through, with
+a `proxy_set_header` naming it and an empty value.
 
 Only another node may say a request has been forwarded, and another node says it
 to 8080.

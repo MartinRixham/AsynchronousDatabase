@@ -1,11 +1,7 @@
 # The image build
 
-```yaml
-- name: Build Docker image
-  run: docker build -t asyncdb:latest .
-```
-
-One line, no build args, no `--platform`, no buildx and no cache. Everything CI
+The workflow's `Build Docker image` step is `docker build -t asyncdb:latest .`:
+one line, no build args, no `--platform`, no buildx and no cache. Everything CI
 actually checks happens inside it, because the `Dockerfile` is three stages and
 two of them are a test run.
 
@@ -27,18 +23,9 @@ workflow.
 
 ## Stage 1 — the server
 
-```dockerfile
-FROM alpine:latest AS builder
-RUN apk add bash build-base git jq openssl cppcheck rocksdb-dev \
-    boost-dev gtest-dev curl-dev valgrind gcovr py3-pygments
-RUN git clone https://github.com/martinrixham/cheesemake
-COPY src/ src/
-COPY test/ test/
-COPY recipe.json valgrind.chevre ./
-RUN cheesemake/cheesemake verify
-```
-
-`verify` runs every phase up to it, so this single line is the whole check:
+`builder` installs the toolchain, clones cheesemake, copies the sources, the
+tests, `recipe.json` and `valgrind.chevre`, and runs `cheesemake verify`.
+`verify` runs every phase up to it, so that single line is the whole check:
 `cppcheck --enable=style`, the compile with `-Wall -Werror`, the gtest binary,
 and valgrind over that binary. **A failing test fails `docker build`, which
 fails the job** — that is how the pipeline gates on the tests without having a
@@ -57,15 +44,8 @@ follows it.
 
 ## Stage 2 — the UI
 
-```dockerfile
-FROM alpine:latest AS ui
-ENV CI=1
-COPY ui .
-RUN rm -rf node_modules
-RUN npm install
-RUN npm test
-RUN npm run build
-```
+`ui` copies `ui/`, removes any `node_modules`, and runs `npm install`, `npm test`
+and `npm run build` with `CI=1` set.
 
 `CI=1` is what stops vitest sitting in watch mode. The `rm -rf node_modules` is
 belt and braces over `.dockerignore` — the copy should never have brought any —
@@ -77,18 +57,9 @@ takes and nothing else does.
 
 ## Stage 3 — what ships
 
-```dockerfile
-FROM alpine:latest
-RUN apk add libstdc++ rocksdb curl nginx
-COPY server/server.conf /etc/nginx/http.d/default.conf
-COPY --from=ui /ui/dist /usr/share/nginx/html
-COPY server/404.html server/50x.json /usr/share/nginx/html/
-COPY --from=builder /build/bin/asyncdb .
-CMD nginx & ./asyncdb
-EXPOSE 80 8080
-```
-
-Four runtime packages, and neither Boost nor a compiler among them: the image is
+The last stage installs `libstdc++ rocksdb curl nginx`, copies in the nginx
+configuration, the built UI, the error pages and the binary, and starts both
+processes. Four runtime packages, and neither Boost nor a compiler among them: the image is
 alpine plus the shared libraries the binary actually needs. Adding a compiled
 Boost library to the server would mean adding a package here as well, which is
 the practical reason the rule holds.

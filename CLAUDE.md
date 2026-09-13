@@ -433,6 +433,12 @@ the real AZ out of IMDS, which is three zones of one node each.
 - **A comment a test contradicts is a finding, not an edit.** Report what the test showed and leave
   the comment standing: which of the two is wrong is a decision about the design, and the fix may be
   one that moves every key.
+- **The docs quote no code that lives somewhere else.** A block copied out of `cloudformation.yaml`,
+  the `Dockerfile`, a workflow, `server/server.conf` or a source file is a second copy that nothing
+  checks and that drifts from the first. Name the file and the resource, step or function, and say
+  in prose what it does and why. A code block in `doc/` or a README is kept only when it exists
+  nowhere else: a command for a person to run, a request and the document it answers, a diagram
+  or a formula.
 - **A comment does not repeat the README of its directory.** Where a folder has one — `chaos/`,
   `api/`, `automation/`, or the root `README.md` — that is where its design and reasoning are written
   down, and a comment saying the same thing is a second copy that drifts from the first. Say it in

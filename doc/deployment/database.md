@@ -41,53 +41,10 @@ is [thirty gigabytes of gp3](#the-root-volume), `TagSpecifications` names every 
 launches `asyncdb` — which is what
 [`Name=tag:Name,Values=asyncdb`](/runbook/deployment) finds, and what tells the
 six of them from the three `etcd-n` in the console — and the rest is user data — a base64 `Fn::Sub`
-of a shell script, run once as root at first boot:
-
-```bash
-#! /bin/bash
-systemctl enable --now docker
-mkdir -p /var/lib/asyncdb
-REGION=eu-west-2
-# The subnet has no IPv4 route out, so every call to AWS goes over IPv6 to a dual stack endpoint.
-export AWS_USE_DUALSTACK_ENDPOINT=true
-[ -f /etc/amazon/ssm/amazon-ssm-agent.json ] ||
-  cp /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json
-python3 -c "import json; f = '/etc/amazon/ssm/amazon-ssm-agent.json'; c = json.load(open(f)); \
-  c.setdefault('Agent', {}).update({'Region': '$REGION', 'UseDualStackEndpoint': True}); \
-  json.dump(c, open(f, 'w'), indent = 2)"
-systemctl restart amazon-ssm-agent
-REGISTRY_URL=332187735950.dkr-ecr.eu-west-2.on.aws
-VERSION=0.0.3          # ${Version}, resolved from SSM at deploy time
-IMAGE=$REGISTRY_URL/asyncdb:$VERSION
-aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URL
-docker pull $IMAGE
-TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
-ZONE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-  http://169.254.169.254/latest/meta-data/placement/availability-zone)
-INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
-VPC=vpc-0123456789abcdef0                  # ${VPC}
-for attempt in $(seq 12); do
-  ASYNCDB_ETCD=$(aws ec2 describe-instances --region $REGION \
-    --filters Name=tag:Name,Values=etcd Name=vpc-id,Values=$VPC Name=instance-state-name,Values=running \
-    --query 'Reservations[].Instances[].PrivateIpAddress' --output text \
-    | tr '\t' '\n' | grep . | sort | sed -e 's|^|http://|' -e 's|$|:2379|' | paste -sd,)
-  [ -n "$ASYNCDB_ETCD" ] && break
-  sleep 5
-done
-docker run -d --restart always -p 80:80 -p 8080:8080 \
-  --log-driver awslogs \
-  --log-opt awslogs-region=$REGION \
-  --log-opt awslogs-endpoint=https://logs.$REGION.api.aws \
-  --log-opt awslogs-group=asyncdb \
-  --log-opt awslogs-stream=asyncdb-three/asyncdb-$INSTANCE_ID \
-  --log-opt mode=non-blocking \
-  -v /var/lib/asyncdb:/var/lib/asyncdb \
-  -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
-  -e ASYNCDB_NODE=http://$PRIVATE_IP:8080 \
-  -e ASYNCDB_ZONE=$ZONE \
-  $IMAGE
-```
+of a shell script, run once as root at first boot, which is `LaunchTemplate` in
+`cloudformation.yaml`. It prepares the host, logs in to ECR, pulls the image,
+reads the instance's address and zone, finds the etcd tier and runs the container
+with the host's `/var/lib/asyncdb` bound into it.
 
 The store is bound from the host rather than left in the container's own
 filesystem, and `--restart always` is what makes that worth doing: a container
@@ -97,8 +54,8 @@ instance does.
 
 **Docker and the AWS CLI are both already on the image.** They come with
 [`BaseAmi`](/deployment/#parameters) — the ECS-optimised Amazon Linux 2023, taken
-for the daemon rather than for ECS — so the first two lines are an `enable` that
-is very nearly a no-op and a directory for the bind mount below, what follows is
+for the daemon rather than for ECS — so the script opens with an `enable` that
+is very nearly a no-op and a directory for the bind mount, what follows is
 [the dual-stack preparation](/deployment/network#the-route-out) a private subnet
 with no IPv4 route out needs, and the rest is a login, a pull and a run.
 
@@ -120,7 +77,7 @@ AMIs are registered as IMDSv2-only, so the token `PUT` is not belt and braces �
 unauthenticated `GET` the Amazon Linux 2 script used answers `401` on this image,
 and `ASYNCDB_NODE` would be `http://:8080`.
 
-The registry account and the region are literals; the version is not. That line
+The registry account and the region are literals; the version is not. The tag
 is the template's `Version` parameter — an
 `AWS::SSM::Parameter::Value<String>` reading `/asyncdb/version`, which the build
 writes after it pushes — substituted into the script by `Fn::Sub`, so the shell
@@ -129,8 +86,8 @@ two that *are* literals is on the
 [overview](/deployment/#before-the-first-deploy): the stack is really only
 deployable into one account's `eu-west-2`.
 
-The last five lines are what make the instance a member of a cluster rather than
-a database of its own:
+Three environment variables on the `docker run` are what make the instance a
+member of a cluster rather than a database of its own:
 
 - **`ASYNCDB_ETCD`** is every running etcd instance's private address on 2379,
   comma separated, which is the form that survives one of them being down. It
@@ -203,16 +160,8 @@ aws logs tail asyncdb --log-stream-name-prefix asyncdb-three/asyncdb-i-012345678
 
 ## The root volume
 
-```yaml
-BlockDeviceMappings:
-  - DeviceName: /dev/xvda
-    Ebs:
-      VolumeSize: 30
-      VolumeType: gp3
-      DeleteOnTermination: true
-```
-
-The mapping is declared rather than left to the AMI's snapshot, which specifies
+`BlockDeviceMappings` gives `/dev/xvda` thirty gigabytes of gp3, deleted on
+termination. The mapping is declared rather than left to the AMI's snapshot, which specifies
 thirty gigabytes of **gp2**. The size is not the problem — the IO credits are.
 gp2 earns three IOPS per gigabyte, so a thirty gigabyte volume has a baseline of
 a hundred, burstable to three thousand only while the bucket lasts. RocksDB is an

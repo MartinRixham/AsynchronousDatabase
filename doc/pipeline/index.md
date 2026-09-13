@@ -111,17 +111,9 @@ the push, and why the image tag they tested has to be rewritable until then. See
 
 ## The gate
 
-```yaml
-- name: Check whether this version has passed already
-  id: check_verified
-  run: |
-    if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" > /dev/null 2>&1
-    then
-      echo "verify=false" >> $GITHUB_OUTPUT
-    else
-      echo "verify=true" >> $GITHUB_OUTPUT
-    fi
-```
+The step `Check whether this version has passed already` runs
+`git ls-remote --exit-code --tags origin refs/tags/$VERSION` and sets the `verify`
+output to `true` when it fails.
 
 <code v-pre>needs.build.outputs.verify == 'true'</code> is the condition on the
 `publish` job, and **it is written once in the whole workflow**. Everything that
@@ -186,16 +178,8 @@ The consequences worth knowing:
 
 ### Recording the pass
 
-```yaml
-- name: Record that this version passed
-  run: |
-    git config user.name "github-actions[bot]"
-    git config user.email "github-actions[bot]@users.noreply.github.com"
-    git tag "$VERSION"
-    git push origin "$VERSION"
-```
-
-It carries **no `if:` of its own**, and it is the only step of a job that needs
+`Record that this version passed` tags the commit `$VERSION` as
+`github-actions[bot]` and pushes the tag. It carries **no `if:` of its own**, and it is the only step of a job that needs
 every share of `verify`. That is the whole mechanism, one level up from where it
 used to be: a job with no condition runs only when every job it needs succeeded,
 the way a step with no condition runs only when every step before it did. The
@@ -212,17 +196,8 @@ moment tagging.
 
 ## The trigger
 
-```yaml
-on:
-  push:
-    branches: [ main, master ]
-
-concurrency:
-  group: build-and-push
-  cancel-in-progress: false
-```
-
-That is the only trigger of this workflow: no `workflow_dispatch`, so a run
+A push to `main` or `master`, in the concurrency group `build-and-push` with
+`cancel-in-progress: false`. That is the only trigger of this workflow: no `workflow_dispatch`, so a run
 cannot be started by hand from the Actions tab, and no schedule. The
 `concurrency` group is what stops two pushes in quick succession racing for the
 same tag and, worse, for the same five CloudFormation stacks: the share names
@@ -394,15 +369,8 @@ nothing makes them agree.
 ## Making the repositories
 
 Neither ECR repository is a thing anybody creates by hand. `asyncdb`'s is made
-by the step before the push:
-
-```bash
-aws ecr describe-repositories --repository-name asyncdb > /dev/null 2>&1 \
-  || { aws ecr create-repository --repository-name asyncdb > /dev/null \
-    && aws ecr put-lifecycle-policy --repository-name asyncdb \
-      --lifecycle-policy-text file://ecr-lifecycle.json > /dev/null; }
-```
-
+by the step before the push — `describe-repositories`, or else
+`create-repository` followed by `put-lifecycle-policy` from `ecr-lifecycle.json` —
 and `etcd`'s by the same lines inside [the mirror](#mirroring-etcd). Both
 are idempotent — the `describe` is the whole test, and on every run after the
 first there is nothing to do.
@@ -437,15 +405,8 @@ mirror below creates its own repository beside its own push for the same reason.
 The containers of both tiers log to the CloudWatch Logs group `asyncdb`, one
 stream an instance, named by stack and instance —
 [the database tier](/deployment/database#the-logs) says how. `publish` makes the
-group:
-
-```bash
-aws logs describe-log-groups --log-group-name-prefix asyncdb \
-  --query "logGroups[?logGroupName=='asyncdb'].logGroupName" --output text | grep -qx asyncdb \
-  || aws logs create-log-group --log-group-name asyncdb
-
-aws logs put-retention-policy --log-group-name asyncdb --retention-in-days 7
-```
+group if `describe-log-groups` does not find it, and sets its retention to seven
+days.
 
 **The group belongs to the build and not to the template**, because a share
 deletes its stack as soon as its experiments are done and a group in the stack
@@ -469,20 +430,7 @@ aws logs tail asyncdb --log-stream-name-prefix asyncdb-three/ --since 1d
 
 The `docker build` is in `build` and the `docker push` is in `publish`,
 and a job gets its own runner, so the image is carried between them as an
-artifact:
-
-```yaml
-- name: Save the image
-  run: docker save asyncdb:latest | gzip > image.tar.gz
-
-- name: Upload the image
-  uses: actions/upload-artifact@v4
-  with:
-    name: asyncdb-image
-    path: image.tar.gz
-    compression-level: 0
-    retention-days: 1
-```
+artifact: `docker save` piped through `gzip`, uploaded as `asyncdb-image`.
 
 `compression-level: 0` because the tar is gzipped already and the action would
 otherwise deflate it a second time for nothing. `retention-days: 1` because the
@@ -505,27 +453,9 @@ etcd instances pull their image out of this account's registry and never out of
 quay.io — [a boot that depends on a third party's registry is a boot that fails
 when it does not answer](/deployment/etcd#where-the-image-comes-from). The tag
 they run has to be in that registry before the stack that pulls it exists, and
-this is what puts it there.
-
-```bash
-ETCD_VERSION=$(cat etcd-version)
-
-aws ecr describe-repositories --repository-name etcd > /dev/null 2>&1 \
-  || { aws ecr create-repository --repository-name etcd > /dev/null \
-    && aws ecr put-lifecycle-policy --repository-name etcd \
-      --lifecycle-policy-text file://ecr-lifecycle.json > /dev/null; }
-
-if aws ecr describe-images --repository-name etcd --image-ids imageTag=$ETCD_VERSION > /dev/null 2>&1
-then
-  echo "etcd:$ETCD_VERSION is mirrored already."
-else
-  docker pull quay.io/coreos/etcd:$ETCD_VERSION
-  docker tag  quay.io/coreos/etcd:$ETCD_VERSION $REGISTRY/etcd:$ETCD_VERSION
-  docker push $REGISTRY/etcd:$ETCD_VERSION
-fi
-
-aws ssm put-parameter --name /asyncdb/etcd --type String --value "$ETCD_VERSION" --overwrite
-```
+this is what puts it there: it reads `etcd-version`, makes the `etcd` repository
+if there is none, pulls, tags and pushes `quay.io/coreos/etcd` at that tag unless
+ECR already holds it, and writes the tag to `/asyncdb/etcd`.
 
 It is the other shape — ask ECR whether the tag is there, and push only if it is
 not — and it is the right one here, because none of what makes that a poor gate
