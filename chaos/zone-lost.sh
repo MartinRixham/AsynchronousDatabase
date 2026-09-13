@@ -11,9 +11,7 @@
 # nodes in two zones, which is two whole copies of the keyspace.
 #
 # This is the claim at the top of the runbook, tested: every zone can be the one that is gone
-# and a record is still read. Nothing is asked of the instances — the fault is a network access
-# control list of the suite's own, on the subnet — which is why it works on a stack whose
-# instances have no route to anywhere.
+# and a record is still read.
 
 source "$(dirname "$0")/harness.sh"
 
@@ -92,17 +90,12 @@ expect_readable 60 5 "every seeded record can still be read with a zone gone"
 printf '  ---- reads with a zone gone: %s\n' "$(codes)"
 expect "$(scan_status)" 200 "a scan falls back to a copy in a zone that answers"
 
-# And a write needs every copy of the membership as it now stands, which is two. It is waited for
-# rather than asserted outright, because the isolated side refuses a write before the load
-# balancer has stopped choosing it: what is claimed here is that the writes come back, and how
-# long that takes is the health check's interval rather than anything this database does.
+# And a write needs every copy of the membership as it now stands, which is two.
 await_writes 20 "$settle" "every write is taken by the two zones that are left"
 
-# The isolated nodes are still reachable over Run Command: the interface endpoints they go
-# through have an interface in their own subnet, the fault is between zones, and the acl leaves
-# IPv6 alone, which is how they reach Systems Manager. What they say about themselves is the
-# membership they last read, reported rather than asserted: whether that path survives the fault
-# is the network's business and not the database's.
+# What the isolated nodes say about themselves is the membership they last read, reported rather
+# than asserted: whether the path to them survives the fault is the network's business and not the
+# database's.
 for isolated in $cut_off; do
 	echo "  $isolated says: $(node_health "$isolated" | jq -c '{nodes, zones, leads}' 2> /dev/null)"
 done

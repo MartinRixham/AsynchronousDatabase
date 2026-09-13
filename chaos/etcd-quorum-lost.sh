@@ -11,9 +11,6 @@
 # the key, and refuses every write: the leases that membership was read under may have run out,
 # and the image forbids a write nothing ordered. This is the experiment that shows both halves.
 #
-# It is deliberately the last experiment in the suite. What it leaves behind is a cluster that
-# has been briefly wrong about itself, and the pipeline deletes the stack next.
-#
 # Two things keep it reversible. The instances are stopped and started rather than terminated,
 # so they come back on the private addresses ASYNCDB_ETCD was given at boot — a tier that was
 # replaced instead would strand every database node, which is the other half of that runbook

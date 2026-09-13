@@ -18,8 +18,7 @@
 # the assertion here.
 #
 # The zones lose different halves, because the split inside a zone is hashed over that zone's own
-# node addresses, so a key is beyond fetching only where every zone lost it at once. That number is
-# reported and never asserted: nothing here puts back a copy that no node has.
+# node addresses, so a key is beyond fetching only where every zone lost it at once.
 #
 #   CHAOS_RESIZE   how long a resized group is given to reach the new shape   1200 seconds
 
@@ -72,15 +71,11 @@ expect "$(scan_status)" 200 "a scan is answered by the copy that is left"
 expect_copies "at three nodes"
 
 # What a shrink costs, in numbers. A key is gone only where every zone lost it, which is why this
-# is a fraction rather than half of the seed — and it is reported and never asserted, because the
-# number is the deployment's own hashing rather than anything the database decides.
+# is a fraction rather than half of the seed.
 absent=$(readable 60 3)
 
 printf '  ---- of 60 seeded keys at three nodes: %s are held by no copy\n' "$absent"
 
-# This is the assertion, and it is about the shape of the failure rather than the size of it. A key
-# no copy holds is a 404. Anything else is a cluster that cannot answer, which is a different fault
-# and would be this one hiding it.
 expect_codes '^(2|404)' "a key a shrink took away is refused as not found and not as an error"
 
 load_report "while the tier was three"
@@ -103,8 +98,6 @@ expect_round_trip 10 "a key written once the tier is six again reads back what w
 
 expect_copies "once the tier is six again"
 
-# Counted and not asserted: half the instances were terminated, so a key both of whose owners went
-# at once is a key no copy has, and nothing in the cluster puts that back.
 report_load_kept "while the tier was three and then six again"
 
 verdict

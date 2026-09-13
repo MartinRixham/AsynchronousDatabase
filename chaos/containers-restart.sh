@@ -6,30 +6,9 @@
 #   doc/runbook/index.md#what-recovers-by-itself
 #   doc/runbook/rebuild.md#when-it-runs
 #
-# The database process on every instance is killed with SIGKILL at the same moment, and nothing
-# here starts it again: `docker run --restart always` is what brings the container back, which is
-# the runbook's claim rather than this experiment's doing. Then it is done again, and again,
-# because a node killed while it is opening the store the last kill left it is the case one clean
-# crash never reaches.
-#
-# **It is the one experiment here that is allowed to cost nothing at all.** A container is a
-# process and the store is a volume: `/var/lib/asyncdb` outlives the container, so a node comes
-# back at the address it already had, owning the partitions it already owned and holding what it
-# already held. Nothing is replaced, nothing is rebuilt and no record changes hands — so every
-# number after the kills is the number before them, and that is what makes the fault worth its
-# severity. Six nodes killed three times over is a cluster that lost nothing, or it is a bug.
-#
-# What it asserts, in the order of what losing it would mean:
-#
-#   every write the cluster acknowledged reads back what was written   nothing taken is lost
-#   every seeded record is there, at the value written before          nothing at rest is lost
-#   no copy of a key answers a different value from another copy       nothing diverged
-#   every seeded record is in every zone, and in one store of it       nothing moved
-#   every partition is led and no node holds less than it owns         it is a cluster again
-#
-# The first of those is the load the harness keeps on every experiment here, and this is the fault
-# it was written for: a write is answered only once every copy has taken it, and every copy of it
-# is then killed with the write ahead log unflushed and RocksDB never closed.
+# The database process on every instance is killed with SIGKILL at the same moment, and then again,
+# and again, because a node killed while it is opening the store the last kill left it is the case
+# one clean crash never reaches.
 #
 # The kill is SIGKILL from the host rather than `docker stop`, deliberately. A node stopped
 # cleanly revokes its lease and leaves the membership before it stops accepting, which is
@@ -66,21 +45,12 @@ expect "$count" 6 "the stack is running six database nodes"
 stamp=$RANDOM
 before=before-$stamp
 
-# The kill, and what the container is, are `container_kill_script` and `chaos_container` in
-# chaos/harness.sh, where every fault's mechanics live.
 container=$chaos_container
 
 # expect_seed_replicated <when> — every seeded record is in every zone's stores, and no key is in
 # two stores of one zone. It is given time the way expect_copies is: a key written to the node
 # standing in for one that was away is one the returning owner has to be handed, and until it is,
 # that key is in two stores of its zone.
-#
-# **It is deliberately not expect_copies**, which asks that the zones hold the *same* keys. The
-# recovery assertions above this one retry writes until they are taken, which is what await_writes
-# is for — and a write that was refused on the way there may still have been taken by one copy,
-# which leaves the zones holding different keys with nothing wrong. What is asked instead is that
-# the records written while the cluster was whole are all still in every zone, which is the claim
-# a kill has to leave standing.
 expect_seed_replicated()
 {
 	local deadline=$((SECONDS + converge)) zone missing short duplicates i
@@ -127,10 +97,7 @@ expect_seed_replicated()
 
 # await_cluster <timeout> — the two things only a node can be asked, waited for: the claims it
 # holds and whether it is short of what it owns. **A membership is not a cluster that can be
-# written to** — a write is ordered by the leader of the key's partition — and a kill takes every
-# claim in the cluster with it, because a claim is held on the killed node's own lease. So the
-# claims adding up again is the recovery this fault has to be asked about, and `leads` is a node's
-# own count, which the load balancer cannot be asked for.
+# written to** — a write is ordered by the leader of the key's partition.
 await_cluster()
 {
 	local deadline=$((SECONDS + $1)) id led=0 short=
@@ -173,9 +140,6 @@ await_cluster()
 	printf '  ---- the %s of them lead %s partitions between them\n' "$count" "$led"
 }
 
-# The kills go out in one Run Command rather than six, because six sent in turn are six kills a
-# wait apart — a rolling restart, which is a fault the cluster is built to ride out one node at a
-# time and not the one this asserts on.
 inject()
 {
 	local round id
@@ -236,8 +200,6 @@ fault_start || { verdict; exit 1; }
 
 load_report "while the containers were being killed"
 
-# The runbook's claim, and the whole of what restarts a container here. Nothing in this experiment
-# starts one: a node that came back is `--restart always` doing it.
 back=$(grep -c 'answering again' "$work/rounds")
 
 expect "$back" "$((rounds * count))" "every container came back by itself after every kill"
@@ -253,10 +215,6 @@ await_cluster "$settle"
 
 await_writes 20 "$settle" "every copy takes a write again"
 
-# A restart is not a rebuild. **An empty store is the only thing that triggers one**, so a node
-# whose volume outlived its container reads nothing from anybody — and a rebuild in the log since
-# the kills began would say a node came back to an empty directory, which is the one way a kill
-# here could cost a copy.
 logs="docker logs --since $((SECONDS - started))s $container 2>&1 | grep -ci rebuil || true"
 
 # shellcheck disable=SC2086
@@ -282,23 +240,14 @@ expect "$other" 0 "and none of them came back holding an older value"
 printf '  ---- of 60 seeded records: %s hold the value written before the kills,' "$same"
 printf ' %s an older one, %s no copy answered for\n' "$other" "$gone"
 
-# Asked of the seeded table as well as of the load, because every key in it is written once too:
-# the seeded records carry the value written above and never another, and the keys the write and
-# round trip checks leave behind carry a stamp of their own apiece. So a node holding something
-# else for one of them is a copy that took a different write and is waiting on no later one. What
-# the value *is* was asserted above; this is that the copies say one thing.
+# The keys the write and round trip checks leave behind in the seeded table carry a stamp of their
+# own apiece, so they are written once too.
 copies_agree "$table" "once every container had come back"
 
-# Nothing moved, because the membership came back naming the same six addresses and every node
-# owns what it owned. A zone short of a seeded record is a store that did not outlive its
-# container; a key in two stores of one zone is a node that came back believing it owns something
-# it does not.
 expect_seed_replicated "once every container had been killed $rounds times"
 
 expect_round_trip 10 "a key written after the last kill reads back what was written"
 
-# And the claim the whole load exists to make, over every write the cluster acknowledged while its
-# every copy was being killed with the write ahead log unflushed and RocksDB never closed.
 expect_load_kept "once every container had come back"
 
 verdict

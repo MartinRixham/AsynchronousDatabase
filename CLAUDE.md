@@ -432,6 +432,11 @@ the real AZ out of IMDS, which is three zones of one node each.
 - **A comment a test contradicts is a finding, not an edit.** Report what the test showed and leave
   the comment standing: which of the two is wrong is a decision about the design, and the fix may be
   one that moves every key.
+- **A comment does not repeat the README of its directory.** Where a folder has one — `chaos/`,
+  `api/`, `automation/`, or the root `README.md` — that is where its design and reasoning are written
+  down, and a comment saying the same thing is a second copy that drifts from the first. Say it in
+  the README once; what stays in the code is what the README does not say, such as a quoting
+  pitfall or why one line is written the way it is.
 
 ## Libraries
 

@@ -9,9 +9,7 @@
 # One database instance is stopped. It stops renewing its lease, so it leaves the membership
 # within one of them; the auto scaling group's EC2 health check then finds an instance that is
 # stopped, terminates it and launches another — which is a new root volume, an empty database,
-# and the one path in the system that fills itself in. This is the experiment worth running if
-# only one is: it is the only test anywhere of the rebuild, and the rebuild is the only thing
-# that puts a lost copy back.
+# and the one path in the system that fills itself in.
 
 source "$(dirname "$0")/harness.sh"
 

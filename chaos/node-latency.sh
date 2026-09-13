@@ -16,11 +16,6 @@
 # past the etcd client's five second timeout and this becomes
 # doc/runbook/membership.md#leadership-keeps-moving instead: renewals start failing, and
 # leadership moves every lease.
-#
-# The fault goes in through the SSM agent, as a netem qdisc on the device the default route
-# names. tc is not on the image, so the script installs it from the distribution repositories,
-# which is what makes this fault depend on the private subnets' route out. The note on the SSM
-# faults in chaos/README.md is the rest of it.
 
 source "$(dirname "$0")/harness.sh"
 
@@ -75,10 +70,6 @@ printf '  ---- a read through the load balancer now takes %ss\n' \
 
 load_report "while a node was slow"
 
-# Asked while the qdisc is still there, because heal takes it away with what it counted. A packet
-# it discarded rather than delayed is a handshake that has to be made again, which is a second on
-# top of the delay and over what a connect is given — so this is what tells a write refused by
-# the fault from a write refused by the shape of the fault.
 latency_stats "$slow"
 
 fault_stop

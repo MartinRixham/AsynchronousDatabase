@@ -14,13 +14,6 @@
 # client can branch on, and never takes one and loses it. Reads are unaffected, because a read
 # does not write and the other zones hold their copies anyway.
 #
-# The layer that refuses is not always the database, and that is worth knowing rather than
-# asserting around. nginx spools a request body larger than client_body_buffer_size — 8 KiB, and
-# nothing here sets it — to a temporary file, so on a full disk it answers `pwrite() ... (28: No
-# space left on device)` with a 500 out of 50x.json and the database is never asked at all. That
-# is what a client writing a real value sees, and it is why the writes below come in two sizes:
-# a megabyte, which the proxy refuses, and a kilobyte, which is small enough to reach the store.
-#
 # This is the most invasive experiment in the suite — a full root volume is a docker daemon and
 # an SSM agent with nowhere to write either — and it fills the whole disk, because anything short
 # of the whole disk is not this failure at all. CHAOS_DISK_PERCENT is a percentage of the disk
@@ -125,12 +118,7 @@ fault_start || { verdict; exit 1; }
 : > "$work/taken"
 
 # A kilobyte fits in the buffer nginx holds in memory, so these are the writes that reach the
-# store at all — and what they say is reported rather than asserted on. RocksDB preallocates the
-# write ahead log, tens of megabytes reserved when the store opened and long before the disk
-# filled, so a full volume is a store that carries on taking writes into space it already holds;
-# `IO error: No space left on device` arrives when that runs out or a flush needs room for an
-# SST. How much of it is left after a fault of this length is the deployment's timing and not the
-# database's behaviour, which is why there is nothing here to assert.
+# store at all.
 inline=$work/inline
 head -c 1024 /dev/zero | tr '\0' 'x' > "$inline"
 
@@ -158,10 +146,8 @@ fault_stop
 await '(.nodes | length) == 6 and (.zones | length) == 3 and (.write_stalled | not)' "$settle" \
 	"the node is whole again and nothing is stalled"
 
-# Never taken and lost, which is the half of this that matters most and the half no error code
-# can say. A write that answered 2xx was taken by every copy, so every one of these keys is still
-# there now the volume has room again — and a few attempts each, because a read goes to one copy
-# and the load balancer picks which node is asked.
+# A few attempts each, because a read goes to one copy and the load balancer picks which node is
+# asked.
 missing=0
 taken=$(wc -l < "$work/taken")
 

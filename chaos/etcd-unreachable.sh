@@ -13,11 +13,6 @@
 # It differs from etcd-quorum-lost.sh in the direction the fault points. There, etcd is broken
 # for everyone; here, one node is broken for etcd, and the rest of the cluster carries on
 # without it — which is what makes the recovery a re-registration rather than a repopulation.
-#
-# The fault goes in through the SSM agent, as a rule of our own in DOCKER-USER — see
-# blackhole_rule in chaos/harness.sh for why a rule in INPUT or OUTPUT leaves a containerised
-# database talking to etcd throughout. The note on the SSM faults in chaos/README.md is the rest
-# of it.
 
 source "$(dirname "$0")/harness.sh"
 

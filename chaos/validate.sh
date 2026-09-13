@@ -1,15 +1,6 @@
 #! /usr/bin/env bash
 
 # Every experiment's preflight, and no fault at all.
-#
-#   chaos/validate.sh
-#
-# An experiment's preflight resolves the targets it would break and dry runs what it would do to
-# them, so this is the whole of "would this experiment run?" for a handful of API calls each and
-# nothing applied. It is seconds, where finding the same mistake by running the suite is the
-# length of the experiment that hits it.
-#
-# It needs the stack up, because what a preflight resolves is real instances and subnets.
 
 source "$(dirname "$0")/harness.sh"
 

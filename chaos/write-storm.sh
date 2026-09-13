@@ -7,101 +7,18 @@
 #   doc/runbook/membership.md#the-membership-is-wrong
 #   doc/runbook/nodes.md#an-instance-was-replaced
 #   doc/runbook/rebuild.md#when-ownership-moves
-#
-# Every other experiment here applies one fault and asks what it cost. This one applies them on
-# top of each other — a zone cut off while a node of another zone is held out of the membership
-# under it, an instance stopped while a node of the third zone is held out, and then every zone in
-# turn held out whole, twice through — and asks the question none of them asks: **whether a
-# cluster that was never left alone can be driven back into agreeing with itself.**
-#
-# **Every fault here outlasts the membership lease, and that is not a detail.** A fault shorter
-# than the lease takes no copy out of the write path: the node is still a member, so the writes it
-# cannot take are *refused* rather than taken without it, the client retries them, and the node
-# takes the retry on its way back — it is never behind. That is what a container kill is, measured:
-# thirteen of them on the first run of this experiment, every one `answering again after 2s`
-# against a ten second lease, and not one lagging copy in the whole storm. So what is held here is
-# a node's path to **etcd**: it stops renewing, its peers drop it within a lease, and they go on
-# taking writes its copy will never see until it is let back in.
-#
-# What makes that question answerable is the client, and it is written the way it is for one
-# reason. A write is **retried until the cluster takes it**, however long that is and however many
-# times it is refused, so every write it ever issued was acknowledged — which is what entitles the
-# assertions to ask about all of them rather than about the ones that happened to get through.
-#
-# **It writes a few keys many times over, and not many keys once each.** That is the whole of what
-# makes divergence reachable. A key written once has one value, so no fault can leave two copies of
-# it holding two different things: the store would have to invent bytes. A key written a hundred
-# times has a hundred values, and a copy that was out of the membership for one of them holds
-# something **different** from the others rather than holding nothing — which is the state that has
-# to be repaired, and the half of `import_records` that repairs it is the one that decides between
-# the record a reconcile file carries and the record already under that key. A suite of keys
-# written once never reaches that code at all: a lagging copy is simply missing them, and the file
-# is taken whole.
-#
-# So it writes two populations, because they are two mechanisms and neither covers the other:
-#
-#   hot-<stamp>-<k>     CHAOS_STORM_KEYS keys, a new value every time round
-#   storm-<stamp>-<i>   a fresh key every CHAOS_STORM_SPREAD writes, written once and never again
-#
-# And it asserts, in the order of what losing it would mean:
-#
-#   no read failed                                             a copy always answered
-#   every write the client issued is there, holding its value  the retry got there in the end
-#   no copy of a key disagrees with another about it           nothing diverged
-#   every hot key holds the value last acknowledged for it     no copy stayed behind
-#   every zone holds every one of those keys, one node apiece  no copy is missing one
-#
-# And the fault having made a lagging copy at all is asserted **while it stands**, in round one
-# across the cut and in round three across the zone that is out of the membership — because an
-# assertion about a state that never arose is how a green run means nothing.
-#
-# The third and fourth are the ones the faults are chosen for, and the fourth is the sharper: a
-# copy holding an **older** value is what a fault can actually make, and what has to take it away
-# is `record::is_newer`. Both are given CHAOS_CONVERGE, because a copy that was away is entitled to
-# lag until the reconcile pass its rejoining starts has caught it up — **lagging is allowed and
-# staying behind is not**, and the budget is what tells them apart. A copy still behind when it
-# runs out is divergence nothing would ever repair: no read repair, no anti-entropy, and a
-# reconcile pass moves the records whose owner moved.
-#
-# **Reads are asserted on here, and nowhere else in this suite.** The rule is that a read that was
-# not answered 2xx fails the experiment, and the one thing that excuses one is the window the load
-# balancer itself owns: a target whose container has just been killed goes on being chosen until
-# its health check has failed twice, which is HealthCheckIntervalSeconds × UnhealthyThresholdCount
-# in cloudformation.yaml — ten seconds and two checks, so twenty, and CHAOS_STORM_GRACE is that
-# with five seconds for a request already in flight. A cut off node is given the membership lease
-# on top, and only that: it answers /health as normal until it has decided it is unled, and it
-# cannot decide that sooner than a lease. Every failure inside one of those windows is counted and
-# printed by status and by who refused; every failure outside one of them is a failed assertion.
-#
-# **Every fault here leaves at least one whole zone answering**, which is what makes that rule a
-# claim about the database rather than about arithmetic: a key's copies are one node per zone, so
-# a zone with both its nodes serving holds a copy of every key. Nothing in this experiment kills
-# two zones at once, and nothing in it terminates an instance whose copy is not held elsewhere.
-#
-#   CHAOS_STORM_KEYS    how few keys are written over and over                 8
-#   CHAOS_STORM_SPREAD  a key written once every this many of those            10
-#   CHAOS_STORM_PAUSE   seconds between the client's writes                     0.5
-#   CHAOS_STORM_RETRY   seconds between the retries of a refused write          2
-#   CHAOS_STORM_GRACE   the window the load balancer's own health check owns    25 seconds
-#   CHAOS_STORM_HOLD    seconds a node is held out of the membership            60
-#   CHAOS_STORM_ROLLS   times round the zones taking etcd from a whole one      2
-#   CHAOS_STORM_SETTLE  seconds between one isolation and the next              20
 
 source "$(dirname "$0")/harness.sh"
 
 banner "Faults overlap and the client never gives up" \
 	"Every write is retried until it is taken, and every copy has to end up holding it."
 
-# Every read is kept with the moment it was made, because what excuses a failed one is when it
-# happened. EPOCHSECONDS is what makes that free — a `date` a read is a process a read.
+# EPOCHSECONDS keeps the moment of every read without a `date` a read, which is a process a read.
 [ -n "${EPOCHSECONDS:-}" ] || die "This experiment needs bash 5 for EPOCHSECONDS."
 
 setup
 
-# **This experiment is its client**, so there is no reading it against an idle cluster: every
-# assertion it makes is about what that client was told. CHAOS_LOAD=0 skips it rather than running
-# it with nothing to assert on — and never in a validating run, which applies nothing and starts no
-# client either.
+# A validating run starts no client, so CHAOS_LOAD says nothing to it.
 if [ "${CHAOS_LOAD:-1}" = 0 ] && [ "${CHAOS_VALIDATE:-0}" != 1 ]; then
 	echo "CHAOS_LOAD is 0, and the client that retries is the experiment. Skipping."
 	exit 77
@@ -112,42 +29,21 @@ seed
 pause=${CHAOS_STORM_PAUSE:-0.5}
 retry=${CHAOS_STORM_RETRY:-2}
 
-# **How few keys the client writes over and over, which is the whole of what makes divergence
-# reachable.** A key written once has one value, so no fault can leave two copies of it holding two
-# different things — the store would have to invent bytes. A key written a hundred times has a
-# hundred, and every one of them after the first arrives at a copy that already holds something
-# under that key, which is the half of `import_records` that **decides between two records** rather
-# than the half that takes a file whole. Eight is enough to land in several partitions, and so
-# under several leaders and several owners, while staying small enough to read every copy of back.
+# Eight is enough to land in several partitions, and so under several leaders and several owners,
+# while staying small enough to read every copy of back.
 hot_keys=${CHAOS_STORM_KEYS:-8}
 
-# A fresh key every so many, which is the other population and a different mechanism: a copy that
-# is **missing** a key catches up by a reconcile fetch taking a file whole, where a copy that is
-# **stale** catches up by the version comparison. Neither covers the other.
 spread=${CHAOS_STORM_SPREAD:-10}
-
-# ALBTargetGroup in cloudformation.yaml: HealthCheckIntervalSeconds 10, UnhealthyThresholdCount 2.
-# Twenty seconds is the longest a target can be chosen after it stopped answering, and the five on
-# top of it is a request that was already in flight when the last check failed.
-grace=${CHAOS_STORM_GRACE:-25}
-
+grace=${CHAOS_STORM_GRACE:-20}
 rolls=${CHAOS_STORM_ROLLS:-2}
 between=${CHAOS_STORM_SETTLE:-20}
-
-# **How long a node is held out of the membership, and it is the number that makes or breaks this
-# experiment.** A node is dropped by its peers when its lease runs out, so anything at or below the
-# ten seconds is a fault that never takes a copy out of the write path at all; what matters after
-# that is how many writes the cluster takes while it is gone, because that is how far behind its
-# copy falls. Six leases at a write every CHAOS_STORM_PAUSE is a copy behind by a hundred or so.
 hold=${CHAOS_STORM_HOLD:-60}
 
 # ---------------------------------------------------------------------------- the client
 
 # The load the harness keeps is not this one, so this experiment starts its own and hands the two
 # process ids to the harness variables: stop_load is what ends them, from the exit trap as well as
-# from here. The difference is the whole experiment — **a write is retried until it is taken** —
-# and the reads are kept with the moment they were made, because what excuses a failed read is when
-# it happened and nothing else.
+# from here.
 storm_stamp=
 storm_reads=0
 storm_answered=0
@@ -171,12 +67,6 @@ storm_reader()
 			2*) continue ;;
 		esac
 
-		# Who refused, which the status alone does not say. A 404 is the database: the API
-		# answers one with no body at all, and every key read here exists. Everything else is
-		# told apart by the document — nginx answers 500, 502, 503 and 504 out of
-		# server/50x.json, whose code is `unavailable` and means the database on that node was
-		# not there, and what carries no document at all is the load balancer answering for a
-		# target that is not either.
 		body=${answered%$'\n'*}
 
 		if [ "$code" = 404 ]; then
@@ -193,11 +83,8 @@ storm_reader()
 	done
 }
 
-# storm_put <key> <value> [deadline] — a write, retried until the cluster takes it. **The retry
-# writes the same bytes again**, never a new value: a write that was refused may still have been
-# taken by one copy, and what puts the other copies right is that exact record arriving again. A
-# retry carrying something else would be a second value for the key rather than a repair of the
-# first. Without a deadline it never gives up, which is the client this experiment is; stop_storm
+# storm_put <key> <value> [deadline] — a write, retried with the same bytes until the cluster takes
+# it. Without a deadline it never gives up, which is the client this experiment is; stop_storm
 # passes one, because a run cannot hang on a cluster that is never coming back.
 storm_attempts=0
 storm_seconds=0
@@ -232,17 +119,6 @@ storm_put()
 # below is that every write it issued was taken, and a queue of its own would be a second answer to
 # that in the client rather than in the cluster. The cost is that a cluster refusing every write is
 # a client hammering one key, which is the load that fault has.
-#
-# Two populations, and they are two different mechanisms:
-#
-#   hot-<stamp>-<k>     a few keys, a new value every time round        the version comparison
-#   storm-<stamp>-<i>   a fresh key every `spread` writes, written once  a file taken whole
-#
-# A hot key is what can diverge. Its copies hold a succession of values, so a fault that leaves one
-# copy behind leaves it holding something **different** from the others rather than holding
-# nothing — and what has to put that right is `record::is_newer` deciding between the record a
-# reconcile file carries and the record the store already has under that key. Nothing else here
-# reaches that: a key written once is a key every lagging copy is simply missing.
 storm_writer()
 {
 	local n=0 i=0 k
@@ -275,9 +151,6 @@ start_storm()
 {
 	local dropped created
 
-	# Dropped and made again, as start_load does it: the table holds this experiment's writes and
-	# nothing else, so the walk that reads every copy of it back grows with the experiment rather
-	# than with everything that ran before it.
 	dropped=$(status --request DELETE "$base/table/$load_table")
 
 	case $dropped in
@@ -315,9 +188,7 @@ start_storm()
 }
 
 # stop_storm <timeout> — the loops are stopped, and then whatever the writer was stopped holding
-# is finished. Every write it ever issued is one the cluster acknowledged afterwards, which is what
-# every assertion below is entitled to ask about all of them for — and, for a hot key, what makes
-# the **last** value it was told had been taken a thing every copy has to end up holding.
+# is finished.
 stop_storm()
 {
 	local deadline=$((SECONDS + $1)) key k n outstanding
@@ -399,19 +270,13 @@ storm_report()
 
 # ---------------------------------------------------------------------------- the read assertion
 
-# storm_excuse <from> <seconds> <what> — the window in which a read that was not answered 2xx is
-# the load balancer still choosing a target it has not yet been told to stop choosing. It opens
-# when the fault was applied and closes <seconds> after the call that applied it came back, which
-# for a kill is after the node is answering again: the whole of that is a node that is down.
+# storm_excuse <from> <seconds> <what> — a window in which a read that was not answered 2xx is
+# excused.
 storm_excuse()
 {
 	printf '%s %s %s\n' "$1" "$((EPOCHSECONDS + $2))" "$3" >> "$work/windows"
 }
 
-# **No read failed.** Every failure is kept with the moment it happened, and a failure inside one
-# of the windows above is counted and printed rather than asserted on — outside them there is
-# nothing left to blame but the database, which is why this is the one assertion about reads in
-# the suite.
 expect_reads_held()
 {
 	local failed outside excused
@@ -468,12 +333,7 @@ expect_reads_held()
 
 # ---------------------------------------------------------------------------- the write assertions
 
-# expect_storm_kept <when> — every key the client issued reads back the value it wrote. There is no
-# key here the cluster is entitled to have lost: every one of them was acknowledged, which is a
-# write every copy took, and nothing in this experiment terminates an instance.
-#
-# The readback is one curl over one connection rather than a request a process, as load_survivors
-# does it: the client issues thousands of keys over an experiment this long.
+# expect_storm_kept <when> — every key the client issued reads back the value it wrote.
 expect_storm_kept()
 {
 	local taken lost=0 wrong=0 key code attempt
@@ -533,21 +393,9 @@ expect_storm_kept()
 		"$(awk 'BEGIN { worst = 0 } $3 > worst { worst = $3 } END { print worst + 0 }' "$work/taken")"
 }
 
-# expect_hot_settled <when> — **the divergence assertion, and the reason the client hammers a few
-# keys.** Every node is asked what it holds of the load table in its own store, and two things have
-# to be true of it: no key is held at two different values, and every hot key holds the last value
-# the cluster acknowledged for it.
-#
-# It is given CHAOS_CONVERGE, and **that is the difference between this and `copies_agree`**. There,
-# every key is written once and never again, so two copies holding two values is a cluster that
-# invented one and no amount of waiting would put it right — the question can be asked the moment
-# the load stops. Here a copy that was out of the membership for a write legitimately holds the
-# value before it, and what brings it up to date is the reconcile fetch its rejoining starts:
-# `import_records` walking the file against what the store already holds and keeping whichever
-# `record::is_newer` says. So lagging is allowed and **staying behind is not**, and the budget is
-# what tells them apart. A copy still holding an older value when it runs out is divergence that
-# nothing in the cluster would ever repair: there is no read repair, no anti-entropy, and a
-# reconcile pass moves the records whose owner moved.
+# expect_hot_settled <when> — every node is asked what it holds of the load table in its own store:
+# no key may be held at two different values, and every hot key has to hold the last value the
+# cluster acknowledged for it.
 expect_hot_settled()
 {
 	local deadline=$((SECONDS + converge)) id key expected disagreed count wrong values
@@ -599,11 +447,7 @@ expect_hot_settled()
 
 		wrong=$(grep -c . "$work/hot.wrong") || wrong=0
 
-		# **What the first walk found is the evidence that anything was under test.** The whole
-		# experiment rests on a fault having left a copy holding an older value, and a run where
-		# the very first walk finds every copy already in agreement is one where the faults never
-		# produced that — so the repair this asserts on was never asked to do anything. It is a
-		# measurement taken once and then asserted on below, and not a reason to go round again.
+		# What the first walk found is measured once, and is not a reason to go round again.
 		if [ -z "$behind" ]; then
 			behind=$((count + wrong))
 		fi
@@ -626,12 +470,6 @@ expect_hot_settled()
 	expect_not "$(grep -c . "$work/hot.expected")" 0 \
 		"the client got writes taken for the keys it wrote over and over"
 
-	# What the first walk found, **reported and not asserted on**. It is tempting to fail a run in
-	# which no copy was behind here — a repair that repaired nothing asserted nothing — but this
-	# walk happens after the recovery waits, which are minutes, and a reconcile that finished
-	# inside them is the mechanism working rather than a fault that never landed. The assertion
-	# that the fault made a stale copy at all is made **while the fault stands**, where it can
-	# only mean the one thing: `the cut off zone is holding older values` in round one.
 	printf '  ---- %s of %s keys were behind or disagreed on the first walk, settled in %ss\n' \
 		"${behind:-0}" "$(grep -c . "$work/hot.expected")" "$caught"
 
@@ -681,12 +519,7 @@ expect_hot_read()
 }
 
 # expect_storm_replicated <when> — every zone holds every key the client issued, and no key is in
-# two stores of one zone. It is the half copies_agree cannot see: a copy that is **missing** a key
-# is not a disagreement, and a zone that was cut off missed every write taken while it was gone.
-#
-# What fetches them is the reconcile pass that a rejoining node's membership change starts, and it
-# fetches every partition this node owns from a holder in each zone rather than only the ones whose
-# owner moved — so it is given CHAOS_CONVERGE the way expect_copies is.
+# two stores of one zone.
 expect_storm_replicated()
 {
 	local deadline=$((SECONDS + converge)) zone missing short duplicates
@@ -738,19 +571,12 @@ expect_storm_replicated()
 }
 
 # storm_lagging <a zone> <another zone> — how many hot keys those two zones hold at **different**
-# values in their own stores. It is asked while one of them is out of the write path, and it is the
-# one observation that says the experiment is testing anything at all: the repair asserted on
-# afterwards is the repair of exactly this, and a run where this is zero is a run where the faults
-# never overlapped the writes and every assertion after it passes over nothing.
+# values in their own stores.
 #
 # **It compares zones and not nodes, because a node is not a copy.** A zone holds a copy of the
 # whole keyspace and its two nodes split it, and the split is hashed inside each zone — so two
 # nodes picked out of two zones can hold disjoint halves and agree about nothing by holding nothing
 # in common. Both nodes of each zone are walked and the answers put together, which is the copy.
-#
-# Non-zero here is not a failure. It is the state the design says being out of the membership
-# leaves behind — a copy that missed the writes taken while it was gone — and what is under test is
-# that it does not survive the zone coming back.
 storm_lagging()
 {
 	local one=$1 other=$2 id
@@ -783,16 +609,8 @@ storm_lagging()
 		| awk '$2 != $3 { print $1 }' | sort -u | grep -c .
 }
 
-# storm_catchup <zone> — **how long that zone takes to hold the last acknowledged value of every
-# hot key again**, once the rule keeping it out of the membership has gone. It is the one number
-# the experiment could not answer before: every walk it makes afterwards is minutes later, so a
-# store that had already caught up and one that caught up instantly read the same.
-#
-# It asks the two nodes of the zone for the hot keys **by key**, in one Run Command, carrying
-# X-Asyncdb-Forwarded so each answers out of its own store. That is eight reads where a walk of the
-# table is 256 partitions and the better part of a minute, which is what makes it fine enough to
-# time anything. The floor of what it can measure is one Run Command, so what it reports is a
-# ceiling and never the mechanism's own latency.
+# storm_catchup <zone> — how long that zone takes to hold the last acknowledged value of every hot
+# key again, once the rule keeping it out of the membership has gone.
 #
 # What it compares against moves, deliberately: the client is still writing, so the last value it
 # was told had been taken is read fresh every sample, and read **before** the nodes are asked. A
@@ -868,10 +686,6 @@ expect "$count" 6 "the stack is running six database nodes"
 expect "${#zones[@]}" 3 "in three availability zones"
 { [ "$count" = 6 ] && [ "${#zones[@]}" = 3 ]; } || { verdict; exit 1; }
 
-# Which zone plays which part. **No fault here touches two of them at once**: the zone that is cut
-# off keeps its containers, the zone whose containers are killed keeps its network, and the third
-# is whole throughout the first two rounds — which is the zone that answers every read while they
-# stand, because a zone with both its nodes serving holds a copy of every key.
 cut_zone=${zones[0]}
 kill_zone=${zones[1]}
 third_zone=${zones[2]}
@@ -879,32 +693,14 @@ third_zone=${zones[2]}
 cut_subnet=$(instances asyncdb | awk -v z="$cut_zone" '$2 == z { print $3; exit }')
 victim=$(zone_nodes "$kill_zone" | head -1)
 
-# The cut off side stays reachable over Run Command, which is what lets it be asked what it holds
-# while it is cut: the acl is between zones and leaves IPv6 alone, and that is how Systems Manager
-# still answers there.
-
 echo "  $cut_zone is the zone that is cut off, $kill_zone is where the containers are killed,"
 echo "  and $victim is the instance that is stopped."
 
-# The rule that takes a node out of the membership, and it is etcd-unreachable's and not
-# nodes-go-deaf's. **The difference is the whole reason this experiment changed.** A rule on what
-# *arrives* for port 8080 leaves the node renewing its lease, so it stays in the membership and
-# refuses every write that needs it — which is a cluster that stalls, and a copy that is never
-# behind. A rule on what the container *sends* to etcd stops the renewal: the node leaves the
-# membership within a lease, the other zones go on taking writes without it, and its copy falls
-# behind by every one of them. That is the state this experiment exists to repair.
-#
 # Nothing else on a database node is forwarded to 2379, so the port alone names etcd.
 deaf_match="-p tcp --dport 2379"
 deaf=()
 
 # storm_isolate <what> <instance>... — those nodes lose etcd, and are **held** that way.
-#
-# A kill is not this fault and cannot be made into it: a container is back inside two seconds,
-# which is well inside the ten second lease, so the node never leaves the membership at all — the
-# writes it missed are refused rather than taken, the client retries them, and the node takes the
-# retry on its way back. Measured on the first run of this experiment: thirteen kills, every one
-# of them `answering again after 2s`, and not one lagging copy in the whole storm.
 storm_isolate()
 {
 	local what=$1 from=$EPOCHSECONDS
@@ -912,9 +708,6 @@ storm_isolate()
 
 	deaf=("$@")
 
-	# The seconds here are the ceiling the script on the instance sleeps for, and nothing else:
-	# what ends this fault is storm_rejoin, as soon as the round is done with it. It is generous
-	# because a fault that expired mid-round would be a false pass rather than a weaker test.
 	if ! blackhole "$((hold + 300))" "$deaf_match" "$@"; then
 		result 1 "$what lost etcd"
 		deaf=()
@@ -927,8 +720,7 @@ storm_isolate()
 	printf '  ---- %s, and it is held for %ss, which is %s leases\n' "$what" "$hold" "$((hold / lease))"
 }
 
-# storm_rejoin — the rule taken away, and the nodes let back in holding a store that is behind by
-# every write the cluster took while they were out of it.
+# storm_rejoin — the rule taken away.
 storm_rejoin()
 {
 	[ "${#deaf[@]}" != 0 ] || return 0
@@ -940,27 +732,18 @@ storm_rejoin()
 
 # ---------------------------------------------------------------------------- the fault
 
-# The storm, and it is the whole of the fault: three rounds, each of them two faults standing at
-# once, applied while the client is reading and writing. Nothing here waits a fault out — each one
-# is taken away as soon as the round it belongs to is done, which is what lets the next round land
-# on a cluster that is short of something else.
 inject()
 {
 	local from node roll zone pair lagging behind caught
 
-	# ---- One. A zone cut off, and the containers of another zone killed under it, one node at a
-	# time so that the zone never loses both copies it holds at once. The cut zone falls out of
-	# the membership on its lease, so the writes the client is retrying are taken by two zones —
-	# and the cut zone is holding a store that is missing every one of them by the time it is let
-	# back in.
+	# ---- One. A zone cut off, and etcd taken from another zone's nodes under it one node at a time,
+	# so that zone never loses both copies it holds at once.
 	echo "  Round one: cutting off $cut_zone, then taking etcd from $kill_zone's nodes under it."
 
 	from=$EPOCHSECONDS
 
 	zone_cut "$cut_subnet" "$cut_zone" || return 1
 
-	# The isolated side answers /health as normal until it has decided it is unled, which it
-	# cannot do sooner than a membership lease, and only then can its health check start failing.
 	storm_excuse "$from" "$((grace + lease))" "$cut_zone was cut off"
 
 	sleep "$onset"
@@ -975,13 +758,6 @@ inject()
 
 	storm_report "while $cut_zone was cut off and $kill_zone was losing etcd under it"
 
-	# **The precondition, observed rather than assumed.** The client has been writing new values to
-	# the hot keys throughout, and the cut zone can take none of them: it can reach no etcd, so it
-	# leaves the membership on its lease, and a write needs every copy of the membership it is
-	# ordered against — which is now the two zones that are left. So the isolated side is holding
-	# the values it had when it went, and the majority side is holding the ones since. If that is
-	# not true here, the faults never overlapped the writes and every assertion after this one
-	# passes over nothing.
 	lagging=$(storm_lagging "$cut_zone" "$third_zone") || lagging=
 
 	if [ -z "$lagging" ]; then
@@ -996,16 +772,12 @@ inject()
 
 	zone_heal
 
-	# What the cut zone has to do now is catch up on every write it missed, and the pass that does
-	# it starts from the membership change its rejoining is. The round after this one lands on
-	# top of that, deliberately.
+	# The round after this one lands on top of the cut zone catching up, deliberately.
 	await '(.zones | length) == 3 and (.nodes | length) == 6' "$settle" \
 		"$cut_zone rejoined once it was let back in"
 
-	# ---- Two. An instance stopped — which the group answers by terminating it and launching a
-	# replacement, an empty store and a rebuild — and a container killed in the third zone while
-	# that is happening. The zone that was cut off in round one is whole here and answers the
-	# reads.
+	# ---- Two. An instance stopped, and etcd taken from a node of the third zone while it goes. The
+	# zone that was cut off in round one is whole here and answers the reads.
 	echo "  Round two: stopping $victim, and taking etcd from a node of $third_zone while it goes."
 
 	from=$EPOCHSECONDS
@@ -1031,10 +803,7 @@ inject()
 	await '(.nodes | length) == 6 and (.zones | length) == 3' "$recovery" \
 		"the group replaced the stopped instance and it rejoined"
 
-	# ---- Three. Every container of one zone killed at once, a zone at a time, round and round.
-	# A zone that loses both its nodes loses the copy it holds, so **every write in the cluster is
-	# refused for as long as it is down** — a write needs every copy — and what the client does
-	# about that is the whole point of it.
+	# ---- Three. Every node of one zone held out of the membership, a zone at a time, round and round.
 	for (( roll = 1; roll <= rolls; roll++ )); do
 		for zone in "${zones[@]}"; do
 			mapfile -t pair < <(zone_nodes "$zone")
@@ -1051,11 +820,6 @@ inject()
 				# copy out of the write path — is the same answer every pass round.
 				[ "$roll" = 1 ] || { storm_rejoin; sleep "$between"; continue; }
 
-				# **A whole zone out of the membership is a whole copy of the keyspace going
-				# behind**, and this is where that is checked rather than assumed: a node of the
-				# zone that is out against a node of one that is not, while it is still out. The
-				# isolated nodes are reachable over Run Command throughout — the rule names one
-				# port and Systems Manager is not on it.
 				lagging=$(storm_lagging "$zone" "$(other_zone "$zone")") || lagging=
 
 				if [ -z "$lagging" ]; then
@@ -1071,11 +835,7 @@ inject()
 
 			storm_rejoin
 
-			# **The convergence, timed**, and only on the pass that measured the divergence: the
-			# rule has just gone, the zone is holding a store that is behind by every write the
-			# other two took while it was out, and what closes that gap is the reconcile pass its
-			# rejoining starts. Everything else here looks at the stores minutes later, by which
-			# time a cluster that took a second and one that took two minutes read alike.
+			# Timed on the pass that measured the divergence alone.
 			if [ "$roll" = 1 ]; then
 				read -r behind caught <<< "$(storm_catchup "$zone")"
 
@@ -1098,8 +858,7 @@ inject()
 # Every round takes its own fault away as it ends, so this is the run that died holding one. **The
 # rule is cleared from every node and not only from the ones this run recorded**: a run that died
 # between installing one and writing down where is a run whose record is short, and a node left
-# unable to reach etcd is a node out of the membership for good. Deleting a rule that is not there
-# is nothing, which is what makes it safe from a heal that runs twice.
+# unable to reach etcd is a node out of the membership for good.
 heal()
 {
 	local stopped ids
@@ -1156,10 +915,6 @@ expect_reads_held
 
 expect_storm_kept "while the faults overlapped"
 
-# What the readback above cannot see. It is answered by whichever copy has the key, so it says a
-# write survived somewhere; this asks each node out of its own store. The seeded table is not
-# asked: every write to it is the same value, so two copies of one of its keys cannot differ
-# whatever happened to them, which is exactly the reason the client here writes as it does.
 expect_hot_settled "once the storm was over"
 
 expect_hot_read "once the storm was over"

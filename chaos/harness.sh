@@ -7,20 +7,6 @@
 # and writing throughout so that the fault lands on a cluster that is serving, and a verdict. This
 # file owns all four, so that an experiment script is the fault and the assertions and nothing
 # else.
-#
-# Everything is an environment variable, as in perf/. The defaults are the deployed stack:
-#
-#   CHAOS_STACK        the CloudFormation stack under test          asyncdb
-#   CHAOS_URL          the address to drive, if not the Url output of the stack
-#   CHAOS_TABLE        the table the suite seeds and reads          chaos
-#   CHAOS_RECORDS      how many records it seeds                    200
-#   CHAOS_SETTLE       how long a membership change is given        150 seconds
-#   CHAOS_RECOVERY     how long an instance replacement is given    600 seconds
-#   CHAOS_ONSET        how long a started fault is given to bite    20 seconds
-#   CHAOS_CONVERGE     how long a resized cluster is given to move   300 seconds
-#                      the records whose owner changed
-#   CHAOS_LOAD         0 for an experiment against an idle cluster    1
-#   CHAOS_LOAD_PAUSE   seconds between the load's writes              0.2
 
 set -u
 
@@ -38,10 +24,6 @@ recovery=${CHAOS_RECOVERY:-600}
 onset=${CHAOS_ONSET:-20}
 converge=${CHAOS_CONVERGE:-200}
 
-# The lease is ten seconds and it is renewed every three, so a node that stops answering is out
-# of the membership within one of them. Everything here that waits for a membership to change
-# waits for CHAOS_SETTLE, which is that lease with the load balancer's own health check — thirty
-# second interval, two failures — allowed for on top of it.
 lease=10
 
 work=$(mktemp -d)
@@ -94,10 +76,7 @@ instances()
 		--output text | sort
 }
 
-# Run Command is how a private instance is asked anything: the runner is outside the VPC and
-# only the load balancer answers it, so a single node's own view of itself — which is the whole
-# diagnostic in doc/runbook — is unreachable over HTTP. It is best effort by design: an instance
-# that cannot be asked is reported and not asserted on.
+# Best effort by design: an instance that cannot be asked is reported and not asserted on.
 ssm_run()
 {
 	local id=$1 command
@@ -123,11 +102,6 @@ ssm_run()
 # ssm_run in a loop is the same command a wait apart, and a wait is most of a minute over six
 # nodes: what one send buys is a fault that lands everywhere within a second or two of itself
 # rather than a rolling one, and an answer from every node about one moment rather than six.
-#
-# It is every instance or none. send-command refuses a batch that names one instance it does not
-# know, and taking that one out of the batch — which is right for a question, and every_node_whole
-# does it — is wrong for a fault: a kill that quietly skipped a node is a weaker fault reported as
-# the whole one.
 ssm_all()
 {
 	local command=$1 id sent silent=0
@@ -179,12 +153,7 @@ node_status()
 	ssm_run "$1" "curl -s -o /dev/null --max-time 15 -w '%{http_code}' 'http://localhost:8080$2'"
 }
 
-# Whether every node holds what it owns. `incomplete` is a node's own state — a rebuild that did
-# not read the whole of its share — and the load balancer answers from whichever node it picked,
-# so a sampled health check is one that may never land on the node that is short. Every node is
-# asked instead, and **a node that cannot be asked is a failed assertion and not a node that is
-# whole**, which is the rule collect_holdings is written to for the same reason: a silent empty
-# answer would say the opposite of what happened.
+# Whether every node holds what it owns.
 #
 # One Run Command to the whole tier rather than one for each, because the wait is the cost and
 # there is no reason to pay it six times. The agent is asked first for the same reason may_run
@@ -279,11 +248,7 @@ status()
 	curl --silent --output /dev/null --max-time 15 --write-out '%{http_code}' "$@"
 }
 
-# answer <curl argument>... — the status of a request, with what a refusal said kept beside it. The
-# status is what an assertion counts and it is all the status can say: a write refused because one
-# copy of the key did not answer is a 500 whichever copy it was, and the sentence the server sends
-# with it names that node and what curl made of it. A bare code is evidence the run already had and
-# threw away.
+# answer <curl argument>... — the status of a request, with what a refusal said kept beside it.
 #
 # Only what did not answer 2xx is kept. The body of a 2xx here is a seeded value and nothing is
 # read of it.
@@ -316,8 +281,6 @@ reason()
 	message=$(printf '%s' "$2" | jq --exit-status --raw-output '.error.message' 2> /dev/null) \
 		|| message=$(printf '%s' "$2" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//' | cut -c 1-200)
 
-	# A status the server answers on its own carries no body — a 404 for a key a copy does not
-	# hold, or a transfer that never answered at all — and the code has said the whole of it.
 	[ -n "$message" ] || return 0
 
 	printf '%s %s\n' "$1" "$message" >> "$work/reasons"
@@ -417,9 +380,7 @@ readable()
 	echo "$missing"
 }
 
-# expect_codes <pattern> <description> — every status the check before this recorded matches. How a
-# request was refused says as much as how many were: a key no copy holds is a 404 and a cluster that
-# cannot answer at all is not, and a count of failures alone cannot tell them apart.
+# expect_codes <pattern> <description> — every status the check before this recorded matches.
 expect_codes()
 {
 	local unexpected
@@ -582,8 +543,7 @@ codes()
 }
 
 # reasons — what the refusals behind a failed assertion said, a line each and counted, with the
-# one most of them said first. Nothing when every refusal carried no body, which is what a status
-# the API answers on its own — a 404 from a copy that does not hold the key — looks like here.
+# one most of them said first.
 reasons()
 {
 	[ -s "$work/reasons" ] || return 0
@@ -675,35 +635,10 @@ scan_status()
 
 # ---------------------------------------------------------------------------- what a node holds
 
-# The one question in this file that cannot be put through the load balancer, and the only way to
-# see what a resize actually moved. A read through the load balancer is answered by whichever copy
-# has the key — the owner, or another zone when the owner holds nothing — so it says a record
-# exists somewhere and never where. A **scan carrying the forwarded header is answered where it
-# lands**, which makes it that node's own share rather than its zone's merged answer: it is the
-# request a rebuild makes of each node of a zone, asked here over Run Command.
-#
-# Two invariants follow from doc/database/cluster.md, and between them they are the whole of what a
-# resize has to leave behind:
-#
-#   every zone holds the same keys        a zone holds a copy of the whole keyspace, so two zones
-#                                         naming different keys is a copy that is short
-#   no key is held twice inside a zone    a zone's nodes split the copy it holds, so a key in two
-#                                         of their stores is a node that kept what it stopped owning
-#
-# A thousand is the largest page the API allows. Ten of them is above what the load writes in the
-# longest experiment here — a write every CHAOS_LOAD_PAUSE seconds for as long as two stack updates
-# take.
-#
-# **A scan reads one partition, so a walk of a table is a scan of each of the 256 in turn** — all
-# of them in the one Run Command, because Run Command is seconds a call however small the call is.
-# A partition holds a 256th of a node's share, so this limit is a page apiece with room to spare,
-# and a partition that does not fit in one page is a walk that says so rather than one that
-# silently compares part of a table: `holdings_pages` is gone with the paging it bounded.
+# A thousand is the largest page the API allows, and a partition that does not fit in one page is a
+# walk that says so rather than one that silently compares part of a table.
 holdings_limit=1000
 
-# What `aws ssm get-command-invocation` answers with: the first 24,000 characters the command wrote
-# to stdout, and nothing to say the rest was cut. A page of a table is longer than that at a few
-# hundred records, which is what walk_store packs it for.
 ssm_output_limit=24000
 
 holdings_asked=0
@@ -713,16 +648,7 @@ holdings_total=0
 forwarded_header=X-Asyncdb-Forwarded
 
 # walk_store <instance> <table> <values> <jq filter> — that node's own store, the filter applied to
-# every record it holds, sorted. A scan carrying the forwarded header is served where it lands, so
-# what comes back is that node's own share and not the merged answer its zone would give. Non-zero
-# when the node could not be asked, which is not the same answer as a node that holds nothing.
-#
-# **The node packs the page and this unpacks it**, because Run Command carries ssm_output_limit
-# characters of what was printed and says nothing about having cut the rest — and a document with
-# no end is not JSON, so a page over that limit reads as a node that said nothing at all. The keys
-# and values of one table compress by better than an order of magnitude, which is what keeps a page
-# one Run Command apiece rather than one per few hundred records: Run Command is seconds a call
-# however small the call is, and every node is asked once a page.
+# every record it holds, sorted. Non-zero when the node could not be asked.
 #
 # `values` is false for a walk that needs the keys alone, and that is the limit rather than the
 # bandwidth: a table whose values are kilobytes is a page that does not fit however few records it
@@ -741,9 +667,9 @@ walk_store()
 
 	: > "$work/keys"
 
-	# One Run Command for the whole table: the instance walks the partitions with curl, prints a
-	# page a line, and packs the lot. A partition nothing is held in is a line with no records in
-	# it, which costs a seek and a few bytes.
+	# The instance walks the partitions with curl, prints a page a line, and packs the lot. A
+	# partition nothing is held in is a line with no records in it, which costs a seek and a few
+	# bytes.
 	#
 	# The whole walk is bounded rather than each call, because two hundred and fifty six timeouts
 	# is an hour of Run Command and a node that is not answering should be one failed assertion.
@@ -791,9 +717,7 @@ holdings()
 	walk_store "$1" "${2:-$table}" false '.key'
 }
 
-# collect_holdings [table] — every node asked, into one file each named by the zone it is in. A node
-# that cannot be asked is counted rather than passed over: a silent empty answer would make both
-# assertions below say the opposite of what happened.
+# collect_holdings [table] — every node asked, into one file each named by the zone it is in.
 collect_holdings()
 {
 	local id zone name=${1:-$table}
@@ -856,9 +780,7 @@ zone_duplicates()
 	[ -z "$worst" ] || printf '%s' "${worst# }"
 }
 
-# seed_held — how many of the seeded keys are in any store at all. What a terminated instance took
-# with it is not something any mechanism in the cluster puts back — every copy of it went at once —
-# so this is a number and never an assertion.
+# seed_held — how many of the seeded keys are in any store at all.
 seed_held()
 {
 	local i
@@ -872,12 +794,7 @@ seed_held()
 	comm -12 "$work/seed.keys" "$work/all.keys" | grep -c .
 }
 
-# expect_copies <when> — the two invariants, given time to arrive.
-#
-# Moving records because ownership moved is work in the background and not part of the update that
-# caused it, so this waits for the cluster to converge the way await waits for a membership: what it
-# asserts is that it gets there, and CHAOS_CONVERGE is how long it is given. It is asked after the
-# shape has settled, so the seconds here are the mechanism's own and not the group's.
+# expect_copies <when> — the two invariants, given CHAOS_CONVERGE to arrive.
 expect_copies()
 {
 	local deadline=$((SECONDS + converge)) differ duplicates
@@ -913,21 +830,6 @@ expect_copies()
 
 # copies_agree <table> <when> — every node asked what it holds of that table in its own store, and
 # no key may be held at two different values.
-#
-# It is the question nothing else here puts. expect_copies compares key *sets*, so two copies of one
-# key holding two values is a pair of zones it calls identical; and every readback of the load goes
-# through the load balancer, which answers from whichever copy has the key, so a copy holding
-# something else is one nothing ever asks. A write the cluster answered 2xx was taken by every copy
-# of the key, and this is the assertion that they took the same thing.
-#
-# A copy that is *missing* a key is not a disagreement and is not counted as one. A zone that is
-# short is what expect_copies and expect_load_kept are for, and a node answering for a key it does
-# not hold would be the fault rather than the answer.
-#
-# **It needs no time to converge**, which is what separates it from expect_copies. Every key this
-# compares is written once and never again, so there is no moment at which two copies legitimately
-# hold two values — one value was ever written, and a second is a cluster that invented it. So a
-# disagreement is permanent by construction and can be asked for the moment the load stops.
 copies_agree()
 {
 	local id disagreed count
@@ -981,27 +883,6 @@ copies_agree()
 
 # ---------------------------------------------------------------------------- the load
 
-# **A fault that lands on an idle cluster is not the fault anybody has.** Every experiment here
-# keeps a client on the load balancer for the whole of itself — reads as fast as one connection
-# answers them, and a write every CHAOS_LOAD_PAUSE seconds — so the node that is stopped, cut off,
-# slowed or killed is one that was serving when it went, and what the cluster does next is
-# measured while it is still being asked for things.
-#
-# The two halves are not there for the same reason. The **reads** are what a client saw, reported
-# and never asserted on: they are of the seeded keys, every one of which exists, so a read that is
-# not answered 2xx is the fault and never the key — and how many of them a fault costs is the load
-# balancer's health check interval as much as the database. The **writes** are the assertion no
-# error code can make: a write answered 2xx was taken by every copy of the key, so every one of
-# them has to still be there when the fault is over. Each key is written once and never again,
-# because a key written twice could read back either value with nothing wrong.
-#
-# **The load writes into a table of its own**, and that is not tidiness. A write that is *refused*
-# may still have been taken by one copy — the copies of a write are written beside each other
-# rather than in turn — and nothing here puts the rest of it back: there is no read repair, no
-# anti-entropy, and a reconcile pass moves the records whose owner moved. So a load running into
-# the seeded table would leave the zones holding different keys, which is what expect_copies
-# asserts they do not. Measured on a two zone cluster killed twice over: twenty-seven keys apart,
-# every one of them a write the client was told had failed, and no fewer three minutes later.
 load_table=$table-load
 load_stamp=
 load_mark=0
@@ -1014,11 +895,7 @@ start_load()
 
 	[ "${CHAOS_LOAD:-1}" = 0 ] && { echo "CHAOS_LOAD is 0, so nothing is reading or writing."; return 0; }
 
-	# **Dropped and made again, so the table holds this experiment's writes and nothing else.** What
-	# the writes of the experiment before it were worth was asserted while it ran, and a table that
-	# keeps them is one every later copies_agree walks through — a walk that grows with the share
-	# rather than with the experiment, over Run Command, a node at a time. Dropping a table is the
-	# only thing here that erases a record, and 404 is the first experiment of a run finding none.
+	# 404 is the first experiment of a run finding no table to drop.
 	dropped=$(status --request DELETE "$base/table/$load_table")
 
 	case $dropped in
@@ -1086,14 +963,7 @@ stop_load()
 	writer=
 }
 
-# load_report <description> — what the load saw since the last report, which is what makes these
-# lines a phase of the experiment rather than a running total: an experiment reports once while
-# the fault is standing and again for what came after it.
-#
-# Reported and never asserted on, both halves. A read during the window in which the load balancer
-# has not yet noticed a dead target is a read it sends to one, and a write refused while a copy of
-# its key is missing is the design rather than a fault — what is asserted about the writes is
-# expect_load_kept, and it is about the ones that were taken.
+# load_report <description> — what the load saw since the last report.
 load_report()
 {
 	local reads answered writes taken lines
@@ -1117,10 +987,8 @@ load_report()
 # many no copy answers for, how many answer something other than what was written, and how many of
 # the **refused** writes are readable anyway.
 #
-# The readback is one curl over one connection rather than a request a process, because an
-# experiment that waited for instances acknowledged thousands of them: a loop spawning curl a key
-# at a time is minutes where this is seconds. Only what did not answer 2xx is asked again one at a
-# time, because a read is answered by one copy and the load balancer picks which node is asked.
+# Only what did not answer 2xx is asked again one at a time, because a read is answered by one copy
+# and the load balancer picks which node is asked.
 load_survivors()
 {
 	local n key code attempt taken lost=0 wrong=0 stray=0
@@ -1174,9 +1042,6 @@ load_survivors()
 		esac
 	done < "$work/missed"
 
-	# And the other side of a refused write, which is a measurement and never an assertion: the
-	# copies of a write are written beside each other, so a write the client was told had failed is
-	# one a copy may have taken. Nothing in the cluster puts the rest of its copies back.
 	while read -r n; do
 		case $(status "$base/table/$load_table/key/load-$load_stamp-$n") in
 			2*) stray=$((stray + 1)) ;;
@@ -1188,15 +1053,7 @@ load_survivors()
 
 # expect_load_kept <description> — the load is stopped, what it last saw is reported, and **every
 # write the cluster acknowledged is still there, holding what was written, and holding it on every
-# copy that has it**. It is the claim the whole load exists to make, and it is an assertion for
-# every fault that breaks nothing permanently.
-#
-# The readback and copies_agree are two halves of one claim and neither is the other. The readback
-# is answered by one copy, so it says a 2xx write survived somewhere; copies_agree asks each node
-# out of its own store, so it says the copies of it survived as one record. A fault that left the
-# copies of an acknowledged write holding two values would pass the first and fail the second, and
-# nothing in the cluster would ever repair it — there is no read repair and no anti-entropy, and a
-# reconcile pass moves the records whose owner moved rather than the ones that disagree.
+# copy that has it**.
 expect_load_kept()
 {
 	local taken lost wrong stray
@@ -1217,10 +1074,7 @@ expect_load_kept()
 	load_strays "$stray"
 }
 
-# report_load_kept <description> — the same, counted and never asserted on. It is for the three
-# faults that **terminate** instances: a key whose owner in every zone went in the same update went
-# with them, and nothing in the cluster puts that back — no rebuild of a copy, and no backup. What
-# is asserted there instead is the shape of the answer, which expect_codes does.
+# report_load_kept <description> — the same, counted and never asserted on.
 report_load_kept()
 {
 	local taken lost wrong stray
@@ -1246,11 +1100,9 @@ report_load_kept()
 	load_strays "$stray"
 }
 
-# load_strays <how many of the refused writes were readable> — the other side of a refused write,
-# and the reason the load has a table of its own. The copies of a write are written beside each
-# other, so a write the client was told had failed is one a copy may have taken — and nothing here
-# puts the rest of its copies back. Only the first two hundred are asked about, because this is a
-# measurement and a fault that refuses thousands would otherwise be read back twice.
+# load_strays <how many of the refused writes were readable> — the other side of a refused write.
+# Only the first two hundred are asked about, because this is a measurement and a fault that refuses
+# thousands would otherwise be read back twice.
 load_strays()
 {
 	local refused asked
@@ -1315,11 +1167,7 @@ shape()
 		| jq -c '[ (.nodes | length), (.zones | length), ([ .zones[] | length ] | unique) ]'
 }
 
-# What the auto scaling groups have tried lately, reported and never asserted on. A membership
-# that never arrived and an instance that was never launched read the same from outside, and this
-# is the only thing that tells them apart: /health says the shape the cluster has and the group
-# says the shape it wants, and neither of them says why the two differ. A launch the account had
-# no room for is a failed activity here and nothing at all anywhere else.
+# What the auto scaling groups have tried lately, reported and never asserted on.
 scaling_activities()
 {
 	local logical group
@@ -1451,16 +1299,11 @@ expect_not()
 #   preflight  asks whether inject would work, without applying anything — chaos/validate.sh
 #
 # Every fault here is applied with the AWS CLI directly. Nothing is passed to a service that
-# would apply it on the suite's behalf, and nothing but heal takes one away, which is why heal
-# is called by the exit trap as well as by the experiment: a run that dies holding a fault is
-# a run that still removes it.
+# would apply it on the suite's behalf, and nothing but heal takes one away.
 
 # fault_start — apply the fault, or say why not.
 fault_start()
 {
-	# Validating is asking every question an experiment asks of the account and applying
-	# nothing: the targets are resolved, the permissions are dry run, and the script stops
-	# here. chaos/validate.sh is this mode over every experiment.
 	if [ "${CHAOS_VALIDATE:-0}" = 1 ]; then
 		preflight
 		verdict
@@ -1482,9 +1325,7 @@ fault_start()
 	sleep "$onset"
 }
 
-# fault_stop — the assertions are done, so take the fault away rather than sit and watch its
-# own timer expire. Every experiment that calls this follows it with the recovery it asserts on,
-# which is the check that the fault actually went: none of it is taken on trust.
+# fault_stop — the assertions are done, so take the fault away.
 fault_stop()
 {
 	[ "$standing" = 1 ] || return 0
@@ -1498,14 +1339,6 @@ fault_stop()
 
 # fault_script <seconds> <install> <remove> — the body of the AWS-RunShellScript command that
 # carries a fault onto an instance: install it, hold it, take it away.
-#
-# The detached timer is the only thing standing between a run that died and an instance left
-# holding a fault, because a cancelled Run Command runs no trap in the script it cancelled. It
-# is later than the fault itself and removing a fault that is already gone is nothing, so it
-# costs a run that ends properly nothing at all.
-#
-# **What ends a fault is fault_stop and not this script.** The timers here are minutes long: an
-# experiment that waited one out would leave every experiment after it measuring this fault.
 fault_script()
 {
 	local seconds=$1 install=$2 remove=$3
@@ -1552,8 +1385,8 @@ fault_send()
 }
 
 # fault_await <command> <instance>... — every invocation has reached its instance and is running
-# the script. A send that answered is a command the service accepted and not a fault that landed:
-# an instance the agent has not registered leaves an invocation pending until it times out.
+# the script. An instance the agent has not registered leaves an invocation pending until it times
+# out.
 fault_await()
 {
 	local command=$1 deadline=$((SECONDS + 300)) wanted=$(($# - 1)) statuses
@@ -1587,17 +1420,6 @@ fault_await()
 
 # ---------------------------------------------------------------------------- a deaf node
 
-# The rule the two experiments that need a node to stop answering install, and it is a rule of
-# our own rather than a document that blackholes a port, because asyncdb is a container behind a
-# published port: everything a peer sends it is DNATed and forwarded, so it goes through FORWARD
-# and never INPUT, and everything the container sends is forwarded too and never OUTPUT. A rule
-# in INPUT or OUTPUT blocks nothing here. DOCKER-USER is the chain docker leaves in FORWARD for
-# exactly this.
-#
-# It rejects rather than drops. A node waits thirty seconds on another node
-# (cluster::config::timeout_seconds), so a dropped packet is a node that hangs, and what these two
-# are about is a node that does not answer: a reset says so at once, the copy that does answer is
-# asked next, and node-latency is the experiment about waiting.
 blackhole_rule()
 {
 	printf '%s -j REJECT --reject-with tcp-reset' "$1"
@@ -1621,10 +1443,7 @@ blackhole()
 	fault_await "$command" "$@"
 }
 
-# blackhole_clear <iptables match> <instance>... — take the rule out over Run Command, which is
-# how this fault is actually ended: the script that installed it is sleeping, and nothing but its
-# own timer would make it stop. Deleting a rule that is not there is nothing, so this is right
-# whatever became of that script.
+# blackhole_clear <iptables match> <instance>... — take the rule out over Run Command.
 #
 # The agent answers a node that is deaf to its peers: a request the host makes to a published port
 # is translated on its way out of the host and never crosses FORWARD, which is where the rule is.
@@ -1655,11 +1474,6 @@ blackhole_clear()
 
 # ---------------------------------------------------------------------------- a slow node
 
-# The device is read out of the default route rather than named: an instance of this generation
-# is ens5 and not eth0. A root qdisc on it delays what the container sends for the same reason
-# DOCKER-USER sees what the container sends — everything the host forwards leaves through the
-# device the route names — and tc is not on the image, so it comes from the distribution
-# repositories, which is what makes this fault depend on the private subnets' route out.
 latency_remove()
 {
 	printf 'tc qdisc del dev $(ip route show default | cut -d" " -f5) root 2> /dev/null || true'
@@ -1687,16 +1501,8 @@ latency()
 	fault_await "$command" "$instance"
 }
 
-# latency_stats <instance> — what the qdisc did while it stood. netem holds a packet for the delay
-# rather than sending it, and its queue is a thousand packets, so a node sending more than that in
-# a delay's worth of time has packets **discarded** rather than delayed. That is a handshake lost
-# and not a handshake slowed, and the difference is the whole of whether a refused write was the
-# fault working as intended: a connect crosses the delay once and has two seconds
-# (cluster::config::connect_timeout_seconds) to do it in, but a retransmission is a second on top
-# of that and puts it over.
-#
-# **Read before heal, which deletes the qdisc and these counters with it.** Reported and never
-# asserted on: what the count should be is not known in advance.
+# latency_stats <instance> — what the qdisc did while it stood. Reported and never asserted on: what
+# the count should be is not known in advance.
 latency_stats()
 {
 	local shown sent
@@ -1804,18 +1610,7 @@ fill_clear()
 chaos_container='$(docker ps -a --format "{{.ID}} {{.Image}}" | awk "/asyncdb/{print \$1; exit}")'
 
 # The container's own init, killed from the host, and then waited for until the node answers again.
-#
-# **Killing the process from the host is the one thing that makes this a crash.** A signal sent
-# from inside the container cannot kill its PID 1 — the kernel drops what a namespace sends its own
-# init unless the init handles it — and a `docker kill` is a stop the daemon was asked for, which
-# it may record as manual and a restart policy does not act on. Nothing here starts the container
-# again: `docker run --restart always` is what brings it back, which is the runbook's claim rather
-# than the suite's doing.
-#
-# It then waits on the node's own port rather than on the container, which is later: a node listens
-# only once it has opened the store and joined, so a caller that waits for this is one whose next
-# kill lands on a node that was serving. The line it leaves is what a caller counts — `answering
-# again after Ns`, or `never answered again`.
+# The line it leaves is what a caller counts — `answering again after Ns`, or `never answered again`.
 container_kill_script()
 {
 	printf '%s' "id=$chaos_container"'
@@ -1840,8 +1635,7 @@ exit 1'
 }
 
 # kill_containers <instance>... — one kill to all of them at once, with what each of them said left
-# in $work/answer.<instance>. **One send and never one apiece**: sends in turn are kills a wait
-# apart, which is a rolling restart and not this fault.
+# in $work/answer.<instance>.
 kill_containers()
 {
 	ssm_all "$(container_kill_script)" "$@"
@@ -1868,9 +1662,7 @@ docker start "$id" > /dev/null 2>&1 || true'
 # ---------------------------------------------------------------------------- a zone cut off
 
 # zone_cut <subnet> <zone> — a network acl of the suite's own on that subnet, denying every other
-# zone's subnets and allowing what is left. That is the whole of "this zone cannot see the
-# others", and it is the one fault here that is not a call on an instance: nothing is asked of
-# the instances, so it works on a stack whose instances cannot be reached at all.
+# zone's subnets and allowing what is left.
 #
 # What it replaced is written down before anything is replaced, because putting the association
 # back is the only way this fault goes away.
@@ -1919,10 +1711,8 @@ zone_cut()
 	aws ec2 create-network-acl-entry --network-acl-id "$acl" --rule-number 900 \
 		--protocol -1 --rule-action allow --cidr-block 0.0.0.0/0 --egress || return 1
 
-	# IPv6 is left alone, deliberately. A node addresses its peers and etcd by the private IPv4
-	# the user data read out of IMDS, so the cut is complete without it — and the instances keep
-	# the route out that Systems Manager answers on, which is what lets the isolated side still
-	# be asked what it thinks of itself while it is cut off.
+	# IPv6 is left alone. A node addresses its peers and etcd by the private IPv4 the user data read
+	# out of IMDS, so the cut is complete without it.
 	aws ec2 create-network-acl-entry --network-acl-id "$acl" --rule-number 910 \
 		--protocol -1 --rule-action allow --ipv6-cidr-block ::/0 --ingress || return 1
 	aws ec2 create-network-acl-entry --network-acl-id "$acl" --rule-number 910 \
@@ -1962,17 +1752,6 @@ zone_heal()
 
 # ---------------------------------------------------------------------------- a resized tier
 
-# The one fault here that is applied by asking for it rather than by breaking something: the
-# database tier's shape is two parameters of the stack, Nodes and Zones, and moving either is a
-# stack update. Zones is how many copies of the keyspace there are, Nodes is how many ways a zone
-# splits the copy it holds, and the auto scaling group does the rest — it balances what it is given
-# over the subnets it spans, and an instance reads its own zone out of IMDS.
-#
-# Nothing about it is gentler than a fault an experiment injects. The records whose owner moves with
-# the membership are moved after it, on a pass of each node's own, and a node that is terminated
-# takes what only it held with it: what a resize costs is whatever went in the same update as every
-# copy of it.
-
 # stack_parameters <key=value>... — the parameter list for an update: these, and every other
 # parameter of the stack as it stands. UsePreviousValue keeps an SSM-typed parameter's name rather
 # than the tag it resolved to, so a resize deploys the version already running.
@@ -1996,9 +1775,7 @@ stack_parameters()
 	done
 }
 
-# stack_update <key=value>... — the update, waited out. The template is the one deployed and not the
-# one checked out: what is under test is the stack the pipeline stood up, and carrying this
-# checkout's template would be a second change nobody asked for.
+# stack_update <key=value>... — the update, waited out.
 stack_update()
 {
 	local parameters answer
@@ -2029,9 +1806,6 @@ stack_update()
 
 # ---------------------------------------------------------------------------- the dry runs
 
-# What an experiment's preflight is made of. Each one answers a question a full run would take
-# minutes to reach, applies nothing, and costs one API call.
-
 # may_stop <instance>... — the dry run EC2 offers. It stops nothing and answers whether these
 # credentials could.
 may_stop()
@@ -2057,8 +1831,8 @@ may_write_acls()
 	esac
 }
 
-# may_run <instance>... — Run Command has no dry run, and what actually fails is an instance
-# whose agent never registered, so this asks whether Systems Manager can see them at all.
+# may_run <instance>... — Run Command has no dry run, so this asks whether Systems Manager can see
+# them at all.
 may_run()
 {
 	local online
@@ -2074,10 +1848,6 @@ may_run()
 # may_resize <key=value>... — the dry run CloudFormation offers, which is a change set: it is the
 # update, worked out and written down, and it applies nothing until it is told to. This deletes it
 # instead.
-#
-# It answers the question a resize has to ask before it waits ten minutes to find out — whether the
-# stack standing is one whose template takes these parameters at all, which a stack created before
-# it did is not — and it answers it against the deployed template rather than the checkout.
 may_resize()
 {
 	local parameters name set status changed
@@ -2168,10 +1938,7 @@ cleanup()
 
 	stop_load
 
-	# The fault is taken away here as well as by the experiment, because an experiment that died
-	# holding one never reached its own fault_stop. It is a no-op when the fault has already
-	# gone, and $work is still standing, which is where a fault's own record of what it replaced
-	# is kept.
+	# Before $work goes, because that is where a fault's own record of what it replaced is kept.
 	fault_stop
 
 	rm -rf "$work"
