@@ -74,8 +74,8 @@ fault_start || { verdict; exit 1; }
 #
 # It is asked of a node that is still on the majority side, and not of the load balancer: nothing
 # takes a cut off node out of the load balancer until its own health check has failed twice, so
-# until then it goes on answering — with a membership of one, which is the truth about itself and
-# not about the cluster this is making a claim about.
+# until then it goes on answering — with the membership it last read, which is no longer the
+# cluster this is making a claim about.
 await_node "$witness" "(.zones | length) == 2 and (.nodes | length) == $remaining" "$settle" \
 	"a zone left the membership, leaving $remaining nodes and two copies"
 
@@ -83,12 +83,11 @@ load_report "while the zone was going away"
 
 # The point of the whole design: a read needs one copy, and two remain.
 # A node the fault cut off is still in the load balancer for as long as the health check takes to
-# notice: it holds a membership of one, so it can order no write and says so, but the acl leaves
-# its own zone alone and the load balancer node there goes on reaching it until it has failed the
-# check twice. Until then it answers for keys it does not hold, which is
-# doc/runbook/membership.md's own warning happening — so what is asserted here is the runbook's
-# actual claim, that a record survives any one zone, and the 404s from the isolated side are
-# reported beside it.
+# notice: it reaches no etcd, so it can order no write and says so, but the acl leaves its own zone
+# alone and the load balancer node there goes on reaching it until it has failed the check twice.
+# Until then it answers a read out of its own zone's copy, which it and the other node of its zone
+# hold between them — so what is asserted here is the runbook's actual claim, that a record
+# survives any one zone, and what the isolated side answered is reported beside it.
 expect_readable 60 5 "every seeded record can still be read with a zone gone"
 printf '  ---- reads with a zone gone: %s\n' "$(codes)"
 expect "$(scan_status)" 200 "a scan falls back to a copy in a zone that answers"
@@ -102,7 +101,7 @@ await_writes 20 "$settle" "every write is taken by the two zones that are left"
 # The isolated nodes are still reachable over Run Command: the interface endpoints they go
 # through have an interface in their own subnet, the fault is between zones, and the acl leaves
 # IPv6 alone, which is how they reach Systems Manager. What they say about themselves is the
-# cluster-of-one behaviour, reported rather than asserted: whether that path survives the fault
+# membership they last read, reported rather than asserted: whether that path survives the fault
 # is the network's business and not the database's.
 for isolated in $cut_off; do
 	echo "  $isolated says: $(node_health "$isolated" | jq -c '{nodes, zones, leads}' 2> /dev/null)"

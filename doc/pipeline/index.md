@@ -370,9 +370,8 @@ costs the fifteen minutes above and nothing else.
 What more stacks would buy is **isolation**: inside a share, an experiment runs
 on a cluster the one before it broke and healed. `chaos/run.sh` refuses to start
 one against a cluster that is not whole and every experiment reseeds, so what
-survives that is small — a key written while a node had
-[a membership of one](/runbook/membership#etcd-cannot-be-reached) lands in one
-zone rather than three, and the reconcile pass moves it back. Running an
+survives that is small — a write one copy took and the cluster then refused
+leaves that key in fewer zones than three. Running an
 experiment against a cluster something has already happened to is arguably the
 better test anyway.
 

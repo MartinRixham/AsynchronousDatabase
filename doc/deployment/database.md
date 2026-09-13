@@ -326,12 +326,11 @@ as nginx is up whether or not there is a database behind it. The two are started
 together by the image's `CMD nginx & ./asyncdb` and nothing makes one wait for the
 other, so checking the static file would be checking the wrong process.
 
-**It also fails on a node that is answering.** A node in a membership too small
-to claim a leader refuses every write, and after a lease it says so here with a
-`503` — [`unled`](/runbook/#health). That is the only way a load balancer can be
-told, and without it an isolated node is chosen for as long as the fault lasts:
-up, answering, refusing every write and answering `404` for keys it has never
-held. **Ten seconds and two checks** is how long that lasts — the defaults are
+**It also fails on a node that is answering.** A node etcd has stopped answering,
+or one in a membership too small to claim a leader, refuses every write, and
+after a lease it says so here with a `503` — [`unled`](/runbook/#health). That is
+the only way a load balancer can be told, and without it an isolated node is
+chosen for as long as the fault lasts: up, answering and refusing every write. **Ten seconds and two checks** is how long that lasts — the defaults are
 thirty seconds and five checks to come back, which is two and a half minutes of
 a node that is whole again being left out. The group's health check is
 [`EC2`](/runbook/deployment#the-group-does-not-replace-a-failed-application), so

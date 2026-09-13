@@ -136,6 +136,11 @@ namespace cluster
 		// choosing, so the refusal is reported where the load balancer can read it.
 		virtual bool is_unled() const = 0;
 
+		// Whether a read here would be answered wrongly: this node has no membership but itself,
+		// so it takes itself to hold every key and holds only its share. A membership etcd has
+		// stopped answering for is not that, because it is kept as it was last read.
+		virtual bool is_alone() const = 0;
+
 		// Where the membership is read from and whether this node is still in it. A membership
 		// handed in rather than registered anywhere answers a registration that was never
 		// configured.

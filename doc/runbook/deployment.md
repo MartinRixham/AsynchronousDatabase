@@ -44,9 +44,9 @@ likelihood:
    sustains itself — see below.
 2. **etcd is not up**, so nothing joined. The database still answers, so this
    does *not* cause a 502 on its own; if `/health` answers with a `nodes` naming
-   only the node that answered, that is what is happening, and reads and writes are being served by
-   [six separate cluster-of-one instances](/runbook/membership#etcd-cannot-be-reached).
-   That is worse than a 502 and looks better.
+   only the node that answered, that is what is happening: six nodes each
+   [alone](/runbook/membership#a-node-alone), answering every read `node_alone`
+   and every write `no_leader`.
 3. **The stack was created in the wrong region.** The registry
    `332187735950.dkr.ecr.eu-west-2.amazonaws.com` and the `--region eu-west-2` of
    the login are written into the user data. Deploy anywhere else and the

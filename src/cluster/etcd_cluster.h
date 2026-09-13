@@ -32,13 +32,14 @@ namespace cluster
 
 		std::string zone;
 
-		// Whether a node leading nothing takes a write anyway. A node standing alone claims no
-		// partition, because it races with nobody, so true is the lone instance that owns the
-		// whole keyspace serving writes as it always has; false is a deployment where a write is
-		// only ever ordered by a leader claimed in etcd, and a node that reaches no etcd — or
-		// stands in a membership too small to claim anything — refuses the write rather than
-		// taking one nothing ordered.
-		bool unled_writes = true;
+		// Whether a node leading nothing serves anyway. A node standing alone claims no partition,
+		// because it races with nobody, so true is the lone instance that owns the whole keyspace
+		// serving as it always has. False is a deployment where a write is only ever ordered by a
+		// leader claimed in etcd, so a node that reaches no etcd, or stands in a membership too
+		// small to claim anything, refuses the write rather than taking one nothing ordered — and
+		// a node with no membership but itself refuses a read, because what it holds is a share of
+		// the keyspace and not the whole of it.
+		bool serve_unled = true;
 
 		// How long the membership of a node outlives the node itself.
 		int64_t lease_seconds = 10;
@@ -78,6 +79,11 @@ namespace cluster
 		// count rather than a lock and a copy of every name. Written only by the membership
 		// thread. Never null once the constructor has run.
 		std::atomic<membership> member_list;
+
+		// Whether etcd answered the last read of the membership. One it did not answer for is kept
+		// as it was: its nodes are where they were, so it routes a read as well as it ever did, but
+		// the leases it was read under may have run out since, so it orders no write.
+		std::atomic<bool> answered = false;
 
 		// Atomic because health reads it: whether this node holds a lease is what says etcd
 		// answered, and the membership thread is the only one that takes or renews one.
@@ -152,6 +158,8 @@ namespace cluster
 
 		bool is_unled() const override;
 
+		bool is_alone() const override;
+
 		etcd_registration registration() const override;
 
 		bool accept(const std::string &key, int64_t term) override;
@@ -177,6 +185,9 @@ namespace cluster
 		void read_members();
 
 		void read_leaders();
+
+		// Starts the clock on standing unled, or stops it.
+		void stand_unled(bool unled);
 
 		// The membership to answer one request from. Every question about where a key lives is
 		// asked of one of these rather than of the field, so a request that asks several of them

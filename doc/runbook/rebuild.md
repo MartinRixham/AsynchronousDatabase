@@ -31,9 +31,8 @@ node that every write to its partitions fails on. Rebuilding before joining turn
 what would be a write outage into a slower start-up.
 
 It is also why the port is not open yet. A node that accepted requests before
-registering would see a membership of one, decide it owned every key, and answer
-`404` for all of them — [the cluster-of-one failure](/runbook/membership#etcd-cannot-be-reached)
-on purpose. Failing the health check while it works is the correct answer.
+registering would see a membership of one and decide it owned every key —
+[a node alone](/runbook/membership#a-node-alone), on purpose. Failing the health check while it works is the correct answer.
 
 The socket is *bound* from the start, because binding is what settles the port,
 but it does not **listen** until the rebuild is done. That distinction is the

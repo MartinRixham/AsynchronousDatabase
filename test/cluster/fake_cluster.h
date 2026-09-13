@@ -40,6 +40,8 @@ namespace cluster
 
 		bool unled_node = false;
 
+		bool alone_node = false;
+
 		etcd_registration etcd_state;
 
 		mutable std::vector<std::pair<std::string, router::request>> requests;
@@ -87,6 +89,9 @@ namespace cluster
 		// load balancer.
 		void unled();
 
+		// A node with no membership but itself, which takes itself to hold every key.
+		void alone();
+
 		// The etcd this node reads the membership from, and that it is registered there. A test
 		// that says nothing is an instance that was told no etcd at all.
 		void reads_etcd(const std::string &endpoint);
@@ -126,6 +131,8 @@ namespace cluster
 		size_t leads() const override;
 
 		bool is_unled() const override;
+
+		bool is_alone() const override;
 
 		etcd_registration registration() const override;
 

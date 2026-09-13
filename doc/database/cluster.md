@@ -44,9 +44,9 @@ ASYNCDB_ETCD=http://etcd-1:2379,http://etcd-2:2379,http://etcd-3:2379
 Name all of them. Every member of an etcd cluster answers for the whole of it,
 so a node that cannot reach the member it was using asks the next one and stays
 with whichever answered. Naming one member makes that member a single point of
-failure for the *membership* — records are still served, because a node that
-cannot reach etcd carries on as a cluster of one, but nothing learns about
-anything joining or leaving until it comes back.
+failure for the *membership* — records are still read, because a node that
+cannot reach etcd carries on with the membership it last read, but nothing is
+written and nothing learns about anything joining or leaving until it comes back.
 
 Set neither of the first two and the instance is what it has always been: one
 process owning the whole keyspace, talking to nothing. Set both and it joins;
@@ -84,9 +84,11 @@ and leaves, and etcd drops it when the lease runs out. It spends one timeout on
 this rather than one for every member, because a node being stopped has ten
 seconds before it is stopped for good.
 
-A node that cannot reach any member of etcd keeps serving the keys it holds and
-answers as a cluster of one. It is the safe way to be wrong: refusing to answer
-would turn one broken etcd into a broken database.
+A node that cannot reach any member of etcd keeps the membership it last read,
+so a read still goes to the copy that holds the key. What it gives up is ordering
+a write, because the leases that membership was read under may have run out. It
+is the safe way to be wrong: refusing to answer would turn one broken etcd into a
+broken database.
 
 Only a member that does not answer, or that answers that it is not serving, is a
 reason to try the next one. A member that refuses a request has given the answer
@@ -336,12 +338,19 @@ leader.
 An instance standing alone, or a cluster with no zones, orders nothing: there is
 one copy and nobody to race with, so a write is written where it always was.
 
-Unless it is told otherwise. `ASYNCDB_UNLED_WRITES=false` is a deployment where
+Unless it is told otherwise. `ASYNCDB_SERVE_UNLED=false` is a deployment where
 a write is taken only where a leader claimed in etcd ordered it, so an instance
-whose membership is too small to claim anything — one that reaches no etcd, and
-one that is the only node registered in it — answers `503 no_leader` to every
-write instead of taking one nothing ordered. Reads are untouched, as they are in
-every other window a leader leaves.
+whose membership is too small to claim anything, and one etcd has stopped
+answering, answers `503 no_leader` to every write instead of taking one nothing
+ordered. A node etcd has stopped answering keeps the membership it last read, so
+its reads are untouched, as they are in every other window a leader leaves.
+
+A node with **no membership but itself** is the exception — the only node
+registered in etcd, or one that has not reached etcd since it started. It takes
+itself to hold every key and holds only its share, so it answers a read or a scan
+with `503 node_alone` rather than a `404` for a record another node has. A
+request another node forwards is still answered, because what that asks is what
+this store holds.
 
 **The image sets it**, because a container is a node of a cluster: a node there
 that is alone has lost the others rather than been meant to stand by itself, and

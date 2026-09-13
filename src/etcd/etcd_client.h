@@ -57,7 +57,8 @@ namespace etcd
 		// belongs to whichever node claimed it next, and that node is leading on it.
 		bool remove(const std::string &key, const std::string &value) const;
 
-		std::map<std::string, std::string> range(const std::string &prefix) const;
+		// Nothing when etcd did not answer, which is a different answer from no key under the prefix.
+		std::optional<std::map<std::string, std::string>> range(const std::string &prefix) const;
 
 		bool revoke(int64_t lease) const;
 

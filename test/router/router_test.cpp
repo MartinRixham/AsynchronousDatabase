@@ -211,6 +211,41 @@ TEST(router_test, health_refuses_the_check_of_a_node_that_can_order_no_write)
 	EXPECT_EQ(response.json.at("write_stalled"), false);
 }
 
+// A node with no membership but itself takes itself to hold every key and holds only its share, so a
+// 404 from it may be another node's record.
+TEST(router_test, refuse_a_read_on_a_node_with_no_membership_but_itself)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster node = lone_node();
+	router::router router(repository, node);
+
+	create_table(router, "account");
+	write_record(router, "account", "4821", "a value");
+
+	node.alone();
+
+	router::response read = router.route(get("/table/account/key/4821"));
+
+	EXPECT_EQ(read.status, boost::beast::http::status::service_unavailable);
+	EXPECT_EQ(error_code(read), "node_alone");
+	EXPECT_EQ(
+		error_code(router.route(request(boost::beast::http::verb::head, "/table/account/key/4821", ""))),
+		"node_alone");
+	EXPECT_EQ(
+		error_code(router.route(get("/table/account/key?partition=" + std::to_string(cluster::partition_of("4821"))))),
+		"node_alone");
+
+	// A peer asking is asking what this store holds, which it can still say.
+	router::request forwarded = get("/table/account/key/4821");
+
+	forwarded.forwarded = true;
+
+	router::response answered = router.route(forwarded);
+
+	EXPECT_EQ(answered.status, boost::beast::http::status::ok);
+	EXPECT_EQ(answered.text, "a value");
+}
+
 TEST(router_test, list_no_tables)
 {
 	repository::fake_repository repository;

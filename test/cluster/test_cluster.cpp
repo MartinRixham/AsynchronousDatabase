@@ -155,6 +155,11 @@ bool cluster::test_cluster::is_unled() const
 	return false;
 }
 
+bool cluster::test_cluster::is_alone() const
+{
+	return false;
+}
+
 cluster::etcd_registration cluster::test_cluster::registration() const
 {
 	return etcd_registration();

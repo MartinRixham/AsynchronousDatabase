@@ -45,69 +45,50 @@ Counting the second one is the quickest answer to "has the election settled":
 ## etcd cannot be reached
 
 **This is the failure mode worth understanding before it happens**, because what
-a node does about it is deliberate, defensible, and surprising.
+a node does about it is deliberate.
 
-A node that cannot reach any member of etcd **carries on as a cluster of one**.
-It reads no membership, so it puts itself in the list, and a membership of one
-means:
+A node that cannot reach any member of etcd **carries on with the membership it
+last read**. The nodes in it are where they were a moment ago, so:
 
-- it holds **every** key, so it answers every read out of its own store —
-  including keys another node holds, for which it will answer `404`;
-- a membership of one claims no leadership, so there is nothing to order a write
-  with, and `ASYNCDB_UNLED_WRITES=false` — which
+- a read still goes to a copy that holds the key — this node's own when it
+  holds one, and otherwise the copy that membership names, which it can still
+  reach unless whatever cut it off from etcd cut it off from them too;
+- a scan is still answered by one copy of the partition it names, the same way;
+- it orders no write. The leases that membership was read under may have run
+  out since, and a leader it names may have been replaced by a node it cannot
+  hear about, so `ASYNCDB_SERVE_UNLED=false` — which
   [the image sets](/database/reference#the-cluster) — **refuses every write**
-  with `no_leader` rather than taking it with no leader and no copies;
-- it holds every partition itself, so a scan of one is answered out of its own
-  store and asks nobody;
-- a lease after that membership fell to one, `/health` answers `503` with
-  `unled` set, which is what takes the node **out of the load balancer**: it
-  goes on serving the keys it holds and answering its peers, neither of which
-  arrives that way;
+  with `no_leader` from the first pass etcd did not answer;
+- a lease after that, `/health` answers `503` with `unled` set, which is what
+  takes the node **out of the load balancer**: it goes on serving reads and
+  answering its peers, neither of which needs a leader;
 - `/health` says `etcd.registered: false`, which is this node holding no lease
-  there, and `etcd.endpoint` is the member it is asking. It is what tells this
-  apart from an etcd that answers and has nobody else registered in it, which
-  names one node just the same;
-- `/health` names **one** node, itself, in a `zones` of one zone. Not *no*
-  `nodes`: an absent `nodes` is
-  [an instance that stands alone](/database/cluster#what-each-endpoint-does-in-a-cluster),
-  one that was never given an `ASYNCDB_ETCD` to lose. A node that has lost etcd
-  puts itself in the list, and a list of one is what that looks like.
+  there, and `etcd.endpoint` is the member it is asking;
+- `/health` names the membership it last read and not a current one. The other
+  nodes dropped this one when its lease ran out, so the nodes it names no longer
+  name it.
 
-Reading on and refusing to write is the safe way to be wrong: an isolated node
-goes on serving what it holds, so one broken etcd is not a broken database, and
-the writes that would have been written nowhere else are the half it gives up.
-**What is left is wrong answers rather than wrong data, for as long as the node
-is still being chosen.** A node still taking client traffic answers `404` for
-keys it has never held and serves what it last held for the rest, and neither is
-a `5xx` the load balancer or a client can tell apart from an absence. Nothing it
-answers is repaired by anything; what it missed, it misses. The `unled` health
-check is what closes that window — a lease, and then as many failed checks as
-the target group asks for — and it is the only thing that does: a node in this
-state is up, answering and wrong, which is invisible to everything else.
+Reading on and refusing to write is the safe way to be wrong: one broken etcd is
+not a broken database, and the writes that would have been written nowhere else
+are the half it gives up. **What is left is stale answers, for as long as the
+node is still being chosen.** The rest of the cluster stops writing to it within
+a lease, so a key it holds a copy of is answered with the value it last took.
+The `unled` health check is what closes that window — a lease, and then as many
+failed checks as the target group asks for.
 
 **When it is every node, nothing is taken out.** A target group with no healthy
 target left in it is one the load balancer sends to all of them, so etcd lost
-altogether is a cluster that goes on serving what it holds rather than a cluster
-nothing can reach. That is [etcd has lost quorum](#etcd-has-lost-quorum), and it
-is the load balancer's behaviour rather than this database's.
-
-**And nothing takes it out of service for you.** The load balancer's health check
-is `/asyncdb/health`, which answers `200` whatever the membership says — `status`
-is always `ok`, and a cluster of one is a node that is serving perfectly well by
-that measure. So an isolated node stays in the target group, goes on being routed
-to, and answers `404` for every key it does not hold. Taking it out is step 2
-below and it is a hand's work, not the load balancer's.
+altogether is a cluster that goes on serving reads rather than a cluster nothing
+can reach. That is [etcd has lost quorum](#etcd-has-lost-quorum), and it is the
+load balancer's behaviour rather than this database's.
 
 **Do:**
 
 1. `/health` on every node. A node whose `etcd.registered` is `false` has lost
-   etcd — `etcd.endpoint` is the member it was asking — and its `nodes` names
-   only itself; the ones that still hold a registration have not. A `nodes` of
-   one where the registration *is* still held is an etcd that answers and has
-   nobody else in it, which is the other nodes gone rather than this one
-   isolated. It goes on reporting a non-zero `leads` — the partitions it last
-   claimed — so `leads` does not fall to zero to tell you.
-2. Take that node out of service if it is behind the load balancer, or stop it.
+   etcd — `etcd.endpoint` is the member it was asking — and the ones that still
+   hold a registration have not. It goes on reporting a non-zero `leads` — the
+   partitions it last claimed — so `leads` does not fall to zero to tell you.
+2. Take that node out of service if the load balancer has not, or stop it.
    Its keys are held in every other zone and reads carry on without it.
 3. Fix etcd — see below — and let the node re-register. It re-registers from
    scratch on the pass after a renewal fails rather than believing it is still a
@@ -134,11 +115,34 @@ replaced, and two of the three answering is the tier working as intended.
 A member that *refuses* a request rather than failing to answer is not a reason
 to try the next one: it has given the answer the whole cluster would give.
 
+## A node alone
+
+A node that **reaches** etcd and finds nobody registered there but itself — or
+one that has not reached etcd since it started, and so has no membership to keep
+— puts itself in the list, and a membership of one is a node that takes itself
+to hold every key. It holds only its share, so with `ASYNCDB_SERVE_UNLED=false`:
+
+- a read or a scan is answered `503 node_alone`, rather than a `404` for a
+  record another node has. A request another node forwards is still answered,
+  because what that asks is what this store holds;
+- every write is refused with `no_leader`, because a membership of one claims no
+  leadership;
+- a lease later `/health` answers `503` with `unled` set, and names **one**
+  node, itself. Not *no* `nodes`: an absent `nodes` is
+  [an instance that stands alone](/database/cluster#what-each-endpoint-does-in-a-cluster),
+  one that was never given an `ASYNCDB_ETCD` at all.
+
+`etcd.registered` is what says which of the two it is. `true` is an etcd that
+answers and has nobody else in it, which is the other nodes gone rather than this
+one isolated; `false` is a node that has never reached etcd, and
+[etcd cannot be reached](#etcd-cannot-be-reached) is the page.
+
 ## etcd has lost quorum
 
-Two of three members gone. The survivor answers reads of already-committed keys
-but takes no writes, so leases stop being renewed, membership keys expire, and
-every node falls back to the cluster-of-one behaviour above within ten seconds.
+Two of three members gone. The survivor cannot answer for the membership without
+a quorum, so no lease is renewed and no node can read who the others are: every
+node carries on with [the membership it last read](#etcd-cannot-be-reached),
+serving reads and refusing every write, and is unled within ten seconds.
 
 **This is the one etcd failure [the group](/deployment/etcd#the-group) does not
 heal**, and it fails loudly rather than quietly. The replacements it launches ask
@@ -165,8 +169,8 @@ lease of stale membership.
 `ASYNCDB_ETCD` is
 [read once at boot](/deployment/etcd#how-the-database-tier-finds-it), so after
 all three etcd instances have been replaced, every running asyncdb node holds
-three addresses that answer nothing and is
-[a cluster of one](#etcd-cannot-be-reached). One database instance at a time,
+three addresses that answer nothing and
+[cannot reach etcd](#etcd-cannot-be-reached). One database instance at a time,
 letting each come back before the next goes.
 
 ## A replacement etcd instance did not join
@@ -242,7 +246,7 @@ Reads never wait for a leader, which is why this presents as a write-only outage
 | Sums to 256 | Settled. Every partition is led |
 | Sums to less, and rising | A cold cluster still claiming. 64 per node per pass — wait a pass or two |
 | `0` everywhere, not rising | No node can write to etcd. Claims are transactions, so a read-only etcd claims nothing |
-| `0` on a node whose `nodes` names only itself | It reaches no etcd, and `ASYNCDB_UNLED_WRITES=false` refuses a write nothing ordered. It is [etcd cannot be reached](#etcd-cannot-be-reached), seen from a node that has lost the membership rather than from etcd |
+| `0` on a node whose `nodes` names only itself | etcd names nobody else, or this node has never reached it, and `ASYNCDB_SERVE_UNLED=false` refuses a write nothing ordered. It is [a node alone](#a-node-alone) |
 | Sums to 256 but a write still says `no_leader` | The leader of that partition is a node this one cannot reach, or the two disagree about the membership |
 | Sums to 256, and a node that just joined leads none of it | The nodes the membership stopped naming have not given those claims up yet. Two passes, so seconds — longer, and they cannot write to etcd |
 | Sums to 256, and one node leads far more of it than the others | The membership those nodes read does not agree. `leads` is worked out from the same hashing on every node, so an even split is what agreement looks like |

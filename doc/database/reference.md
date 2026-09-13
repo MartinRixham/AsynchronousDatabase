@@ -51,6 +51,7 @@ status — is what a client should branch on.
 | `write_stalled` | 503 | RocksDB is applying back pressure |
 | `no_leader` | 503 | No node is [leading this key's partition](/database/cluster#one-leader-for-each-partition) — or, for a table create or delete, [the tables](/database/cluster#the-tables-are-led-too) — yet. Run the write again |
 | `node_incomplete` | 503 | The node asked holds less than it owns, so it cannot say the key is missing, or that a table is not there. A read is asked of the next copy instead, and a table delete is refused rather than ordered; `/health` names the node it came from |
+| `node_alone` | 503 | The node asked has no membership but itself — etcd names nobody else, or has not answered it since it started — so it takes itself to hold every key and holds only its share. A read or a scan is refused rather than answered `404` for a record another node has. Only where [`ASYNCDB_SERVE_UNLED`](#the-cluster) is `false`; ask another node |
 | `stale_leader` | 409 | The write was ordered by a node that has since been replaced. Run it again |
 | `storage_error` | 500 | RocksDB returned an error |
 | `unavailable` | 500, 502, 504 | The nginx in front of the database answered instead of it. This one is the proxy's, not the server's — it is what a client sees while an instance is starting, once its container has stopped, or when a body too large to hold in memory could not be [spooled onto a full disk](/runbook/storage#the-disk-is-filling) |
@@ -78,7 +79,7 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 | `ASYNCDB_ETCD` | Where etcd answers. One base URL, or every member of the etcd cluster separated by commas. Unset is one instance on its own |
 | `ASYNCDB_NODE` | This node as the other nodes reach it. Unset is one instance on its own |
 | `ASYNCDB_ZONE` | The availability zone this node is in. Every zone holds [one copy of every record](/database/cluster#one-copy-in-every-zone). Unset is one zone, which is one copy |
-| `ASYNCDB_UNLED_WRITES` | Whether an instance that [leads nothing](/database/cluster#what-a-write-and-a-read-do) takes a write anyway. Default true, which is the lone instance writing what it is given; `false` refuses the write with `no_leader` unless a leader claimed in etcd ordered it, and is what the image sets. It is also what makes `/health` answer `503` once a node has been unable to order a write for a lease, so that a load balancer stops choosing it |
+| `ASYNCDB_SERVE_UNLED` | Whether an instance that [leads nothing](/database/cluster#what-a-write-and-a-read-do) serves anyway. Default true, which is the lone instance serving what it is given; `false` is what the image sets. It refuses a write with `no_leader` unless a leader claimed in etcd ordered it — so while etcd is not answering too — and refuses a read or a scan with `node_alone` on a node with no membership but itself. It is also what makes `/health` answer `503` once a node has been unable to order a write for a lease, so that a load balancer stops choosing it |
 
 | Variable | Is |
 | --- | --- |

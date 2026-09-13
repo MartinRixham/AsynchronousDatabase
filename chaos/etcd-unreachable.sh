@@ -1,18 +1,14 @@
 #! /usr/bin/env bash
 
-# One node loses etcd and carries on as a cluster of one.
+# One node loses etcd and carries on with the membership it last read.
 #
 #   doc/runbook/membership.md#etcd-cannot-be-reached
 #
 # A single database node has its path to etcd blackholed, and nothing else about it changes. It
-# reads no membership, so it puts itself in the list; a membership of one means it holds every
-# key, answers every read out of its own store — 404 included, for keys it has never seen — and
-# leads nothing, so it refuses every write rather than taking one no leader ordered.
-#
-# The runbook calls that the safe way to be wrong, and then says what is left of it: nothing here
-# takes the node out of the load balancer, so it goes on being routed to and goes on answering
-# for keys it has never held. This experiment is what shows both halves, which is why it is worth
-# running even though nothing about it fails.
+# can read no membership, so it keeps the one it had: its nodes are where they were, so a read it
+# is given still goes to the copy that has the key. What it gives up is ordering writes, because
+# the leases that membership was read under may have run out, so it refuses every write rather
+# than taking one no leader ordered, and a lease later it takes itself out of the load balancer.
 #
 # It differs from etcd-quorum-lost.sh in the direction the fault points. There, etcd is broken
 # for everyone; here, one node is broken for etcd, and the rest of the cluster carries on
@@ -25,7 +21,7 @@
 
 source "$(dirname "$0")/harness.sh"
 
-banner "One node loses etcd" "It becomes a cluster of one, and re-registers by itself when etcd comes back."
+banner "One node loses etcd" "It keeps the membership it last read, and re-registers by itself when etcd comes back."
 
 setup
 seed
@@ -64,32 +60,24 @@ fault_start || { verdict; exit 1; }
 # the load balancer picks whichever instance it likes, and five of the six are fine. It is waited
 # for rather than asked once, because what it is waiting on is a renewal that has to fail before
 # there is anything to see, and the lease is ten seconds.
-await_node "$isolated" '(.nodes | length) == 1' "$settle" \
-	"the isolated node reports a membership of one, which is how this is recognised"
+await_node "$isolated" '.etcd.registered == false and (.nodes | length) == 6' "$settle" \
+	"the isolated node lost its registration and kept the membership it last read"
 
-# And a membership of one is a node that can order no write, so a lease later it says so on the
-# only channel the load balancer reads. It goes on serving the keys it holds and answering its
-# peers, neither of which arrives this way.
+# And a node that can order no write says so a lease later, on the only channel the load balancer
+# reads. It goes on serving reads and answering its peers, neither of which needs a leader.
 await_node "$isolated" '.unled' "$settle" \
 	"the isolated node reports itself unled, which is what takes it out of the load balancer"
 
 # From the other five it is a node that stopped renewing, so it is gone within a lease. A sample
-# that hits the isolated node itself is the one that has no nodes field, and both answers are
-# the state this is looking for.
-await '((.nodes | length) == 5) or ((.nodes | length) == 1)' "$settle" \
+# that hits the isolated node itself still names the six it last read, and says it holds no
+# registration.
+await '((.nodes | length) == 5) or (.etcd.registered == false)' "$settle" \
 	"the other nodes dropped it from the membership when its lease ran out"
 
-# The half of the runbook page that is a warning rather than a description, and the window it
-# lives in. The node takes itself out of service, but only the health check carries that and the
-# load balancer routes to it until the check has failed twice — and what it answers meanwhile for
-# a key it has never held is a 404 rather than a question asked of the copies that have it. How
-# many of these reads fall inside that window is the check's interval and not a claim about the
-# database, so it is counted and never asserted on.
-missed=$(read_check 60)
-printf '  ---- %s of 60 reads answered something other than 2xx\n' "$missed"
-
-[ "$missed" -gt 0 ] \
-	&& echo "  ---- a node that has lost etcd and is still being chosen, exactly as documented"
+# Every seeded record is written once, so a copy the isolated node holds is as good as any, and a
+# key it holds no copy of is asked of a node that has one. A read the load balancer sends it while
+# its health check is still failing is answered like any other.
+expect_reads 60 "every read of a seeded record is answered while a node has lost etcd"
 
 load_report "while one node had lost etcd"
 

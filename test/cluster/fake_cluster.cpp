@@ -225,6 +225,16 @@ bool cluster::fake_cluster::is_unled() const
 	return unled_node;
 }
 
+void cluster::fake_cluster::alone()
+{
+	alone_node = true;
+}
+
+bool cluster::fake_cluster::is_alone() const
+{
+	return alone_node;
+}
+
 void cluster::fake_cluster::reads_etcd(const std::string &endpoint)
 {
 	etcd_state.configured = true;

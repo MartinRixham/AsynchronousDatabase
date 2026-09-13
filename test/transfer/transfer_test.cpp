@@ -140,6 +140,11 @@ namespace
 			return false;
 		}
 
+		bool is_alone() const override
+		{
+			return false;
+		}
+
 		::cluster::etcd_registration registration() const override
 		{
 			return ::cluster::etcd_registration();

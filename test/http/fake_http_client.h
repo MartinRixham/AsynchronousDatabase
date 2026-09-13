@@ -39,6 +39,9 @@ namespace http
 		// matches is the one given, so the one asking for a body goes in first.
 		void answer(const std::string &url, const std::string &containing, const response &response);
 
+		// Stops answering at a URL, which is etcd going away under a node that was reading it.
+		void forget(const std::string &url);
+
 		response send(const request &request, long timeout_seconds) const override;
 
 		std::vector<response> send_all(const std::vector<request> &request_list, long timeout_seconds) const override;

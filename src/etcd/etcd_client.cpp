@@ -226,17 +226,29 @@ bool etcd::client::remove(const std::string &key, const std::string &value) cons
 		response->at("succeeded").as_bool();
 }
 
-std::map<std::string, std::string> etcd::client::range(const std::string &prefix) const
+std::optional<std::map<std::string, std::string>> etcd::client::range(const std::string &prefix) const
 {
 	boost::json::object request { { "key", base64::encode(prefix) },
 								  { "range_end", base64::encode(range_end(prefix)) } };
 
 	std::optional<boost::json::object> response = call("kv/range", request, true);
+
+	if (!response)
+	{
+		return std::nullopt;
+	}
+
 	std::map<std::string, std::string> values;
 
-	if (!response || !response->contains("kvs") || !response->at("kvs").is_array())
+	// The gateway leaves the field out of a range that found nothing.
+	if (!response->contains("kvs"))
 	{
 		return values;
+	}
+
+	if (!response->at("kvs").is_array())
+	{
+		return std::nullopt;
 	}
 
 	const boost::json::array &pairs = response->at("kvs").as_array();

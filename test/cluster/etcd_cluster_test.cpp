@@ -377,8 +377,8 @@ TEST(etcd_cluster_test, report_no_registration_when_no_etcd_is_configured)
 	EXPECT_FALSE(cluster.registration().configured);
 }
 
-// A node that cannot reach etcd is a cluster of one rather than a node that refuses to answer, so
-// it keeps serving the keys it holds.
+// A node that has never reached etcd has no membership to keep, so it puts itself in the list rather
+// than standing in none.
 TEST(etcd_cluster_test, be_a_member_of_its_own_cluster_when_etcd_is_not_there)
 {
 	http::fake_client http;
@@ -617,13 +617,13 @@ namespace
 
 		std::string previous_node;
 
-		std::string previous_unled_writes;
+		std::string previous_serve_unled;
 
 	public:
 		environment():
 			previous_etcd(getenv("ASYNCDB_ETCD") == NULL ? "" : getenv("ASYNCDB_ETCD")),
 			previous_node(getenv("ASYNCDB_NODE") == NULL ? "" : getenv("ASYNCDB_NODE")),
-			previous_unled_writes(getenv("ASYNCDB_UNLED_WRITES") == NULL ? "" : getenv("ASYNCDB_UNLED_WRITES"))
+			previous_serve_unled(getenv("ASYNCDB_SERVE_UNLED") == NULL ? "" : getenv("ASYNCDB_SERVE_UNLED"))
 		{
 		}
 
@@ -631,7 +631,7 @@ namespace
 		{
 			set("ASYNCDB_ETCD", previous_etcd);
 			set("ASYNCDB_NODE", previous_node);
-			set("ASYNCDB_UNLED_WRITES", previous_unled_writes);
+			set("ASYNCDB_SERVE_UNLED", previous_serve_unled);
 		}
 
 		environment(const environment &) = delete;
@@ -714,33 +714,33 @@ TEST(etcd_cluster_test, stand_alone_when_only_etcd_is_named)
 	EXPECT_FALSE(cluster::from_environment().is_clustered());
 }
 
-TEST(etcd_cluster_test, take_a_write_no_leader_ordered_when_the_environment_says_nothing)
+TEST(etcd_cluster_test, serve_unled_when_the_environment_says_nothing)
 {
 	environment environment;
 
-	environment.set("ASYNCDB_UNLED_WRITES", "");
+	environment.set("ASYNCDB_SERVE_UNLED", "");
 
-	EXPECT_TRUE(cluster::from_environment().unled_writes);
+	EXPECT_TRUE(cluster::from_environment().serve_unled);
 }
 
-TEST(etcd_cluster_test, refuse_a_write_no_leader_ordered_when_the_environment_says_so)
+TEST(etcd_cluster_test, refuse_to_serve_unled_when_the_environment_says_so)
 {
 	environment environment;
 
-	environment.set("ASYNCDB_UNLED_WRITES", "false");
+	environment.set("ASYNCDB_SERVE_UNLED", "false");
 
-	EXPECT_FALSE(cluster::from_environment().unled_writes);
+	EXPECT_FALSE(cluster::from_environment().serve_unled);
 }
 
 // A value that is not one this understands is a deployment that has said nothing rather than one
 // that has turned the flag off.
-TEST(etcd_cluster_test, take_a_write_no_leader_ordered_when_the_environment_says_something_else)
+TEST(etcd_cluster_test, serve_unled_when_the_environment_says_something_else)
 {
 	environment environment;
 
-	environment.set("ASYNCDB_UNLED_WRITES", "no");
+	environment.set("ASYNCDB_SERVE_UNLED", "no");
 
-	EXPECT_TRUE(cluster::from_environment().unled_writes);
+	EXPECT_TRUE(cluster::from_environment().serve_unled);
 }
 
 // A node claims the partitions the membership names it to lead, and the one that created the key
@@ -847,7 +847,7 @@ TEST(etcd_cluster_test, lead_nobody_when_the_instance_stands_alone_and_a_write_m
 	cluster::config config;
 
 	config.node = one;
-	config.unled_writes = false;
+	config.serve_unled = false;
 
 	cluster::forwarder forwarder(http);
 	cluster::etcd_cluster cluster(config, http, forwarder);
@@ -869,7 +869,7 @@ TEST(etcd_cluster_test, report_itself_unled_once_it_has_stood_alone_for_a_lease)
 	cluster::config config;
 
 	config.node = one;
-	config.unled_writes = false;
+	config.serve_unled = false;
 	config.lease_seconds = 0;
 
 	cluster::forwarder forwarder(http);
@@ -889,7 +889,7 @@ TEST(etcd_cluster_test, report_itself_led_until_it_has_stood_alone_for_a_lease)
 	cluster::config config;
 
 	config.node = one;
-	config.unled_writes = false;
+	config.serve_unled = false;
 
 	cluster::forwarder forwarder(http);
 	cluster::etcd_cluster cluster(config, http, forwarder);
@@ -904,7 +904,7 @@ TEST(etcd_cluster_test, report_itself_led_while_it_stands_in_a_membership)
 	http::fake_client http;
 	cluster::config config = configuration(one, "a");
 
-	config.unled_writes = false;
+	config.serve_unled = false;
 	config.lease_seconds = 0;
 
 	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
@@ -935,6 +935,212 @@ TEST(etcd_cluster_test, report_itself_led_when_a_write_needs_no_leader)
 	cluster.start();
 
 	EXPECT_FALSE(cluster.is_unled());
+}
+
+// A membership etcd has stopped answering for is kept as it was last read. Its nodes are where they
+// were a moment ago, so a read routed by it reaches the copy that has the key, where a membership of
+// this node alone would answer every key out of a store holding only its share.
+TEST(etcd_cluster_test, keep_the_membership_it_last_read_when_etcd_stops_answering)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
+
+	answer_etcd(&http, members);
+
+	cluster::config config = configuration(one, "a");
+
+	config.serve_unled = false;
+	config.lease_seconds = 1;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	size_t before = passes(http);
+
+	http.forget("/v3/kv/range");
+
+	ASSERT_TRUE(wait_for_passes(http, before + 2));
+
+	EXPECT_EQ(names(cluster.members()), names(members));
+	EXPECT_FALSE(cluster.is_alone());
+
+	cluster.stop();
+}
+
+// The leases that membership was read under may have run out since, so the leader it names may have
+// been replaced by a node this one cannot hear about.
+TEST(etcd_cluster_test, lead_nothing_while_etcd_does_not_answer_for_the_membership)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
+	std::string key = key_led_by(members, one);
+
+	answer_leaders(&http, { { cluster::partition_of(key), one } });
+	answer_etcd(&http, members);
+
+	cluster::config config = configuration(one, "a");
+
+	config.serve_unled = false;
+	config.lease_seconds = 1;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	ASSERT_TRUE(cluster.leader(key).has_value());
+	ASSERT_TRUE(cluster.leader(key)->known);
+
+	size_t before = passes(http);
+
+	// The claims can still be read and the membership cannot.
+	http.forget("/v3/kv/range");
+	answer_leaders(&http, { { cluster::partition_of(key), one } });
+
+	ASSERT_TRUE(wait_for_passes(http, before + 2));
+
+	std::optional<cluster::leadership> led = cluster.leader(key);
+
+	ASSERT_TRUE(led.has_value());
+	EXPECT_FALSE(led->known);
+
+	cluster.stop();
+}
+
+TEST(etcd_cluster_test, take_a_write_no_leader_ordered_while_etcd_does_not_answer_when_serving_unled)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
+	std::string key = key_led_by(members, one);
+
+	answer_leaders(&http, { { cluster::partition_of(key), one } });
+	answer_etcd(&http, members);
+
+	cluster::config config = configuration(one, "a");
+
+	config.lease_seconds = 1;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	ASSERT_TRUE(cluster.leader(key).has_value());
+
+	size_t before = passes(http);
+
+	http.forget("/v3/kv/range");
+	answer_leaders(&http, { { cluster::partition_of(key), one } });
+
+	ASSERT_TRUE(wait_for_passes(http, before + 2));
+
+	EXPECT_FALSE(cluster.leader(key).has_value());
+
+	cluster.stop();
+}
+
+TEST(etcd_cluster_test, report_itself_unled_once_etcd_has_not_answered_for_a_lease)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
+
+	answer_etcd(&http, members);
+
+	cluster::config config = configuration(one, "a");
+
+	config.serve_unled = false;
+	config.lease_seconds = 0;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	EXPECT_FALSE(cluster.is_unled());
+
+	size_t before = passes(http);
+
+	http.forget("/v3/kv/range");
+
+	ASSERT_TRUE(wait_for_passes(http, before + 2));
+
+	EXPECT_TRUE(cluster.is_unled());
+
+	cluster.stop();
+}
+
+TEST(etcd_cluster_test, stand_alone_when_etcd_names_this_node_and_no_other)
+{
+	http::fake_client http;
+	cluster::config config = configuration(one, "a");
+
+	config.serve_unled = false;
+
+	answer_etcd(&http, { cluster::member { one, "a" } });
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	EXPECT_TRUE(cluster.is_alone());
+
+	cluster.stop();
+}
+
+// A node that has never read a membership has none to keep, and holds only the share it held when
+// it last had one.
+TEST(etcd_cluster_test, stand_alone_when_etcd_has_never_answered)
+{
+	http::fake_client http;
+	cluster::config config = configuration(one, "a");
+
+	config.serve_unled = false;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	EXPECT_EQ(names(cluster.members()), std::vector<std::string> { one });
+	EXPECT_TRUE(cluster.is_alone());
+
+	cluster.stop();
+}
+
+TEST(etcd_cluster_test, stand_alone_and_serve_when_serving_unled)
+{
+	http::fake_client http;
+
+	answer_etcd(&http, { cluster::member { one, "a" } });
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+
+	cluster.start();
+
+	EXPECT_FALSE(cluster.is_alone());
+
+	cluster.stop();
+}
+
+// An instance that was never clustered owns the whole keyspace, so there is no share to be short of.
+TEST(etcd_cluster_test, never_stand_alone_when_never_clustered)
+{
+	http::fake_client http;
+	cluster::config config;
+
+	config.node = one;
+	config.serve_unled = false;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	EXPECT_FALSE(cluster.is_alone());
 }
 
 // A cluster whose leaders cannot be read from etcd is a partition that is led by nobody, which is

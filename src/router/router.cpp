@@ -49,6 +49,12 @@ namespace
 			"node_incomplete", "This node holds less than it owns, so it cannot say a key is missing.");
 	}
 
+	router::response node_alone()
+	{
+		return router::error_response(
+			"node_alone", "This node has no membership but itself, so it cannot say which node holds a key.");
+	}
+
 	router::response method_not_allowed(const boost::beast::http::verb &method)
 	{
 		return router::error_response(
@@ -458,6 +464,14 @@ router::response router::router::route_record(
 		return error_response(record.code, record.message);
 	}
 
+	// A node with no membership but itself answers every key out of a store holding its share, so
+	// its 404 may be another node's record. A peer forwarding here is asking what this store holds,
+	// which it can still say.
+	if (request.method != boost::beast::http::verb::put && !request.forwarded && nodes.is_alone())
+	{
+		return node_alone();
+	}
+
 	// A node that came up short of its share is a node whose tables may be the ones it never
 	// read, so what it does not hold is unknown to it rather than absent.
 	if (!repository.has_table(name))
@@ -746,6 +760,11 @@ router::response router::router::delete_table(const request &request, const std:
 
 router::response router::router::scan_records(const request &request, const std::string &name)
 {
+	if (!request.forwarded && nodes.is_alone())
+	{
+		return node_alone();
+	}
+
 	if (!repository.has_table(name))
 	{
 		return table_not_found(name);

@@ -1,16 +1,15 @@
 #! /usr/bin/env bash
 
-# etcd loses quorum, and every database node falls back to being a cluster of one.
+# etcd loses quorum, and every database node carries on with the membership it last read.
 #
 #   doc/runbook/membership.md#etcd-has-lost-quorum
 #   doc/runbook/membership.md#etcd-cannot-be-reached
 #
-# Two of the three etcd members are stopped. The survivor answers reads and takes no writes, so
-# leases stop being renewed and every membership key expires — and a database node that can read
-# no membership puts itself in the list and believes it holds every key. It answers reads out of
-# its own store, for keys it has never held included, and refuses every write: a membership of one
-# leads nothing, and the image forbids a write nothing ordered. This is the experiment that shows
-# both halves, and that the refusal is what keeps the wrong reads from becoming wrong data.
+# Two of the three etcd members are stopped. The survivor cannot answer for the membership without
+# a quorum, so no lease is renewed and no node can read who the others are — and a node that can
+# read no membership keeps the one it last read. It goes on routing every read to a copy that has
+# the key, and refuses every write: the leases that membership was read under may have run out,
+# and the image forbids a write nothing ordered. This is the experiment that shows both halves.
 #
 # It is deliberately the last experiment in the suite. What it leaves behind is a cluster that
 # has been briefly wrong about itself, and the pipeline deletes the stack next.
@@ -24,7 +23,7 @@
 
 source "$(dirname "$0")/harness.sh"
 
-banner "etcd loses quorum" "Every node becomes a cluster of one, and the membership comes back by itself."
+banner "etcd loses quorum" "Every node keeps the membership it last read, and the membership comes back by itself."
 
 setup
 seed
@@ -80,32 +79,26 @@ preflight()
 
 fault_start || { verdict; exit 1; }
 
-# A node that cannot read a membership does not report one. That is the whole diagnosis, and it
-# is what tells this apart from a node that is merely slow.
+# A node that cannot reach etcd holds no registration there and keeps the membership it last read.
+# That is the whole diagnosis, and it is what tells this apart from a node that is merely slow.
 #
 # It is still asked through the load balancer, and that is the one thing here that rests on the
 # load balancer's own behaviour rather than on this database's: every node can order a write no
 # more than any other, so every node fails its health check, and a target group with nothing
 # healthy left in it is one the load balancer sends to all of them. Losing etcd altogether is a
-# cluster that goes on serving what it holds, and not a cluster nothing can reach.
-await '(.nodes | length) == 1' "$settle" \
-	"every node fell back to a membership of one, which is itself"
+# cluster that goes on serving reads, and not a cluster nothing can reach.
+await '.etcd.registered == false and (.nodes | length) == 6' "$settle" \
+	"every node lost its registration and kept the membership it last read"
 
-# The half that would diverge the data, and does not: a cluster of one has nothing to order a
-# write with, and the image sets ASYNCDB_UNLED_WRITES=false, so the write is refused rather than
-# written where no leader ordered it and no copy has it.
+# The half that would diverge the data, and does not: a membership etcd is not answering for orders
+# no write, and the image sets ASYNCDB_SERVE_UNLED=false, so the write is refused rather than
+# written where no leader ordered it.
 refuse_writes 10 503 \
-	"a node with no membership refuses every write with no_leader, rather than taking it alone"
+	"a node etcd is not answering refuses every write with no_leader, rather than taking it unled"
 
-# The half that is still visible to a client. A cluster of one believes it holds every key, so it
-# answers for keys it has never seen rather than asking the copies that have them. This is reported
-# and not asserted on: it is the documented behaviour, and how much of it a client sees is how the
-# load balancer happened to spread the reads.
-missed=$(read_check 60)
-printf '  ---- %s of 60 reads of seeded records answered something other than 2xx\n' "$missed"
-
-[ "$missed" -gt 0 ] \
-	&& echo "  ---- an isolated node answering for keys it has never held, as doc/runbook/membership.md describes"
+# The half a client still has. Every node routes a read by the membership it last read, which is
+# the membership the cluster still has, so a read is answered by a copy that holds the key.
+expect_reads 60 "every read of a seeded record is answered while etcd has no quorum"
 
 load_report "while etcd had no quorum"
 

@@ -789,13 +789,15 @@ storm_lagging()
 # time anything. The floor of what it can measure is one Run Command, so what it reports is a
 # ceiling and never the mechanism's own latency.
 #
-# What it compares against moves, deliberately: the client is still writing, and the last value it
-# was told had been taken is read fresh from $work/hot every sample. A write is acknowledged only
-# once every copy has taken it, so a zone that is caught up matches whatever that is.
+# What it compares against moves, deliberately: the client is still writing, so the last value it
+# was told had been taken is read fresh every sample, and read **before** the nodes are asked. A
+# write is acknowledged only once every copy has taken it, so a zone that is caught up holds that
+# value or a later one — and a later one is what the client will have been told about by the time
+# a Run Command comes back, which is why an exact match is never the test.
 storm_catchup()
 {
 	local zone=$1 deadline=$((SECONDS + converge)) started=$SECONDS
-	local ids script behind k n
+	local ids script behind
 
 	mapfile -t ids < <(zone_nodes "$zone")
 
@@ -809,19 +811,23 @@ storm_catchup()
 done"
 
 	while :; do
-		behind=0
+		awk '{ last[$1] = $2 } END { for (k in last) print k, last[k] }' "$work/hot" \
+			> "$work/catchup.want"
 
 		if ssm_all "$script" "${ids[@]}"; then
 			cat "$work"/answer.* > "$work/catchup"
 
 			# A zone holds a copy of the whole keyspace split between its nodes, so a key is
-			# answered for by one of the two and the pair of them is the copy.
-			awk '{ last[$1] = $2 } END { for (k in last) print k, last[k] }' "$work/hot" \
-				> "$work/catchup.want"
-
-			while read -r k n; do
-				grep -qxF "$k $storm_stamp-$k-$n" "$work/catchup" || behind=$((behind + 1))
-			done < "$work/catchup.want"
+			# answered for by one of the two and the pair of them is the copy. A value is
+			# <stamp>-<key>-<n>, and the node that does not hold the key answers nothing.
+			behind=$(awk -v stamp="$storm_stamp" '
+				NR == FNR {
+					if (split($2, part, "-") == 3 && part[1] == stamp && part[2] == $1 && part[3] + 0 > held[$1] + 0)
+						held[$1] = part[3]
+					next
+				}
+				!($1 in held) || held[$1] + 0 < $2 + 0 { late++ }
+				END { print late + 0 }' "$work/catchup" "$work/catchup.want")
 		else
 			behind=$hot_keys
 		fi

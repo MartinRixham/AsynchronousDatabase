@@ -84,6 +84,8 @@ namespace cluster
 		// unable to order a write.
 		bool is_unled() const override;
 
+		bool is_alone() const override;
+
 		// A membership a test handed in is one no etcd was read for.
 		etcd_registration registration() const override;
 

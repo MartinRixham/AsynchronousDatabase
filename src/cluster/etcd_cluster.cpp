@@ -84,7 +84,7 @@ cluster::config cluster::from_environment()
 	config.endpoints = read_endpoints(environment("ASYNCDB_ETCD"));
 	config.node = environment("ASYNCDB_NODE");
 	config.zone = environment("ASYNCDB_ZONE");
-	config.unled_writes = !reads_false(environment("ASYNCDB_UNLED_WRITES"));
+	config.serve_unled = !reads_false(environment("ASYNCDB_SERVE_UNLED"));
 
 	return config;
 }
@@ -313,15 +313,16 @@ std::vector<std::string> cluster::etcd_cluster::peers() const
 
 std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::string &key) const
 {
-	if (snapshot()->size() < 2)
+	if (!answered || snapshot()->size() < 2)
 	{
-		if (configuration.unled_writes)
+		if (configuration.serve_unled)
 		{
 			return std::nullopt;
 		}
 
-		// A membership this small claims nothing, so a deployment that writes only where a leader
-		// says so is answered a leader it has not got rather than no leadership at all.
+		// A membership this small claims nothing, and one etcd did not answer for was read under
+		// leases that may have run out since, so a deployment that writes only where a leader says
+		// so is answered a leader it has not got rather than no leadership at all.
 		return leadership();
 	}
 
@@ -348,12 +349,17 @@ bool cluster::etcd_cluster::is_unled() const
 {
 	std::chrono::steady_clock::time_point since = unled_since.load();
 
-	if (configuration.unled_writes || since == std::chrono::steady_clock::time_point())
+	if (configuration.serve_unled || since == std::chrono::steady_clock::time_point())
 	{
 		return false;
 	}
 
 	return std::chrono::steady_clock::now() - since > std::chrono::seconds(configuration.lease_seconds);
+}
+
+bool cluster::etcd_cluster::is_alone() const
+{
+	return !configuration.serve_unled && configuration.is_clustered() && snapshot()->size() < 2;
 }
 
 cluster::etcd_registration cluster::etcd_cluster::registration() const
@@ -490,7 +496,17 @@ void cluster::etcd_cluster::read_leaders()
 		return;
 	}
 
-	std::map<std::string, std::string> held = etcd_client.range(configuration.leader_prefix);
+	std::optional<std::map<std::string, std::string>> held = etcd_client.range(configuration.leader_prefix);
+
+	if (!held)
+	{
+		std::unique_lock<std::shared_mutex> lock(leader_mutex);
+
+		leader_list.clear();
+
+		return;
+	}
+
 	std::map<size_t, leadership> known;
 	std::set<size_t> to_release;
 	size_t claims = 0;
@@ -501,9 +517,9 @@ void cluster::etcd_cluster::read_leaders()
 	{
 		size_t partition = (offset + i) % partition_count;
 		std::string key = configuration.leader_prefix + std::to_string(partition);
-		std::map<std::string, std::string>::const_iterator holder = held.find(key);
+		std::map<std::string, std::string>::const_iterator holder = held->find(key);
 
-		if (holder != held.end())
+		if (holder != held->end())
 		{
 			// Nothing but a lease takes a claim away, and a membership change renames the leader
 			// of a partition without any node losing its lease — so a claim outlives the
@@ -609,11 +625,28 @@ int64_t cluster::etcd_cluster::term_of(const std::string &holder, size_t partiti
 
 void cluster::etcd_cluster::read_members()
 {
-	std::map<std::string, std::string> registered = etcd_client.range(configuration.prefix);
+	std::optional<std::map<std::string, std::string>> registered = etcd_client.range(configuration.prefix);
+
+	if (!registered)
+	{
+		answered = false;
+
+		stand_unled(true);
+
+		// A node that has never read a membership has none to keep, and puts itself in the list.
+		if (snapshot()->empty())
+		{
+			member_list.store(std::make_shared<const std::vector<member>>(
+				std::vector<member> { member { configuration.node, configuration.zone } }));
+		}
+
+		return;
+	}
+
 	std::vector<member> names;
 	bool found = false;
 
-	for (std::map<std::string, std::string>::const_iterator it = registered.begin(); it != registered.end(); ++it)
+	for (std::map<std::string, std::string>::const_iterator it = registered->begin(); it != registered->end(); ++it)
 	{
 		member read = read_member(it->second);
 
@@ -632,7 +665,16 @@ void cluster::etcd_cluster::read_members()
 		names.end(),
 		[](const member &left, const member &right) { return left.node < right.node; });
 
-	if (names.size() > 1)
+	stand_unled(names.size() < 2);
+
+	member_list.store(std::make_shared<const std::vector<member>>(std::move(names)));
+
+	answered = true;
+}
+
+void cluster::etcd_cluster::stand_unled(bool unled)
+{
+	if (!unled)
 	{
 		unled_since.store(std::chrono::steady_clock::time_point());
 	}
@@ -640,6 +682,4 @@ void cluster::etcd_cluster::read_members()
 	{
 		unled_since.store(std::chrono::steady_clock::now());
 	}
-
-	member_list.store(std::make_shared<const std::vector<member>>(std::move(names)));
 }

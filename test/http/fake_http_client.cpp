@@ -2,12 +2,23 @@
 
 void http::fake_client::answer(const std::string &url, const response &response)
 {
+	std::lock_guard<std::mutex> lock(mutex);
+
 	answers.push_back(reply { url, "", response });
 }
 
 void http::fake_client::answer(const std::string &url, const std::string &containing, const response &response)
 {
+	std::lock_guard<std::mutex> lock(mutex);
+
 	answers.push_back(reply { url, containing, response });
+}
+
+void http::fake_client::forget(const std::string &url)
+{
+	std::lock_guard<std::mutex> lock(mutex);
+
+	std::erase_if(answers, [&url](const reply &answered) { return answered.url == url; });
 }
 
 http::response http::fake_client::send(const request &request, long timeout_seconds) const

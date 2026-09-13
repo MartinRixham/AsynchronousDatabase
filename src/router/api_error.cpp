@@ -20,6 +20,7 @@ namespace
 		{ "write_stalled", boost::beast::http::status::service_unavailable },
 		{ "no_leader", boost::beast::http::status::service_unavailable },
 		{ "node_incomplete", boost::beast::http::status::service_unavailable },
+		{ "node_alone", boost::beast::http::status::service_unavailable },
 		{ "stale_leader", boost::beast::http::status::conflict },
 		{ "storage_error", boost::beast::http::status::internal_server_error },
 		{ "not_found", boost::beast::http::status::not_found },

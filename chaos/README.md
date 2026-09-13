@@ -15,7 +15,7 @@ broke came back, and an assertion that did not hold is a non-zero exit — which
 | `node-stops` | [A node does not answer](../doc/runbook/nodes.md), [an instance was replaced](../doc/runbook/nodes.md), [the rebuild](../doc/runbook/rebuild.md) | `ec2:StopInstances`, one database node |
 | `zone-lost` | [A read needs one copy](../doc/runbook/index.md), [fewer zones than the deployment has](../doc/runbook/membership.md) | A network acl on the zone's subnet, denying the other zones' subnets |
 | `nodes-go-deaf` | [A node answers no peer](../doc/runbook/nodes.md) | A `DOCKER-USER` rule rejecting what arrives for port 8080, one node **per zone** |
-| `etcd-unreachable` | [etcd cannot be reached](../doc/runbook/membership.md) — one node, cluster of one | A `DOCKER-USER` rule rejecting what the container sends to port 2379 |
+| `etcd-unreachable` | [etcd cannot be reached](../doc/runbook/membership.md) — one node, on the membership it last read | A `DOCKER-USER` rule rejecting what the container sends to port 2379 |
 | `node-latency` | [A node that is up but wrong](../doc/runbook/nodes.md), [threads are all waiting](../doc/runbook/nodes.md) | A `netem` qdisc delaying everything the host sends into the VPC |
 | `disk-fills` | [RocksDB returned an error](../doc/runbook/storage.md), [the disk is filling](../doc/runbook/storage.md) | `fallocate` over what is left of the root volume |
 | `containers-restart` | [The container has stopped](../doc/runbook/nodes.md), [what recovers by itself](../doc/runbook/index.md) | `SIGKILL` to every container's own process at once, three times over |

@@ -376,18 +376,23 @@ commas, tried in turn and sticky on whichever answered), `ASYNCDB_NODE` (this no
 reach it, the API port and not the nginx in front of it) and `ASYNCDB_ZONE` (the availability zone
 this node is in). **Set none and nothing changes**: no thread is started, nothing is registered, and
 the instance owns the whole keyspace, which is what every test that is not `cluster_test` runs as.
-Set the first two and the instance joins. **`ASYNCDB_UNLED_WRITES` is the fourth**, and the only one
+Set the first two and the instance joins. **`ASYNCDB_SERVE_UNLED` is the fourth**, and the only one
 of them that is not about joining: false is a node taking a write only where a leader claimed in etcd
 ordered it — a table create or delete included, since the tables are led as well — so a membership
-too small to claim anything, no etcd reached or this node alone registered in it, answers
-`no_leader` rather than writing what nobody ordered. It defaults to true, which is the lone instance
-every test and `cmk run` serve, and the `Dockerfile` sets it false, because a container is a node of
-a cluster and one on its own there has lost the others. **It is also what takes such a node out of
-the load balancer**: `cluster::is_unled()` is that same membership having been too small for longer
+too small to claim anything, or one etcd has stopped answering for, answers `no_leader` rather than
+writing what nobody ordered; and a node with no membership but itself answers a client's read or scan
+`node_alone` (503), because it takes itself to hold every key and holds only its share. **A
+membership etcd did not answer for is kept as it was last read** — `etcd::client::range` answers
+`std::nullopt` rather than an empty map — so a node cut off from etcd goes on routing reads to the
+copies that have the key, and `cluster::is_alone()` is only a node etcd names alone or one that has
+not reached etcd since it started. It defaults to true, which is the lone instance every test and
+`cmk run` serve, and the `Dockerfile` sets it false, because a container is a node of a cluster and
+one on its own there has lost the others. **It is also what takes such a node out of the load
+balancer**: `cluster::is_unled()` is that same node having been unable to order a write for longer
 than a lease, and `/health` reports it as `unled` and answers `503` rather than `200` — the document
 unchanged, because the status is for the load balancer and the fields are for whoever is reading the
-node. A lease is what makes it a state and not a moment, a membership that just fell to one being a
-slow answer from etcd as often as a node that has lost the others. Nothing replaces the instance
+node. A lease is what makes it a state and not a moment, a membership that just went unanswered
+being a slow answer from etcd as often as a node that has lost the others. Nothing replaces the instance
 over it, the group's health check being `EC2`; and a target group with nothing healthy left in it is
 one the load balancer sends to all of them, so etcd lost altogether is a cluster that goes on
 serving what it holds. The four are read in one place,

@@ -121,11 +121,12 @@ TEST(etcd_client_test, read_a_range_of_keys)
 	http.answer("/v3/kv/range", http::answer(200, "application/json", boost::json::serialize(answer)));
 
 	etcd::client client(http, { "http://etcd:2379" });
-	std::map<std::string, std::string> range = client.range("/asyncdb/node/");
+	std::optional<std::map<std::string, std::string>> range = client.range("/asyncdb/node/");
 
-	ASSERT_EQ(range.size(), 2u);
-	EXPECT_EQ(range["/asyncdb/node/http://one:8080"], "http://one:8080");
-	EXPECT_EQ(range["/asyncdb/node/http://two:8080"], "http://two:8080");
+	ASSERT_TRUE(range.has_value());
+	ASSERT_EQ(range->size(), 2u);
+	EXPECT_EQ(range->at("/asyncdb/node/http://one:8080"), "http://one:8080");
+	EXPECT_EQ(range->at("/asyncdb/node/http://two:8080"), "http://two:8080");
 
 	// The end of a prefix is the prefix with its last byte raised, which is how etcd is asked for
 	// everything under it.
@@ -142,16 +143,31 @@ TEST(etcd_client_test, read_nothing_when_no_key_is_there)
 	http.answer("/v3/kv/range", http::answer(200, "application/json", "{\"header\":{}}"));
 
 	etcd::client client(http, { "http://etcd:2379" });
+	std::optional<std::map<std::string, std::string>> range = client.range("/asyncdb/node/");
 
-	EXPECT_TRUE(client.range("/asyncdb/node/").empty());
+	ASSERT_TRUE(range.has_value());
+	EXPECT_TRUE(range->empty());
 }
 
-TEST(etcd_client_test, read_nothing_when_etcd_is_not_there)
+// A range nobody answered is not a range with nothing in it: the first is a membership a node keeps
+// as it last read it, and the second is one it has lost.
+TEST(etcd_client_test, read_no_range_when_etcd_is_not_there)
 {
 	http::fake_client http;
 	etcd::client client(http, { "http://etcd:2379" });
 
-	EXPECT_TRUE(client.range("/asyncdb/node/").empty());
+	EXPECT_FALSE(client.range("/asyncdb/node/").has_value());
+}
+
+TEST(etcd_client_test, read_no_range_when_etcd_answers_something_that_is_not_one)
+{
+	http::fake_client http;
+
+	http.answer("/v3/kv/range", http::answer(200, "application/json", "{\"kvs\":\"nothing\"}"));
+
+	etcd::client client(http, { "http://etcd:2379" });
+
+	EXPECT_FALSE(client.range("/asyncdb/node/").has_value());
 }
 
 TEST(etcd_client_test, revoke_a_lease)
