@@ -669,9 +669,17 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   404 included**, which rests on a copy being a copy: a node whose rebuild did not read the whole of
   its share answers `node_incomplete` (503) rather than reporting an absence it cannot vouch for, and
   the node reading passes over it as it passes over one that said nothing. `router::is_incomplete` is
-  that flag — set from `rebuild::outcome::whole`, cleared by a reconcile pass that settles, and
-  reported in `/health` as `incomplete`, because a node holding less than it owns still serves what
-  it has and must stay in the load balancer. A table create or delete is **ordered like a write
+  that flag, and **it is asked of a partition and not of the node**: `cluster::vouched` is the
+  partitions this store is known to hold the whole of — every one after a whole rebuild, and each one
+  a reconcile pass fetched in full from every node holding it, for every table
+  (`reconcile::outcome::filled`), whether or not the rest of that pass settled. The membership drops
+  a partition from it the moment it takes that partition away, and a pass cannot vouch for one gained
+  after the `cluster::generation` it read, so a partition handed over and handed back is fetched
+  again. A node that has just been handed part of a zone's share therefore answers `node_incomplete`
+  for a miss there **from the moment the membership moves**, and `404` for the partitions it held all
+  along; how long it does so is the size of what it was handed, not of its whole store. `/health`
+  reports any held partition it cannot vouch for as `incomplete`, because a node holding less than it
+  owns still serves what it has and must stay in the load balancer. A table create or delete is **ordered like a write
   and carried to every node**: it is not a record of any partition, so what orders it is the leader
   of `cluster::table_key`, one constant, and from there it goes to every node because a record can
   only be written where its table is. `router::order_schema` is those two hops and the term fence,

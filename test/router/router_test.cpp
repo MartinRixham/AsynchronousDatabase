@@ -177,7 +177,7 @@ TEST(router_test, health_says_whether_this_node_holds_less_than_it_owns)
 
 	EXPECT_EQ(router.route(get("/health")).json.at("incomplete"), false);
 
-	router.is_incomplete(true);
+	alone.unvouched();
 
 	router::response response = router.route(get("/health"));
 
@@ -1233,13 +1233,59 @@ TEST(router_cluster_test, refuse_to_call_a_key_missing_when_this_node_holds_less
 
 	forwarded.forwarded = true;
 
-	router.is_incomplete(true);
+	nodes.unvouched("4821");
 
 	router::response response = router.route(forwarded);
 
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
 	EXPECT_EQ(error_code(response), "node_incomplete");
 	EXPECT_TRUE(nodes.sent().empty());
+}
+
+TEST(router_cluster_test, call_a_key_missing_in_a_partition_this_node_holds_the_whole_of)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { here, there });
+
+	std::string elsewhere_key = "4822";
+
+	while (cluster::partition_of(elsewhere_key) == cluster::partition_of("4821"))
+	{
+		elsewhere_key += "0";
+	}
+
+	nodes.unvouched(elsewhere_key);
+
+	router::request forwarded = get("/table/account/key/4821");
+
+	forwarded.forwarded = true;
+
+	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::not_found);
+}
+
+// The copy a read reaches first may be the one that has just been handed the partition, and what
+// it does not hold yet is still held by the copy after it.
+TEST(router_cluster_test, read_a_key_from_the_next_copy_when_the_first_cannot_say_it_is_missing)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = three_zones();
+	router::router router(repository, nodes);
+
+	create_table(router, "account");
+	nodes.forget();
+	nodes.copies("4821", { there, elsewhere });
+	nodes.answer(there, router::error_response("node_incomplete", "Not filled yet."));
+	nodes.answer(elsewhere, router::text_response(boost::beast::http::status::ok, "Robert"));
+
+	router::response response = router.route(get("/table/account/key/4821"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.text, "Robert");
 }
 
 // The tables are the first thing a rebuild reads, so a node that came up short may hold none of
@@ -1250,7 +1296,7 @@ TEST(router_cluster_test, refuse_to_call_a_table_missing_when_this_node_holds_le
 	cluster::fake_cluster nodes = three_zones();
 	router::router router(repository, nodes);
 
-	router.is_incomplete(true);
+	nodes.unvouched();
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/key/4821"))), "node_incomplete");
 }
@@ -1271,7 +1317,7 @@ TEST(router_cluster_test, answer_a_key_this_node_holds_while_it_holds_less_than_
 
 	forwarded.forwarded = true;
 
-	router.is_incomplete(true);
+	nodes.unvouched();
 
 	router::response response = router.route(forwarded);
 
@@ -1915,7 +1961,7 @@ TEST(router_cluster_test, refuse_to_delete_a_table_this_node_cannot_say_is_missi
 	router::router router(repository, nodes);
 
 	nodes.led_by(cluster::table_key, here, 41);
-	router.is_incomplete(true);
+	nodes.unvouched();
 
 	EXPECT_EQ(error_code(router.route(del("/table/account"))), "node_incomplete");
 	EXPECT_TRUE(nodes.sent().empty());
@@ -2240,7 +2286,7 @@ TEST(router_cluster_test, scan_a_copy_that_is_whole_rather_than_this_node_s_own_
 	nodes.forget();
 	nodes.copies("a", { here, there });
 	nodes.answer(there, page(boost::json::array { record_json("a", "1"), record_json("a", "2", "2") }, false));
-	router.is_incomplete(true);
+	nodes.unvouched("a");
 
 	EXPECT_EQ(keys(router.route(get("/table/account/key?key=a"))).size(), 2u);
 	ASSERT_EQ(nodes.sent().size(), 1u);
@@ -2257,7 +2303,7 @@ TEST(router_cluster_test, answer_node_incomplete_to_a_scan_of_a_partition_no_oth
 	write_record(router, "account", "a", "1");
 	nodes.forget();
 	nodes.owns("a", here);
-	router.is_incomplete(true);
+	nodes.unvouched("a");
 
 	router::response response = router.route(get("/table/account/key?key=a"));
 

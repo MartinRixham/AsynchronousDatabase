@@ -12,6 +12,8 @@ cluster::fake_cluster::fake_cluster(const std::string &node, const std::vector<s
 	{
 		member_list.push_back(member { members[i], "" });
 	}
+
+	filled.set();
 }
 
 cluster::fake_cluster::fake_cluster(const std::string &node, const std::vector<member> &members):
@@ -19,6 +21,7 @@ cluster::fake_cluster::fake_cluster(const std::string &node, const std::vector<m
 	member_list(members),
 	mutex(std::make_shared<std::mutex>())
 {
+	filled.set();
 }
 
 void cluster::fake_cluster::owns(const std::string &key, const std::string &node)
@@ -233,6 +236,39 @@ void cluster::fake_cluster::alone()
 bool cluster::fake_cluster::is_alone() const
 {
 	return alone_node;
+}
+
+void cluster::fake_cluster::unvouched()
+{
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	filled.reset();
+}
+
+void cluster::fake_cluster::unvouched(const std::string &key)
+{
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	filled.reset(partition_of(key));
+}
+
+uint64_t cluster::fake_cluster::generation() const
+{
+	return 0;
+}
+
+void cluster::fake_cluster::vouch(const partition_set &partitions, uint64_t)
+{
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	filled |= partitions;
+}
+
+cluster::partition_set cluster::fake_cluster::vouched() const
+{
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	return filled;
 }
 
 void cluster::fake_cluster::reads_etcd(const std::string &endpoint)

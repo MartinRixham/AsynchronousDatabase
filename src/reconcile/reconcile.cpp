@@ -1,5 +1,6 @@
 #include <atomic>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -66,6 +67,11 @@ namespace
 		taken.finished = done.whole || done.refused;
 		taken.refused = done.refused;
 		taken.fetched = fetched;
+
+		if (done.whole)
+		{
+			taken.filled = partitions;
+		}
 
 		return taken;
 	}
@@ -203,7 +209,10 @@ namespace
 	// A table this node is missing is every write to it refused for the keys this node owns, and a
 	// table the cluster dropped is a name whose tombstone says so. What a live entry replacing a
 	// live entry never does is drop a column family: one create carried twice is one table.
-	size_t declare_tables(
+	//
+	// Nothing when no zone named its tables, which is a pass that cannot say its tables are the
+	// cluster's and so cannot vouch for a partition of any of them.
+	std::optional<size_t> declare_tables(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
 		const std::vector<std::vector<std::string>> &zones,
@@ -221,7 +230,7 @@ namespace
 			return repository.merge_schema(*named);
 		}
 
-		return 0;
+		return std::nullopt;
 	}
 
 	// **What makes the delete safe is that the owner said what it holds.** A key is given up only
@@ -292,11 +301,16 @@ reconcile::outcome reconcile::reconcile(
 {
 	outcome done;
 
+	// Before anything is read of what this node holds, so that a partition it gains while the pass
+	// runs is one the pass does not vouch for.
+	done.generation = nodes.generation();
+
 	std::vector<std::vector<std::string>> zones = nodes.zones();
 
 	if (zones.empty())
 	{
 		done.finished = true;
+		done.filled.set();
 
 		return done;
 	}
@@ -310,11 +324,12 @@ reconcile::outcome reconcile::reconcile(
 	// fills: nothing else in the cluster puts one here. The rebuild that copies them runs on an
 	// empty store alone, so a node that missed a create while it was out of the membership has no
 	// other way back to the schema the rest of the cluster is on.
-	size_t declared = running ? declare_tables(repository, nodes, zones, fetching) : 0;
+	std::optional<size_t> declared =
+		running ? declare_tables(repository, nodes, zones, fetching) : std::optional<size_t>();
 
-	if (declared > 0)
+	if (declared && *declared > 0)
 	{
-		DEBUG("Took " + std::to_string(declared) + " names from the schema the rest of the cluster is on.");
+		DEBUG("Took " + std::to_string(*declared) + " names from the schema the rest of the cluster is on.");
 	}
 
 	std::set<table::table> tables = repository.list_tables();
@@ -328,7 +343,11 @@ reconcile::outcome reconcile::reconcile(
 	// took the partition from. A node it does not ask because the records moved on inside another
 	// zone while this pass ran is a node the next pass asks, which is the same thing the clear
 	// down is answered a file without a key in it by.
-	std::map<std::string, cluster::partition_set> holders = nodes.holders(nodes.holdings());
+	cluster::partition_set held = nodes.holdings();
+	std::map<std::string, cluster::partition_set> holders = nodes.holders(held);
+
+	// A partition is whole only when every node asked for it answered for all of it, in every table.
+	cluster::partition_set unfilled;
 
 	// A half that has run out of patience is what a walk it is given answers, so the loops carry no
 	// clock of their own: what is left of them is asked and does nothing.
@@ -348,6 +367,7 @@ reconcile::outcome reconcile::reconcile(
 				repository, nodes, holder->first, it->name, holder->second, workers, running, fetching);
 
 			done.fetched += taken.fetched;
+			unfilled |= holder->second & ~taken.filled;
 
 			if (!taken.finished)
 			{
@@ -359,6 +379,11 @@ reconcile::outcome reconcile::reconcile(
 				refused = true;
 			}
 		}
+	}
+
+	if (declared)
+	{
+		done.filled = held & ~unfilled;
 	}
 
 	progress::patience clearing(seconds);

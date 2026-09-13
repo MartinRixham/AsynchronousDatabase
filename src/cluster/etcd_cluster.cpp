@@ -99,6 +99,8 @@ cluster::etcd_cluster::etcd_cluster(
 	member_list(std::make_shared<const std::vector<member>>()),
 	unled_since(std::chrono::steady_clock::now())
 {
+	// No membership is this node holding every partition.
+	holding.set();
 }
 
 cluster::etcd_cluster::~etcd_cluster()
@@ -243,32 +245,87 @@ cluster::placement cluster::etcd_cluster::copies_of(size_t partition) const
 
 cluster::partition_set cluster::etcd_cluster::holdings() const
 {
-	membership registered = snapshot();
-	partition_set held;
+	std::shared_lock<std::shared_mutex> lock(vouch_mutex);
+
+	return holding;
+}
+
+cluster::partition_set cluster::etcd_cluster::holdings_of(const std::vector<member> &registered) const
+{
+	partition_set owned;
 
 	// A membership of fewer than two nodes is this node holding every key, which is every
 	// partition — the cluster an instance told nothing runs as.
-	if (registered->size() < 2)
+	if (registered.size() < 2)
 	{
-		held.set();
+		owned.set();
 
-		return held;
+		return owned;
 	}
 
 	for (size_t partition = 0; partition < partition_count; partition++)
 	{
-		std::vector<member> owners = ::cluster::owners_of(::cluster::partition_name(partition), *registered);
+		std::vector<member> owners = ::cluster::owners_of(::cluster::partition_name(partition), registered);
 
 		for (size_t i = 0; i < owners.size(); i++)
 		{
 			if (owners[i].node == configuration.node)
 			{
-				held.set(partition);
+				owned.set(partition);
 			}
 		}
 	}
 
-	return held;
+	return owned;
+}
+
+uint64_t cluster::etcd_cluster::generation() const
+{
+	std::shared_lock<std::shared_mutex> lock(vouch_mutex);
+
+	return members_generation;
+}
+
+void cluster::etcd_cluster::vouch(const partition_set &partitions, uint64_t since)
+{
+	std::unique_lock<std::shared_mutex> lock(vouch_mutex);
+
+	for (size_t partition = 0; partition < partition_count; partition++)
+	{
+		if (partitions.test(partition) && holding.test(partition) && held_since[partition] <= since)
+		{
+			filled.set(partition);
+		}
+	}
+}
+
+cluster::partition_set cluster::etcd_cluster::vouched() const
+{
+	std::shared_lock<std::shared_mutex> lock(vouch_mutex);
+
+	return filled;
+}
+
+void cluster::etcd_cluster::replace_members(std::vector<member> names)
+{
+	membership next = std::make_shared<const std::vector<member>>(std::move(names));
+	partition_set owned = holdings_of(*next);
+
+	std::unique_lock<std::shared_mutex> lock(vouch_mutex);
+
+	member_list.store(next);
+	members_generation++;
+
+	for (size_t partition = 0; partition < partition_count; partition++)
+	{
+		if (owned.test(partition) && !holding.test(partition))
+		{
+			held_since[partition] = members_generation;
+		}
+	}
+
+	filled &= owned;
+	holding = owned;
 }
 
 std::map<std::string, cluster::partition_set> cluster::etcd_cluster::holders(
@@ -644,8 +701,7 @@ void cluster::etcd_cluster::read_members()
 		// A node that has never read a membership has none to keep, and puts itself in the list.
 		if (snapshot()->empty())
 		{
-			member_list.store(std::make_shared<const std::vector<member>>(
-				std::vector<member> { member { configuration.node, configuration.zone } }));
+			replace_members(std::vector<member> { member { configuration.node, configuration.zone } });
 		}
 
 		return;
@@ -675,7 +731,7 @@ void cluster::etcd_cluster::read_members()
 
 	stand_unled(names.size() < 2);
 
-	member_list.store(std::make_shared<const std::vector<member>>(std::move(names)));
+	replace_members(std::move(names));
 
 	answered = true;
 }

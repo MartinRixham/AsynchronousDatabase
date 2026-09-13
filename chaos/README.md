@@ -138,7 +138,8 @@ six nodes in three zones, nothing stalled, and **every node holding what it owns
 cluster that is already broken proves nothing.
 
 The last of those is asked of each node rather than of the load balancer. `incomplete` is a node's
-own state — [a rebuild that came up short](../doc/runbook/rebuild.md) — and a node in that state
+own state — [a rebuild that came up short](../doc/runbook/rebuild.md), or a partition a membership
+change handed it that its reconcile pass has not fetched yet — and a node in that state
 serves what it has and answers `/health` like any other, so a sampled check is one that may never
 land on it. Every node is asked over Run Command, and a node that cannot be asked fails the check
 rather than passing it silently.

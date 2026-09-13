@@ -153,13 +153,20 @@ takes writes, still answers `/health` with `200` — so the load balancer keeps 
 curl -s http://asyncdb-3:8080/health | jq '.incomplete'
 ```
 
-**What clears it is a reconcile pass that settles**, which is this node having
-fetched everything it owns and holds nothing for. A pass runs when the membership
-moves, or when the node registers in etcd again after its lease ran out — it was
-dropped for that long and missed what was written meanwhile, whatever membership
-it reads back. So a node that came up short and then sees neither stays short — the rebuild will not run again, because an empty store is its only
-trigger and the store is no longer empty. Declaring the tables again, or any
-change that moves the membership, is what starts the pass that fills it.
+**What clears it is a reconcile pass, a partition at a time**: each partition the
+pass fetched in full from every node holding it, for every table, is one the node
+answers `404` for again, whether or not the rest of the pass settled. A node that
+came up short is given its passes as it starts, the way a node returning to the
+store it was left with is; a pass also runs when the membership moves, or when the
+node registers in etcd again after its lease ran out. The rebuild itself will not
+run again, because an empty store is its only trigger and the store is no longer
+empty.
+
+The same flag covers a node that did not rebuild at all. **A partition a
+membership change hands to a node is one it holds nothing of until a pass has
+fetched it**, so the node answers `node_incomplete` for a miss there from the
+moment the membership moves — and `"incomplete": true` — until that partition is
+filled.
 
 Nothing the rebuild does is worth dying over either. A store that refuses a
 write, or a neighbour that answers something unreadable, is logged and the node
@@ -199,7 +206,8 @@ curl -s http://asyncdb-1:8080/health | jq '.nodes'
   tables, so it rebuilds nothing — that record comes back when it is written
   again, and nothing else brings it back. A node that lost a record that way is
   not `incomplete` either: what that flag reports is a rebuild that came up
-  short, and nothing here detects a gap by looking for one.
+  short or a partition not fetched yet, and nothing here detects a gap by
+  looking for one.
 - **It is not continuous.** One pass, on the way up. A copy that falls behind
   afterwards stays behind.
 - **It is not a backup.** It needs a zone that still holds the data. Lose every

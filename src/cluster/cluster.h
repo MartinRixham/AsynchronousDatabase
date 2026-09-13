@@ -2,6 +2,7 @@
 #define CLUSTER_CLUSTER_H
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -113,6 +114,19 @@ namespace cluster
 		// key, and a pass that moves records has no key to ask about: what it asks another node
 		// for is its share, and a share is a set of partitions.
 		virtual partition_set holdings() const = 0;
+
+		// How many times the membership this node routes by has been replaced. A pass reads it
+		// before holdings(), and hands it back with what it filled.
+		virtual uint64_t generation() const = 0;
+
+		// The partitions this node's store holds the whole of, which are the only ones a miss is
+		// absence rather than a record never received. A partition is vouched for only if this
+		// node has held it without a break since the generation the filling began at, and stops
+		// being vouched for the moment the membership takes it away: a partition regained is one
+		// it missed the writes of while another node held it.
+		virtual void vouch(const partition_set &partitions, uint64_t since) = 0;
+
+		virtual partition_set vouched() const = 0;
 
 		// Which nodes to ask for the records of these partitions, and which of them to ask each
 		// node for. A pass filling a share asks the nodes that hold it rather than every node of

@@ -130,7 +130,7 @@ namespace server
 
 		// Watches the membership, and moves records when it moves. Started once this node has
 		// joined, because a node that is not a member owns nothing and would clear down the store.
-		void reconcile(bool returning);
+		void reconcile(bool behind);
 
 		void stop_reconciling();
 	};

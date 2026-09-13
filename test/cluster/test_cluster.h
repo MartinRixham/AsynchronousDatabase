@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -30,6 +31,11 @@ namespace cluster
 		std::vector<member> member_list;
 
 		bool started = false;
+
+		// Vouched for by the server's thread before it listens, and read by every session after.
+		mutable std::mutex vouch_mutex;
+
+		partition_set filled;
 
 		http::curl_client curl;
 
@@ -65,6 +71,12 @@ namespace cluster
 		placement copies_of(size_t partition) const override;
 
 		partition_set holdings() const override;
+
+		uint64_t generation() const override;
+
+		void vouch(const partition_set &partitions, uint64_t since) override;
+
+		partition_set vouched() const override;
 
 		std::map<std::string, partition_set> holders(const partition_set &partitions) const override;
 

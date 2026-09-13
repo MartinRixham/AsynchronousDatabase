@@ -102,6 +102,20 @@ namespace
 			return held;
 		}
 
+		uint64_t generation() const override
+		{
+			return 0;
+		}
+
+		void vouch(const ::cluster::partition_set &, uint64_t) override
+		{
+		}
+
+		::cluster::partition_set vouched() const override
+		{
+			return holdings();
+		}
+
 		std::map<std::string, ::cluster::partition_set> holders(
 			const ::cluster::partition_set &) const override
 		{

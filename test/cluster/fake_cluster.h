@@ -44,6 +44,8 @@ namespace cluster
 
 		etcd_registration etcd_state;
 
+		partition_set filled;
+
 		mutable std::vector<std::pair<std::string, router::request>> requests;
 
 		// A walk asks several nodes at once, so what it was asked and what it has answered are
@@ -92,6 +94,13 @@ namespace cluster
 		// A node with no membership but itself, which takes itself to hold every key.
 		void alone();
 
+		// A store that does not hold the whole of what this node owns, which is every partition
+		// until a pass fills it again.
+		void unvouched();
+
+		// The same of the one partition the key is in.
+		void unvouched(const std::string &key);
+
 		// The etcd this node reads the membership from, and that it is registered there. A test
 		// that says nothing is an instance that was told no etcd at all.
 		void reads_etcd(const std::string &endpoint);
@@ -118,6 +127,13 @@ namespace cluster
 		placement copies_of(size_t partition) const override;
 
 		partition_set holdings() const override;
+
+		// A membership a test names never moves, so it is always the first generation.
+		uint64_t generation() const override;
+
+		void vouch(const partition_set &partitions, uint64_t since) override;
+
+		partition_set vouched() const override;
 
 		std::map<std::string, partition_set> holders(const partition_set &partitions) const override;
 

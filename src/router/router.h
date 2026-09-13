@@ -43,25 +43,12 @@ namespace router
 
 		std::array<write_stripe, write_stripes> write_locks;
 
-		// Read by every session and written once by the thread that filled the store, so it is an
-		// atomic rather than a field a reader happens to see.
-		std::atomic<bool> incomplete = false;
-
 		std::atomic<bool> draining = false;
 
 	public:
 		router(repository::repository &repo, cluster::cluster &nodes);
 
 		response route(const request &request);
-
-		// Whether this node holds less than it owns, which is a rebuild that did not read the
-		// whole of its share. A miss it reports is then absence it cannot vouch for, so a read is
-		// answered node_incomplete and the node that asked tries the next copy instead of
-		// believing it. Cleared by a reconcile pass that settles, which is this node having
-		// fetched everything it owns and holds nothing for.
-		void is_incomplete(bool incomplete);
-
-		bool is_incomplete() const;
 
 		// Whether this node is on its way out. It serves everything as normal and fails its health
 		// check, so that a load balancer has stopped choosing it by the time it stops answering.
@@ -102,6 +89,11 @@ namespace router
 			const cluster::placement &where);
 
 		response read_record(const request &request, const std::vector<std::string> &replicas);
+
+		// Whether any partition this node holds is one its store is not known to hold the whole
+		// of. A table is no partition's, so a table this node does not have is unknown to it while
+		// any of them is.
+		bool is_incomplete() const;
 
 		// Whether this node carries a schema operation out, and what it does with it once it has.
 		// A table is not a record of any partition, so what orders one is the leader of

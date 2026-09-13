@@ -5,6 +5,7 @@ cluster::test_cluster::test_cluster():
 	curl(http::curl_client(2, 5)),
 	request_forwarder(forwarder(curl))
 {
+	filled.set();
 }
 
 void cluster::test_cluster::join(
@@ -93,6 +94,25 @@ cluster::partition_set cluster::test_cluster::holdings() const
 	}
 
 	return held;
+}
+
+uint64_t cluster::test_cluster::generation() const
+{
+	return 0;
+}
+
+void cluster::test_cluster::vouch(const partition_set &partitions, uint64_t)
+{
+	std::lock_guard<std::mutex> lock(vouch_mutex);
+
+	filled |= partitions;
+}
+
+cluster::partition_set cluster::test_cluster::vouched() const
+{
+	std::lock_guard<std::mutex> lock(vouch_mutex);
+
+	return filled;
 }
 
 std::map<std::string, cluster::partition_set> cluster::test_cluster::holders(

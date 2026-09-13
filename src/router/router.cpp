@@ -128,14 +128,9 @@ router::router::router(repository::repository &repo, cluster::cluster &cluster_n
 {
 }
 
-void router::router::is_incomplete(bool value)
-{
-	incomplete = value;
-}
-
 bool router::router::is_incomplete() const
 {
-	return incomplete;
+	return (nodes.holdings() & ~nodes.vouched()).any();
 }
 
 void router::router::is_draining(bool value)
@@ -165,7 +160,7 @@ router::response router::router::route(const request &request)
 		boost::json::object health {
 			{ "status", "ok" },
 			{ "write_stalled", repository.is_write_stalled() },
-			{ "incomplete", incomplete.load() },
+			{ "incomplete", is_incomplete() },
 			{ "unled", unled },
 			{ "draining", leaving }
 		};
@@ -488,7 +483,7 @@ router::response router::router::route_record(
 	// read, so what it does not hold is unknown to it rather than absent.
 	if (!repository.has_table(name))
 	{
-		return incomplete ? node_incomplete() : table_not_found(name);
+		return is_incomplete() ? node_incomplete() : table_not_found(name);
 	}
 
 	cluster::placement where = request.forwarded ? cluster::placement() : nodes.replicas(record.key);
@@ -565,7 +560,14 @@ router::response router::router::route_record(
 		return read_record(request, where.nodes);
 	}
 
-	return incomplete ? node_incomplete() : empty_response(boost::beast::http::status::not_found);
+	// A partition this node has just been handed is one it holds nothing of until it has fetched
+	// it, so a miss there is a record it may never have received.
+	if (!nodes.vouched().test(cluster::partition_of(key)))
+	{
+		return node_incomplete();
+	}
+
+	return empty_response(boost::beast::http::status::not_found);
 }
 
 std::mutex &router::router::write_lock(const std::string &key)
@@ -753,7 +755,7 @@ router::response router::router::delete_table(const request &request, const std:
 			return empty_response(boost::beast::http::status::no_content);
 		}
 
-		if (incomplete)
+		if (is_incomplete())
 		{
 			return node_incomplete();
 		}
@@ -799,8 +801,9 @@ router::response router::router::scan_records(const request &request, const std:
 	// does not answer — the hops a read of a key takes. There is nothing to merge: every record of
 	// the partition is in the one answer, in the one order the store holds them in.
 	cluster::placement where = request.forwarded ? cluster::placement() : nodes.copies_of(*named);
+	bool whole = nodes.vouched().test(*named);
 
-	if (where.local && !incomplete)
+	if (where.local && whole)
 	{
 		return answer_page(request, name);
 	}
@@ -813,7 +816,7 @@ router::response router::router::scan_records(const request &request, const std:
 		return read_record(request, where.nodes);
 	}
 
-	return incomplete ? node_incomplete() : answer_page(request, name);
+	return whole ? answer_page(request, name) : node_incomplete();
 }
 
 // The page this node's own store answers with. The range is read here and not before the scan was

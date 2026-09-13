@@ -1375,6 +1375,119 @@ TEST(etcd_cluster_test, keep_a_claim_on_a_partition_it_leads_and_one_it_never_ma
 
 // The membership gives each node its own share of the ring to lead, so two of them claim different
 // partitions rather than racing each other for the same one on every pass.
+TEST(etcd_cluster_test, vouch_for_every_partition_when_the_instance_stands_alone)
+{
+	http::fake_client http;
+	cluster::config config;
+
+	config.node = one;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::partition_set every;
+
+	every.set();
+	cluster.vouch(every, cluster.generation());
+
+	EXPECT_EQ(cluster.vouched(), every);
+}
+
+TEST(etcd_cluster_test, vouch_only_for_the_partitions_this_node_holds)
+{
+	http::fake_client http;
+
+	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "a" } });
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::partition_set every;
+
+	ASSERT_TRUE(cluster.discover());
+
+	every.set();
+	cluster.vouch(every, cluster.generation());
+
+	EXPECT_TRUE(cluster.vouched().any());
+	EXPECT_EQ(cluster.vouched(), cluster.holdings());
+}
+
+TEST(etcd_cluster_test, vouch_for_no_partition_gained_after_the_filling_began)
+{
+	http::fake_client http;
+	const std::string three = "http://asyncdb-3:8080";
+
+	answer_etcd(&http, {
+		cluster::member { one, "a" },
+		cluster::member { two, "a" },
+		cluster::member { three, "a" }
+	});
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::partition_set every;
+
+	ASSERT_TRUE(cluster.discover());
+
+	uint64_t since = cluster.generation();
+	cluster::partition_set before = cluster.holdings();
+
+	http.forget("/v3/kv/range");
+	http.answer("/v3/kv/range", http::answer(200, "application/json", membership({
+		cluster::member { one, "a" },
+		cluster::member { two, "a" }
+	})));
+
+	ASSERT_TRUE(cluster.discover());
+	ASSERT_NE(cluster.holdings(), before);
+
+	every.set();
+	cluster.vouch(every, since);
+
+	EXPECT_EQ(cluster.vouched(), before);
+}
+
+// A partition handed to another node and back again missed every write taken while it was away.
+TEST(etcd_cluster_test, stop_vouching_for_a_partition_the_membership_took_away_and_gave_back)
+{
+	http::fake_client http;
+	const std::string three = "http://asyncdb-3:8080";
+	std::vector<cluster::member> pair { cluster::member { one, "a" }, cluster::member { two, "a" } };
+
+	answer_etcd(&http, pair);
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::partition_set every;
+
+	ASSERT_TRUE(cluster.discover());
+
+	every.set();
+	cluster.vouch(every, cluster.generation());
+
+	cluster::partition_set before = cluster.holdings();
+
+	http.forget("/v3/kv/range");
+	http.answer("/v3/kv/range", http::answer(200, "application/json", membership({
+		cluster::member { one, "a" },
+		cluster::member { two, "a" },
+		cluster::member { three, "a" }
+	})));
+
+	ASSERT_TRUE(cluster.discover());
+
+	cluster::partition_set lost = before & ~cluster.holdings();
+
+	ASSERT_TRUE(lost.any());
+
+	http.forget("/v3/kv/range");
+	http.answer("/v3/kv/range", http::answer(200, "application/json", membership(pair)));
+
+	ASSERT_TRUE(cluster.discover());
+	ASSERT_EQ(cluster.holdings(), before);
+
+	EXPECT_EQ(cluster.vouched(), before & ~lost);
+}
+
 TEST(etcd_cluster_test, claim_partitions_no_other_node_is_claiming)
 {
 	http::fake_client first;

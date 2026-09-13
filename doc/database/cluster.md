@@ -369,9 +369,19 @@ there.
 That rests on the copy being a copy, so a node that knows it is not one does not
 get to make the claim. A node whose
 [rebuild came up short](/runbook/rebuild#a-node-that-came-up-short) holds less
-than it owns, and a key it has nothing for may be one it never received rather
-than one nobody wrote; it answers `503 node_incomplete` instead of `404`, and the
-node reading passes over it exactly as it passes over a node that said nothing.
+than it owns, and so does a node a membership change has just handed a partition
+it has not fetched yet: a key it has nothing for may be one it never received
+rather than one nobody wrote. It answers `503 node_incomplete` instead of `404`,
+and the node reading passes over it exactly as it passes over a node that said
+nothing.
+
+**It is decided a partition at a time.** A node vouches for a partition once a
+reconcile pass has fetched the whole of it from every node holding it, for every
+table — whatever else that pass is still waiting on — and stops vouching the
+moment the membership takes the partition away, so one handed over and handed
+back is fetched again. A node that took over part of a zone's share answers
+`node_incomplete` for a miss in that part from the moment the membership moves,
+and `404` for the partitions it held all along.
 
 With one exception. **A key this node holds nothing for is asked of the other
 copies before it is answered as missing.** A node that has just replaced another,

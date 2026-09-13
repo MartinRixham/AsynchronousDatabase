@@ -178,24 +178,39 @@ void server::server::serve()
 	// It is best effort: a store that refuses a write, or a neighbour that answers something
 	// unreadable, would otherwise take the process down before it ever registered, and again on
 	// every restart. A node that starts thin is a copy the cluster has.
-	if (nodes.discover())
+	bool clustered = nodes.discover();
+
+	// Read before the rebuild reads what this node holds, so a partition it gains while the rebuild
+	// runs is not one the rebuild vouches for.
+	uint64_t generation = nodes.generation();
+	bool whole = true;
+
+	if (clustered)
 	{
 		try
 		{
-			router.is_incomplete(!rebuild::rebuild(repository, nodes).whole);
+			whole = rebuild::rebuild(repository, nodes).whole;
 		}
 		catch (const std::exception &caught)
 		{
-			router.is_incomplete(true);
+			whole = false;
 
 			DEBUG(std::string("The rebuild did not finish: ") + caught.what());
 		}
 		catch (...)
 		{
-			router.is_incomplete(true);
+			whole = false;
 
 			DEBUG("The rebuild did not finish.");
 		}
+	}
+
+	if (whole)
+	{
+		cluster::partition_set every;
+
+		every.set();
+		nodes.vouch(every, generation);
 	}
 
 	nodes.start();
@@ -210,7 +225,8 @@ void server::server::serve()
 		reconciling = true;
 	}
 
-	reconciler = std::thread([this, returning]() { reconcile(returning); });
+	// A rebuild that came up short is a store that only a pass fills, and nothing else would run one.
+	reconciler = std::thread([this, behind = returning || !whole]() { reconcile(behind); });
 
 	// The store is filled and the node has joined, so the port is opened to the connections that
 	// were refused while it was not ready to answer them.
@@ -299,7 +315,7 @@ void server::server::accept()
 		boost::beast::bind_front_handler(&server::on_accept, shared_from_this()));
 }
 
-void server::server::reconcile(bool returning)
+void server::server::reconcile(bool behind)
 {
 	std::unique_lock<std::mutex> lock(reconcile_mutex);
 
@@ -317,7 +333,7 @@ void server::server::reconcile(bool returning)
 	// membership this node can see the change in: the share it owns moved to another node while
 	// it was away, and the records it no longer owns are still here. The rebuild that would have
 	// caught it up runs on an empty store alone, so what answers this is the first pass.
-	int attempts = returning ? reconcile_attempts : 0;
+	int attempts = behind ? reconcile_attempts : 0;
 
 	while (!reconcile_wake.wait_for(lock, reconcile_interval(), [this]() { return !reconciling; }))
 	{
@@ -346,15 +362,13 @@ void server::server::reconcile(bool returning)
 			{
 				reconcile::outcome done = reconcile::reconcile(repository, nodes, reconciling);
 
+				nodes.vouch(done.filled, done.generation);
+
 				// A pass that is waiting on nothing has done everything this membership asks
 				// for. One that is waiting keeps its remaining attempts, because what unblocks
 				// it is another node's own pass rather than anything this one can do again.
 				if (done.settled())
 				{
-					// A pass waiting on nothing has fetched everything this node owns and holds
-					// nothing for, so a store that started short of its share is short no longer.
-					router.is_incomplete(false);
-
 					attempts = 0;
 				}
 				else if (done.moved())

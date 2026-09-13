@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 
 #include "cluster/cluster.h"
 #include "repository/repository.h"
@@ -38,6 +39,14 @@ namespace reconcile
 		// this node is unknown rather than absent, so the membership this pass ran against has
 		// not been applied — and a membership that does not move again buys no pass to apply it.
 		bool refused = false;
+
+		// The partitions every node asked for them answered for in full, for every table, and the
+		// generation of the membership the pass read them under. **What a read needs is this and
+		// not a settled pass**: a clear down still waiting, or a node deaf about another share, says
+		// nothing about whether these ones are whole.
+		cluster::partition_set filled;
+
+		uint64_t generation = 0;
 
 		bool settled() const;
 

@@ -85,6 +85,19 @@ namespace cluster
 		// thread. Never null once the constructor has run.
 		std::atomic<membership> member_list;
 
+		// Replaced with the membership and under the same lock, so a vouch cannot land between
+		// the membership taking a partition away and the vouch for it being dropped.
+		mutable std::shared_mutex vouch_mutex;
+
+		uint64_t members_generation = 0;
+
+		partition_set holding;
+
+		// The generation each partition was last gained in.
+		std::array<uint64_t, partition_count> held_since = {};
+
+		partition_set filled;
+
 		// Whether etcd answered the last read of the membership. One it did not answer for is kept
 		// as it was: its nodes are where they were, so it routes a read as well as it ever did, but
 		// the leases it was read under may have run out since, so it orders no write.
@@ -149,6 +162,12 @@ namespace cluster
 
 		partition_set holdings() const override;
 
+		uint64_t generation() const override;
+
+		void vouch(const partition_set &partitions, uint64_t since) override;
+
+		partition_set vouched() const override;
+
 		std::map<std::string, partition_set> holders(const partition_set &partitions) const override;
 
 		std::map<std::string, partition_set> holders_in(
@@ -190,6 +209,10 @@ namespace cluster
 		bool register_node();
 
 		void read_members();
+
+		void replace_members(std::vector<member> names);
+
+		partition_set holdings_of(const std::vector<member> &registered) const;
 
 		void read_leaders();
 

@@ -522,6 +522,69 @@ TEST(reconcile_test, a_share_the_node_holding_it_would_not_answer_for_is_not_set
 	EXPECT_FALSE(repository.read_record("account", "a").has_value());
 }
 
+TEST(reconcile_test, fills_a_partition_every_node_holding_it_answered_for)
+{
+	repository::fake_repository repository = store({});
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { self, peer, other });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({ "a" }) });
+	nodes.answer(peer, records({}));
+	nodes.answer(other, records({}));
+
+	reconcile::outcome done = reconciled(repository, nodes, running);
+
+	EXPECT_TRUE(done.filled.test(cluster::partition_of("a")));
+	EXPECT_EQ(done.filled, nodes.holdings());
+}
+
+TEST(reconcile_test, does_not_fill_a_partition_a_node_holding_it_would_not_answer_for)
+{
+	repository::fake_repository repository = store({});
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { self, peer, other });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({ "a" }) });
+	nodes.answer(peer, records({}));
+
+	reconcile::outcome done = reconciled(repository, nodes, running);
+
+	EXPECT_TRUE(done.refused);
+	EXPECT_FALSE(done.filled.test(cluster::partition_of("a")));
+}
+
+// What a read needs is the partition, and a clear down still waiting on another node is a pass that
+// has not settled while the partition it fetched is whole.
+TEST(reconcile_test, fills_a_partition_while_a_clear_down_is_still_waiting)
+{
+	repository::fake_repository repository = store({ "gone" });
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("gained", { self, peer, other });
+	nodes.copies("gone", { mate, peer, other });
+	nodes.answer_in_turn(mate, { named({ "account" }), records({ "gained" }), holds({}) });
+	nodes.answer(peer, records({}));
+	nodes.answer(other, records({}));
+
+	reconcile::outcome done = reconciled(repository, nodes, running);
+
+	EXPECT_EQ(1u, done.deferred);
+	EXPECT_FALSE(done.settled());
+	EXPECT_TRUE(done.filled.test(cluster::partition_of("gained")));
+}
+
+TEST(reconcile_test, fills_nothing_when_no_node_names_the_tables)
+{
+	repository::fake_repository repository = store({});
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { self, peer, other });
+
+	reconcile::outcome done = reconciled(repository, nodes, running);
+
+	EXPECT_TRUE(done.filled.none());
+}
+
 // The halves are not each other's precondition, so a node that would not answer costs the pass
 // what that node holds and nothing else: what the owner in this zone did answer for is still safe
 // to give up.
