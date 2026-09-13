@@ -728,7 +728,7 @@ As in [`perf/`](../perf).
 | `CHAOS_STORM_SPREAD` | `write-storm` only: a key written once every this many of those | 10 |
 | `CHAOS_STORM_PAUSE` | `write-storm` only: seconds between its client's writes | 0.5 |
 | `CHAOS_STORM_RETRY` | `write-storm` only: seconds between the retries of a refused write | 2 |
-| `CHAOS_STORM_GRACE` | `write-storm` only: the window the load balancer's own health check owns | 25 seconds |
+| `CHAOS_STORM_GRACE` | `write-storm` only: the window the load balancer's own health check owns | 10 seconds |
 | `CHAOS_STORM_HOLD` | `write-storm` only: seconds a node is held out of the membership | 60 |
 | `CHAOS_STORM_ROLLS` | `write-storm` only: times round the zones taking etcd from a whole one | 2 |
 | `CHAOS_STORM_SETTLE` | `write-storm` only: seconds between one isolation and the next | 20 |
