@@ -138,6 +138,16 @@ bool router::router::is_incomplete() const
 	return incomplete;
 }
 
+void router::router::is_draining(bool value)
+{
+	draining = value;
+}
+
+bool router::router::is_draining() const
+{
+	return draining;
+}
+
 router::response router::router::route(const request &request)
 {
 	const std::vector<std::string> &path = request.path;
@@ -150,12 +160,14 @@ router::response router::router::route(const request &request)
 		}
 
 		bool unled = nodes.is_unled();
+		bool leaving = draining.load();
 
 		boost::json::object health {
 			{ "status", "ok" },
 			{ "write_stalled", repository.is_write_stalled() },
 			{ "incomplete", incomplete.load() },
-			{ "unled", unled }
+			{ "unled", unled },
+			{ "draining", leaving }
 		};
 
 		// Where this node reads the membership from, and whether it is still in it. An instance
@@ -211,7 +223,7 @@ router::response router::router::route(const request &request)
 		// this is the only place it can be told. It goes on serving the keys it holds and
 		// answering its peers, which do not reach it this way.
 		return json_response(
-			unled ? boost::beast::http::status::service_unavailable : boost::beast::http::status::ok,
+			unled || leaving ? boost::beast::http::status::service_unavailable : boost::beast::http::status::ok,
 			health);
 	}
 

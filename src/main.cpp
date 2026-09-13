@@ -1,3 +1,4 @@
+#include <chrono>
 #include <memory>
 #include <signal.h>
 
@@ -9,11 +10,13 @@
 
 std::shared_ptr<server::server> database_server;
 
+std::chrono::seconds drain_seconds;
+
 void handle_signal(int)
 {
 	// Closing the acceptor is what ends serving, and main leaves on its own once it has. Exiting
 	// here instead would destroy the io_context under the threads still running it.
-	database_server->close();
+	database_server->drain(drain_seconds);
 }
 
 int main(void)
@@ -21,6 +24,8 @@ int main(void)
 	// libcurl is initialised once here rather than by the first handle to be created, because a
 	// node talks to etcd and to its neighbours from several threads at once.
 	curl_global_init(CURL_GLOBAL_DEFAULT);
+
+	drain_seconds = server::drain_interval();
 
 	int thread_pool_size = server::thread_pool_size();
 	std::string data_directory = server::data_directory();

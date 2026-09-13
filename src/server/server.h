@@ -45,6 +45,11 @@ namespace server
 	// pass is never coming — the copy it was waiting on is simply kept.
 	constexpr int reconcile_attempts = 12;
 
+	// How long a node told to stop goes on serving with its health check failing, from ASYNCDB_DRAIN in
+	// seconds. It is the load balancer's arithmetic and not this process's, so nothing is the default:
+	// a node with nothing in front of it has nobody to wait for.
+	std::chrono::seconds drain_interval();
+
 	class session;
 
 	class server : public std::enable_shared_from_this<server>
@@ -54,6 +59,9 @@ namespace server
 		boost::asio::io_context io_context;
 
 		boost::asio::ip::tcp::acceptor acceptor;
+
+		// On the acceptor's strand, so that a drain ending and close() cancelling it cannot cross.
+		boost::asio::steady_timer drain_timer;
 
 		boost::asio::ip::port_type port_number;
 
@@ -105,6 +113,9 @@ namespace server
 		boost::asio::ip::port_type port() const;
 
 		void close();
+
+		// Fails the health check while serving everything else, and closes once that long has gone.
+		void drain(std::chrono::seconds seconds);
 
 	private:
 		void hold(const std::shared_ptr<session> &session);

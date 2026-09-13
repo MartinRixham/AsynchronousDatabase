@@ -334,6 +334,17 @@ sends to all of them, so etcd lost altogether — where every node is in that
 state at once — is a cluster that goes on serving reads rather than one nothing
 can reach.
 
+**And it fails on a node that is being stopped, before it stops answering.** An
+instance stopped or terminated shuts down cleanly, and Docker stops the container
+with a `SIGTERM`. The container is run with `ASYNCDB_DRAIN=15`: for fifteen
+seconds the node answers this check `503` with
+[`draining`](/runbook/#health) set and serves everything else as normal, and only
+then leaves the cluster and closes. Fifteen is two failed checks five seconds
+apart and one more; `--stop-timeout 30` is what stops Docker killing the drain
+part way through. Without it the load balancer learns a node has gone from the
+checks it fails *after* it has gone, and every request sent to it in between is a
+`502` — or, once the host is off, a `504` the idle timeout later.
+
 **The idle timeout is fifteen seconds, and not the sixty it defaults to.** The
 health check stops *new* requests going to a target that has gone, and does
 nothing for one already sent to it. A stopped instance or a zone cut off by the

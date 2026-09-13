@@ -211,6 +211,24 @@ TEST(router_test, health_refuses_the_check_of_a_node_that_can_order_no_write)
 	EXPECT_EQ(response.json.at("write_stalled"), false);
 }
 
+TEST(router_test, health_refuses_the_check_of_a_draining_node_and_serves_everything_else)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster alone = lone_node();
+	router::router router(repository, alone);
+
+	EXPECT_EQ(router.route(get("/health")).json.at("draining"), false);
+
+	router.is_draining(true);
+
+	router::response response = router.route(get("/health"));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
+	EXPECT_EQ(response.json.at("draining"), true);
+	EXPECT_EQ(response.json.at("status"), "ok");
+	EXPECT_EQ(router.route(get("/table")).status, boost::beast::http::status::ok);
+}
+
 // A node with no membership but itself takes itself to hold every key and holds only its share, so a
 // 404 from it may be another node's record.
 TEST(router_test, refuse_a_read_on_a_node_with_no_membership_but_itself)

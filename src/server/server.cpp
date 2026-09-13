@@ -95,6 +95,19 @@ std::chrono::seconds server::reconcile_interval()
 	return std::chrono::seconds(reconcile_seconds);
 }
 
+std::chrono::seconds server::drain_interval()
+{
+	const char *configured = getenv("ASYNCDB_DRAIN");
+	int seconds = 0;
+
+	if (configured != NULL && boost::conversion::try_lexical_convert(std::string(configured), seconds) && seconds > 0)
+	{
+		return std::chrono::seconds(seconds);
+	}
+
+	return std::chrono::seconds(0);
+}
+
 server::server::server(
 	boost::asio::ip::port_type port,
 	int threads,
@@ -104,6 +117,7 @@ server::server::server(
 	thread_count(threads),
 	io_context(thread_count),
 	acceptor(boost::asio::make_strand(io_context)),
+	drain_timer(acceptor.get_executor()),
 	repository(repository::rocksdb_repository(directory, memory_bytes)),
 	nodes(cluster_nodes),
 	router(router::router(repository, nodes))
@@ -407,7 +421,13 @@ void server::server::close()
 
 	// The acceptor belongs to a strand, so it is closed on that strand rather than on whichever
 	// thread asked for it.
-	boost::asio::dispatch(acceptor.get_executor(), [this]() { acceptor.close(); });
+	boost::asio::dispatch(
+		acceptor.get_executor(),
+		[this]()
+		{
+			drain_timer.cancel();
+			acceptor.close();
+		});
 
 	for (size_t i = 0; i < live.size(); i++)
 	{
@@ -418,4 +438,40 @@ void server::server::close()
 			connection->stop();
 		}
 	}
+}
+
+void server::server::drain(std::chrono::seconds seconds)
+{
+	if (seconds.count() <= 0)
+	{
+		close();
+
+		return;
+	}
+
+	boost::asio::dispatch(
+		acceptor.get_executor(),
+		[this, seconds]()
+		{
+			if (router.is_draining() || !acceptor.is_open())
+			{
+				return;
+			}
+
+			router.is_draining(true);
+
+			DEBUG("Draining for " + std::to_string(seconds.count()) + " seconds before closing.");
+
+			drain_timer.expires_after(seconds);
+			drain_timer.async_wait(
+				[this](const boost::system::error_code &error)
+				{
+					// A cancelled drain is one close() already ended, and a timer that fired as it
+					// did has a closed acceptor to find.
+					if (!error && acceptor.is_open())
+					{
+						close();
+					}
+				});
+		});
 }

@@ -535,7 +535,7 @@ nowhere else:
 
 | The fault | The window | Because |
 | --- | --- | --- |
-| An instance stopped | `CHAOS_STORM_GRACE`, 25 seconds | `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` in `cloudformation.yaml` is five seconds and two checks, and the fifteen on top is its idle timeout: a request already sent to the target is answered `504` that long after it went silent |
+| An instance stopped | `CHAOS_STORM_GRACE`, 10 seconds | A stop is a clean shutdown, so the node [drains](../doc/deployment/database.md): it fails `/health` while it still serves, and the load balancer has taken it out before it goes silent. A node that went silent first would cost a `504` the fifteen second idle timeout after the request, which no window this short covers |
 | A zone cut off, a node losing etcd | That, plus the ten second membership lease | A node losing etcd answers `/health` as normal until it has decided it is [unled](../doc/runbook/membership.md), and it cannot decide that sooner than a lease |
 
 A window opens when the fault is applied and closes that many seconds after the call that applied

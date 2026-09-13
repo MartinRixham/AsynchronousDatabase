@@ -398,7 +398,10 @@ Resources:
               sleep 5
             done
 
+            # A stopped container drains for two of the target group's failed checks and one more, and
+            # Docker is told to wait longer than that before it kills it.
             docker run -d --restart always -p 80:80 -p 8080:8080 \
+              --stop-timeout 30 \
               --log-driver awslogs \
               --log-opt awslogs-region=$REGION \
               --log-opt awslogs-endpoint=https://logs.$REGION.api.aws \
@@ -409,6 +412,7 @@ Resources:
               -e ASYNCDB_ETCD=$ASYNCDB_ETCD \
               -e ASYNCDB_NODE=http://$PRIVATE_IP:8080 \
               -e ASYNCDB_ZONE=$ZONE \
+              -e ASYNCDB_DRAIN=15 \
               $IMAGE
 
   ApplicationLoadBalancer:

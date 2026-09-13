@@ -85,6 +85,7 @@ all that constrain them, and the sizes are counted in UTF-8 bytes.
 | --- | --- |
 | `ASYNCDB_DATA` | The directory the store is kept in. Default `/var/lib/asyncdb` |
 | `ASYNCDB_THREADS` | How many threads serve requests. Default eight a core, between 16 and 128 |
+| `ASYNCDB_DRAIN` | Seconds a node told to stop (`SIGTERM`) goes on serving with `/health` answering `503` and `draining` set, so that a load balancer has stopped choosing it before it stops answering. Default 0, which closes at once; the AWS stack sets 15 |
 | `ASYNCDB_MEMORY` | Mebibytes the store may hold in memory — the block cache and the memtables together. Default 512. It is the one number to size to the instance: a node holding a share of a terabyte wants a great deal more of it than a node in a test |
 
 | Header | Means |

@@ -70,8 +70,12 @@ protected:
 	// database with it, so serving is stopped and waited for instead.
 	void TearDown()
 	{
-		database_server->close();
-		thread.join();
+		if (thread.joinable())
+		{
+			database_server->close();
+			thread.join();
+		}
+
 		database_server = nullptr;
 	}
 
@@ -145,7 +149,29 @@ TEST_F(server_test, health_request)
 	result response = get("/health");
 
 	EXPECT_EQ(response.code, 200);
-	EXPECT_EQ(response.body, "{\"status\":\"ok\",\"write_stalled\":false,\"incomplete\":false,\"unled\":false}");
+	EXPECT_EQ(
+		response.body,
+		"{\"status\":\"ok\",\"write_stalled\":false,\"incomplete\":false,\"unled\":false,\"draining\":false}");
+}
+
+TEST_F(server_test, serve_while_draining_and_stop_once_the_drain_is_over)
+{
+	database_server->drain(std::chrono::seconds(2));
+
+	result health = get("/health");
+
+	EXPECT_EQ(health.code, 503);
+	EXPECT_EQ(boost::json::parse(health.body).as_object().at("draining"), true);
+	EXPECT_EQ(get("/table").code, 200);
+
+	thread.join();
+}
+
+TEST_F(server_test, close_a_draining_server_without_waiting_for_the_drain)
+{
+	database_server->drain(std::chrono::seconds(600));
+
+	EXPECT_EQ(get("/health").code, 503);
 }
 
 TEST_F(server_test, put_request)
@@ -434,6 +460,27 @@ TEST(server_threads_test, take_the_size_of_the_pool_from_the_environment)
 	EXPECT_GE(server::thread_pool_size(), 16);
 
 	unsetenv("ASYNCDB_THREADS");
+}
+
+TEST(server_threads_test, take_the_drain_from_the_environment_and_drain_for_nothing_otherwise)
+{
+	unsetenv("ASYNCDB_DRAIN");
+
+	EXPECT_EQ(server::drain_interval(), std::chrono::seconds(0));
+
+	setenv("ASYNCDB_DRAIN", "15", 1);
+
+	EXPECT_EQ(server::drain_interval(), std::chrono::seconds(15));
+
+	setenv("ASYNCDB_DRAIN", "not a number", 1);
+
+	EXPECT_EQ(server::drain_interval(), std::chrono::seconds(0));
+
+	setenv("ASYNCDB_DRAIN", "-4", 1);
+
+	EXPECT_EQ(server::drain_interval(), std::chrono::seconds(0));
+
+	unsetenv("ASYNCDB_DRAIN");
 }
 
 // The store is one directory an instance opens and opens again, and where it is is configurable

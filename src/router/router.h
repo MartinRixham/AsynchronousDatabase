@@ -47,6 +47,8 @@ namespace router
 		// atomic rather than a field a reader happens to see.
 		std::atomic<bool> incomplete = false;
 
+		std::atomic<bool> draining = false;
+
 	public:
 		router(repository::repository &repo, cluster::cluster &nodes);
 
@@ -60,6 +62,12 @@ namespace router
 		void is_incomplete(bool incomplete);
 
 		bool is_incomplete() const;
+
+		// Whether this node is on its way out. It serves everything as normal and fails its health
+		// check, so that a load balancer has stopped choosing it by the time it stops answering.
+		void is_draining(bool draining);
+
+		bool is_draining() const;
 
 	private:
 		response route_tables(const request &request);

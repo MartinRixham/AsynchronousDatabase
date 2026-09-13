@@ -514,6 +514,12 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   It also owns the single `rocksdb_repository` and `router`, which are shared
   by reference across all sessions — anything reached from the router must be safe for concurrent use.
   Constructing with port `0` picks a free port and exposes it via `port()`; tests rely on this.
+  **A `SIGTERM` drains before it closes**: `drain()` sets `router::is_draining`, which `/health`
+  answers `503` for while every other request is served, and calls `close()` once
+  `server::drain_interval()` has gone — `ASYNCDB_DRAIN`, nothing by default and fifteen seconds in
+  `cloudformation.yaml`, beside a `--stop-timeout` that outlasts it. That is what takes a stopped
+  instance out of the load balancer while it still answers: one that goes silent first costs every
+  request sent to it a `504` the idle timeout later.
 - **`server::session`** is one connection: async read → `handle_request()` → async write, looping while
   keep-alive. The server holds every live session weakly, because **closing the acceptor does not
   close the connections already made**: peers and the nginx upstream pool both keep theirs open, and
