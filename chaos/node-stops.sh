@@ -26,6 +26,11 @@ expect "$count" 6 "the stack is running six database nodes"
 [ "$count" = 6 ] || { verdict; exit 1; }
 
 victim=$(echo "$before" | head -1)
+address=$(aws ec2 describe-instances --instance-ids "$victim" \
+	--query 'Reservations[].Instances[].PrivateIpAddress' --output text)
+
+# An address that could not be read matches no node, and the wait below would pass on nothing.
+[ -n "$address" ] || { result 1 "the address of $victim could be read"; verdict; exit 1; }
 
 # Stopping is the whole fault, and what happens to the instance afterwards belongs to the group:
 # its health check is EC2, so a stopped instance is an unhealthy one that it terminates and
@@ -62,9 +67,10 @@ preflight()
 fault_start || { verdict; exit 1; }
 
 # The lease is what removes it, and the load balancer's health check is what stops routing to
-# it. Five nodes in three zones is both of those having happened: the zone it was in still has
-# its other node, so the number of copies never changed.
-await '(.nodes | length) == 5 and (.zones | length) == 3' "$settle" \
+# it. Its address gone and three zones left is both of those having happened. Five nodes is not
+# asked for: the group can launch the replacement and have it join before the drain gives the
+# lease up, and then the membership goes from one six to another without ever being five.
+await "([ .nodes[] | select(contains(\"//$address:\")) ] | length) == 0 and (.zones | length) == 3" "$settle" \
 	"the stopped node left the membership and the zone count did not change"
 
 load_report "while the node was going away"
