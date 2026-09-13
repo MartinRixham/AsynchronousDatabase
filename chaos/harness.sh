@@ -983,6 +983,24 @@ load_report()
 		"$1" "$answered" "$reads" "$taken" "$writes"
 }
 
+# expect_load_reads <description> — every read the load made since the last report answered 2xx.
+# load_report empties the reads, so this comes before the report it asserts on.
+expect_load_reads()
+{
+	local refused
+
+	[ -s "$work/reads" ] || return 0
+
+	refused=$(grep -cv '^2' "$work/reads") || refused=0
+
+	if [ "$refused" = 0 ]; then
+		result 0 "$1"
+	else
+		result 1 "$1 — $refused were not: $(grep -v '^2' "$work/reads" | sort | uniq -c | sort -rn \
+			| awk '{ printf "%s×%s ", $1, $2 }')"
+	fi
+}
+
 # load_survivors — four numbers over the writes the cluster acknowledged: how many there were, how
 # many no copy answers for, how many answer something other than what was written, and how many of
 # the **refused** writes are readable anyway.

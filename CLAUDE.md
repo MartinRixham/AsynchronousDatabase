@@ -199,7 +199,7 @@ peer can reach fails one.
   fault anybody has. `start_load` keeps a client on the load balancer for the whole of an
   experiment — reads of the seeded keys as fast as one connection answers them, and a write every
   `CHAOS_LOAD_PAUSE` (0.2 seconds) — and `CHAOS_LOAD=0` turns it off. The reads are reported a
-  phase at a time and never asserted on — everywhere but `write-storm` — a fault costing reads
+  phase at a time and never asserted on — everywhere but `write-storm` and `nodes-removed` — a fault costing reads
   being the load balancer's health check as much as the database. The writes are the assertion no error code can make:
   `expect_load_kept` is every write the cluster answered 2xx still being there and holding what was
   written, which every fault that breaks nothing permanently has to leave standing. The three that
@@ -290,7 +290,7 @@ peer can reach fails one.
   **every hot key holds the value last acknowledged for it**, both given `CHAOS_CONVERGE` — a copy
   that was away is entitled to lag until the reconcile fetch catches it up, so **lagging is allowed
   and staying behind is not**, which is what separates this from `copies_agree`, where every key is
-  written once and the question needs no time at all. Beside them, a readback for durability. **It is also the only experiment that asserts on reads**: a read the
+  written once and the question needs no time at all. Beside them, a readback for durability. **It is also the only fault experiment that asserts on reads** (`nodes-removed` is the resize that does): a read the
   **database** refused — a 404 or any API error document — fails it wherever it falls, and a read
   the proxy or the load balancer failed fails it unless it falls in the window the load balancer
   itself owns — `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` from `cloudformation.yaml`
@@ -303,7 +303,7 @@ peer can reach fails one.
   parameters of `cloudformation.yaml` and nothing else: `Zones` is how many copies of the keyspace
   there are — a zone holds exactly one — and `Nodes` is how many ways a zone splits the copy it
   holds. `zone-retired` takes the replication factor from three to two and back, `nodes-added`
-  takes the tier to nine instances and `nodes-removed` to three, and `heal` is the update back, so
+  takes the tier to nine instances and `nodes-removed` to four, and `heal` is the update back, so
   a run that dies inside one leaves the stack the shape it found it. **`zone-retired` then stops
   the instances the group is no longer allowed to keep**, because a group given one subnet fewer
   rebalances out of the one it lost in its own time — a quarter of an hour of the scheduler's
@@ -330,9 +330,11 @@ peer can reach fails one.
   A node that cannot be asked is a failed assertion and not an empty store.
 - **What a terminated instance took with it is measured and never asserted.** A key whose owner in
   every zone was terminated by the same update went with them, and nothing in the cluster puts that
-  back — no rebuild of a copy, no backup. Every resize prints how many seeded keys are still held
-  somewhere. What is asserted about a failed read is its shape: a 2xx or a 404, never a 5xx and
-  never a request that did not answer.
+  back — no rebuild of a copy, no backup. `nodes-added` and `zone-retired` print how many seeded
+  keys are still held somewhere, and assert of a failed read only its shape: a 2xx or a 404, never a
+  5xx and never a request that did not answer. **`nodes-removed` shrinks by two so that it can
+  assert instead**: one zone keeps both its nodes and so a copy of every key, and every read of
+  the load and of the seed has to answer 2xx.
 - **`disk-fills` tests the proxy as much as the store.** nginx spools a request body over 8 KiB
   to a temporary file, so a full volume answers `500 unavailable` out of `server/50x.json` before
   the database is asked at all — which is why the experiment writes in two sizes, a megabyte the

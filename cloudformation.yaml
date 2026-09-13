@@ -41,13 +41,14 @@ Parameters:
   Nodes:
     Type: String
     Default: "6"
-    AllowedValues: ["3", "6", "9"]
+    AllowedValues: ["3", "4", "6", "9"]
     Description: >-
       How many database instances the group runs. The group balances them over the subnets it
       spans, so this count is the whole of the arrangement inside a zone: six over three zones is
       three copies of the keyspace each split in half, and nine is the same three copies split in
       three. It moves three at a time, one per zone, so that no zone is left holding a larger share
-      than the others.
+      than the others. Four is the exception, for chaos/nodes-removed: a shrink from six that leaves
+      one zone both of its nodes.
 
   Zones:
     Type: String
@@ -66,6 +67,8 @@ Mappings:
   Capacity:
     "3":
       Max: "4"
+    "4":
+      Max: "5"
     "6":
       Max: "7"
     "9":

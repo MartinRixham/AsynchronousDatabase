@@ -224,7 +224,9 @@ because CloudFormation cannot add one to a number: it is one above the desired
 capacity for every allowed value, so that a replacement can launch before the
 instance it replaces goes. The allowed values are multiples of three for the same
 reason **capacity is worth moving three at a time**, one per zone, so that no zone
-is left holding a larger share than the others. Three, spread over three subnets,
+is left holding a larger share than the others — all but four, which is there for
+`chaos/nodes-removed`: a shrink from six that leaves one zone holding both of its
+nodes, and so a copy of every key. Three, spread over three subnets,
 is one instance per availability zone; `MinSize: 1` allows the group to be taken
 down to one by hand.
 

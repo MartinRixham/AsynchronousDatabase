@@ -21,7 +21,7 @@ broke came back, and an assertion that did not hold is a non-zero exit — which
 | `containers-restart` | [The container has stopped](../doc/runbook/nodes.md), [what recovers by itself](../doc/runbook/index.md) | `SIGKILL` to every container's own process at once, three times over |
 | `write-storm` | [etcd cannot be reached](../doc/runbook/membership.md), [the membership is wrong](../doc/runbook/membership.md), [when ownership moves](../doc/runbook/rebuild.md) | A zone cut off, an instance stopped and nodes **held out of the membership**, two at a time, under a client that retries a refused write until it is taken |
 | `nodes-added` | [Growing a cluster](../doc/runbook/storage.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update taking the tier to **nine** instances, and back to six |
-| `nodes-removed` | [No rebalancing](../doc/runbook/storage.md) | A stack update taking the tier to **three** instances, and back to six |
+| `nodes-removed` | [No rebalancing](../doc/runbook/storage.md) | A stack update taking the tier to **four** instances, and back to six |
 | `zone-retired` | [Fewer zones than the deployment has](../doc/runbook/membership.md), [the rebuild](../doc/runbook/rebuild.md) | A stack update giving the group **two** subnets instead of three, and `ec2:StopInstances` on what is left in the third |
 
 The last three [assert the two invariants a resize has to leave behind](#the-two-invariants-they-assert),
@@ -56,7 +56,7 @@ The two halves are not there for the same reason.
 
 | | Is | And |
 | --- | --- | --- |
-| The **reads** | Of the seeded keys, every one of which exists, so a read that is not answered 2xx is the fault and never the key | Reported per phase and never asserted on. How many reads a fault costs is the load balancer's health check interval as much as it is the database — [`write-storm` is the one experiment that asserts on them](#it-is-the-one-experiment-that-asserts-on-reads), and it does it by excusing exactly that window and nothing else |
+| The **reads** | Of the seeded keys, every one of which exists, so a read that is not answered 2xx is the fault and never the key | Reported per phase and never asserted on. How many reads a fault costs is the load balancer's health check interval as much as it is the database — [`write-storm` is the one fault that asserts on them](#it-is-the-one-experiment-that-asserts-on-reads), and it does it by excusing exactly that window and nothing else; `nodes-removed` asserts every one of them is 2xx, because [a shrink of two takes no key's last copy](#what-is-measured-and-never-asserted) |
 | The **writes** | Keys of their own, each written once and never again | **The assertion no error code can make**: a write answered 2xx was taken by every copy of the key, so every one of them has to still be there when the fault is over, and every copy of it has to hold the same thing |
 
 A `---- while the node was going away: 121 of 190 reads and 24 of 48 writes were answered 2xx` line
@@ -516,7 +516,7 @@ repair.
 
 #### It is the one experiment that asserts on reads
 
-Everywhere else the reads are [reported and never asserted on](#every-experiment-runs-under-load),
+Everywhere else but `nodes-removed` the reads are [reported and never asserted on](#every-experiment-runs-under-load),
 because a fault costs reads through the load balancer's own health check as much as through the
 database. Here the rule is that **a read that was not answered 2xx fails the experiment**, and it
 is split by **who refused**: a 404 or any error document of the API is the database, because the
@@ -564,7 +564,7 @@ The two parameters are the two factors, one each:
 | | Is | Moving it |
 | --- | --- | --- |
 | `Zones` | How many copies of the keyspace there are — a zone holds exactly one | `zone-retired`, three copies down to two and back |
-| `Nodes` | How many ways a zone splits the copy it holds | `nodes-added` to nine, `nodes-removed` to three |
+| `Nodes` | How many ways a zone splits the copy it holds | `nodes-added` to nine, `nodes-removed` to four |
 
 **Three is the ceiling for `Zones` and two the floor**, because there is no fourth subnet to grow
 into and one zone is no replication at all. So the increase is asserted on the way back rather than
@@ -647,16 +647,21 @@ because `leads` is a node's own count and the load balancer answers from whichev
 
 ### What is measured and never asserted
 
-**What a terminated instance took with it.** Every resize prints how many of the seeded keys are
+**What a terminated instance took with it.** `nodes-added` and `zone-retired` print how many of the seeded keys are
 still held by some node, and how many of the writes the load made and the cluster *acknowledged*
 are held by no copy afterwards — the same loss counted over records written while the tier was
 moving rather than before it. A key whose owner in *every* zone was terminated in the same update went
 with them — every copy of it left at once — and no mechanism inside the cluster puts that back:
-there is [no rebuild of a copy](../doc/runbook/storage.md#what-there-is-not) and no backup. Roughly
-one key in eight of a six-to-three shrink is in that position, and the number is the deployment's
-own hashing rather than anything the database decides.
+there is [no rebuild of a copy](../doc/runbook/storage.md#what-there-is-not) and no backup. How
+many keys are in that position is the deployment's own hashing rather than anything the database
+decides.
 
-The shape of a failed read is asserted, though: every read of a resized tier is a 2xx or a 404,
+**`nodes-removed` is the resize that asserts instead**, because it shrinks the tier by two and not
+by three: the group takes one node from each of two zones, the third keeps both of its, and a zone
+holds a copy of every key — so no key loses its last copy, and every read, of the load and of the
+seeded keys, has to answer 2xx at the first attempt, through the shrink and the growth back.
+
+The shape of a failed read is asserted in the other two: every read of a resized tier is a 2xx or a 404,
 never a 5xx and never a request that did not answer. A key a resize took away is not found; a
 cluster that cannot answer is a different fault, and a count of failures alone cannot tell the two
 apart.
