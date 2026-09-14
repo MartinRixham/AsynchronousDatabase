@@ -169,6 +169,10 @@ namespace
 			return true;
 		}
 
+		void restore_terms(const ::cluster::partition_terms &) override
+		{
+		}
+
 		std::optional<router::response> send_all(
 			const std::vector<std::string> &,
 			const router::request &) const override

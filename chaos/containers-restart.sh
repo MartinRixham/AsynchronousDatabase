@@ -104,10 +104,8 @@ term_probe_arm()
 	expect "$rejected" 409 "and one in an older term is refused before the restart"
 }
 
-# term_probe_check — after the restart, the same older-term write, which a node that persisted the
-# term it applied would refuse again. This one forgot it (cluster::etcd_cluster::terms is in memory
-# only) and accepts it. The assertion is the behaviour that should hold, so it FAILS on the current
-# code deliberately — README.md#the-one-assertion-here-that-is-meant-to-fail is why.
+# term_probe_check — after the restart, the same older-term write, which the node refuses again
+# because the term it applied is in its store. README.md#the-term-outlives-the-process is why.
 term_probe_check()
 {
 	local accepted held

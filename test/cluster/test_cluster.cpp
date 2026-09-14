@@ -185,9 +185,14 @@ cluster::etcd_registration cluster::test_cluster::registration() const
 	return etcd_registration();
 }
 
-bool cluster::test_cluster::accept(const std::string &, int64_t sent)
+bool cluster::test_cluster::accept(const std::string &key, int64_t sent)
 {
-	return sent == 0 || sent >= term;
+	return sent == 0 || (sent >= term && sent >= restored[partition_of(key)]);
+}
+
+void cluster::test_cluster::restore_terms(const partition_terms &applied)
+{
+	restored = applied;
 }
 
 router::response cluster::test_cluster::send(const std::string &node, const router::request &request) const

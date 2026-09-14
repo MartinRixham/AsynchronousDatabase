@@ -98,6 +98,11 @@ namespace repository
 
 		virtual void write_record(const std::string &table_name, const record::record &record) = 0;
 
+		// The newest term of any record this store was written, for each partition. It is kept
+		// beside the records and written with the one that raised it, so it outlives the process
+		// that applied it exactly as long as the records it fences do.
+		virtual cluster::partition_terms read_terms() const = 0;
+
 		virtual std::optional<std::string> read_record(const std::string &table_name, const std::string &key) const = 0;
 
 		virtual scan::page scan_records(const std::string &table_name, const scan::range &range) const = 0;

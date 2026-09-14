@@ -1,6 +1,7 @@
 #ifndef CLUSTER_PARTITION_H
 #define CLUSTER_PARTITION_H
 
+#include <array>
 #include <bitset>
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +28,9 @@ namespace cluster
 	// what it holds rather than a key at a time: there is no key to ask about until the answer has
 	// arrived, and where a key belongs is decided by its partition anyway.
 	typedef std::bitset<partition_count> partition_set;
+
+	// The newest term a node has applied a write of, for each partition.
+	typedef std::array<int64_t, partition_count> partition_terms;
 
 	// A partition set as it travels, four partitions to a hexadecimal character and the highest
 	// numbered first. It is fixed width, so a query carrying one is the same length whatever the

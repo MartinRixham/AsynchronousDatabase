@@ -72,6 +72,12 @@ namespace
 	// document: what a block of write counts has been reserved up to.
 	const std::string count_key = "COUNT";
 
+	// The newest term a partition's records were written in, one record apiece beside the count.
+	std::string term_key(size_t partition)
+	{
+		return "TERM" + partition_prefix(partition);
+	}
+
 	// How many counts a reservation takes. A write is stamped out of the block held in memory, so
 	// this is how many writes there are between the two that cost a record of their own — and how
 	// many counts are given up when a process ends, which nothing but the size of the number
@@ -251,6 +257,7 @@ repository::rocksdb_repository::rocksdb_repository(const std::string &directory,
 	{
 		check_format();
 		read_tables();
+		load_terms();
 	}
 	catch (...)
 	{
@@ -497,14 +504,66 @@ void repository::rocksdb_repository::write_tables()
 void repository::rocksdb_repository::write_record(const std::string &table_name, const record::record &record)
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
+	size_t partition = cluster::partition_of(record.key);
+	int64_t term = static_cast<int64_t>(record.stamp.term);
+	std::string what = "Writing a record to \"" + table_name + "\"";
+	std::string value = record::compose_value(record.stamp, record.value);
 
-	written(
-		database->Put(
-			rocksdb::WriteOptions(),
-			table_handle(table_name),
-			store_key(record.key),
-			record::compose_value(record.stamp, record.value)),
-		"Writing a record to \"" + table_name + "\"");
+	if (term <= terms[partition].load())
+	{
+		written(
+			database->Put(rocksdb::WriteOptions(), table_handle(table_name), store_key(record.key), value),
+			what);
+
+		return;
+	}
+
+	std::lock_guard<std::mutex> raising(term_mutex);
+	rocksdb::WriteBatch batch;
+	bool raised = term > terms[partition].load();
+
+	written(batch.Put(table_handle(table_name), store_key(record.key), value), what);
+
+	// One batch, so that a record is never on disk in a term the store does not remember.
+	if (raised)
+	{
+		written(batch.Put(term_key(partition), std::to_string(term)), what);
+	}
+
+	written(database->Write(rocksdb::WriteOptions(), &batch), what);
+
+	if (raised)
+	{
+		terms[partition] = term;
+	}
+}
+
+cluster::partition_terms repository::rocksdb_repository::read_terms() const
+{
+	cluster::partition_terms applied = {};
+
+	for (size_t partition = 0; partition < cluster::partition_count; partition++)
+	{
+		applied[partition] = terms[partition].load();
+	}
+
+	return applied;
+}
+
+void repository::rocksdb_repository::load_terms()
+{
+	for (size_t partition = 0; partition < cluster::partition_count; partition++)
+	{
+		std::string held;
+		int64_t term = 0;
+
+		if (database->Get(rocksdb::ReadOptions(), term_key(partition), &held).ok())
+		{
+			boost::conversion::try_lexical_convert(held, term);
+		}
+
+		terms[partition] = term;
+	}
 }
 
 std::optional<std::string> repository::rocksdb_repository::read_record(

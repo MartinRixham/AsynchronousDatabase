@@ -190,6 +190,8 @@ namespace cluster
 
 		bool accept(const std::string &key, int64_t term) override;
 
+		void restore_terms(const partition_terms &applied) override;
+
 		router::response send(const std::string &node, const router::request &request) const override;
 
 		std::optional<router::response> send_all(

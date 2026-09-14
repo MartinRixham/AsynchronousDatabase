@@ -24,6 +24,8 @@ namespace repository
 		// there is nothing to reserve against.
 		uint64_t counts = 0;
 
+		cluster::partition_terms terms = {};
+
 		// A walk hands the files of a share to several threads at once, so a store this stands in
 		// for is one that is written from several at once. Held by pointer because the fixtures
 		// that build one of these hand it back by value.
@@ -47,6 +49,8 @@ namespace repository
 		size_t merge_schema(const table::schema &named) override;
 
 		void write_record(const std::string &table_name, const record::record &record) override;
+
+		cluster::partition_terms read_terms() const override;
 
 		std::optional<std::string> read_record(const std::string &table_name, const std::string &key) const override;
 

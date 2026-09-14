@@ -139,6 +139,20 @@ void repository::fake_repository::write_record(const std::string &table_name, co
 	}
 
 	records[table_name][record.key] = record::compose_value(record.stamp, record.value);
+
+	int64_t &term = terms[cluster::partition_of(record.key)];
+
+	if (static_cast<int64_t>(record.stamp.term) > term)
+	{
+		term = static_cast<int64_t>(record.stamp.term);
+	}
+}
+
+cluster::partition_terms repository::fake_repository::read_terms() const
+{
+	std::lock_guard<std::mutex> lock(*mutex);
+
+	return terms;
 }
 
 std::optional<std::string> repository::fake_repository::read_record(

@@ -1,6 +1,7 @@
 #ifndef REPOSITORY_ROCSKDB_REPOSITORY_H
 #define REPOSITORY_ROCSKDB_REPOSITORY_H
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -63,6 +64,13 @@ namespace repository
 
 		uint64_t counts_reserved = 0;
 
+		// The terms as they are on disk. A write in a term no newer than its partition's reads one
+		// of these and writes nothing more; the rare one that raises it takes the lock, so that two
+		// writes raising one partition cannot leave the lower of their terms on disk.
+		std::array<std::atomic<int64_t>, cluster::partition_count> terms = {};
+
+		std::mutex term_mutex;
+
 		// Refuses a store written before records carried a version, whose values would otherwise
 		// be read as a version and a value that were never written.
 		void check_format();
@@ -85,6 +93,9 @@ namespace repository
 		void close_handles();
 
 		void reserve_counts();
+
+		// `terms` read from the store, once, as it is opened.
+		void load_terms();
 
 	public:
 		explicit rocksdb_repository(const std::string &directory, size_t memory_bytes = default_memory_bytes);
@@ -110,6 +121,8 @@ namespace repository
 		size_t merge_schema(const table::schema &named) override;
 
 		void write_record(const std::string &table_name, const record::record &record) override;
+
+		cluster::partition_terms read_terms() const override;
 
 		std::optional<std::string> read_record(const std::string &table_name, const std::string &key) const override;
 

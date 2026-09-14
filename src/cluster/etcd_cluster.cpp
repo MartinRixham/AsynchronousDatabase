@@ -526,6 +526,14 @@ bool cluster::etcd_cluster::accept(const std::string &key, int64_t term)
 	return raise_term(::cluster::partition_of(key), term);
 }
 
+void cluster::etcd_cluster::restore_terms(const partition_terms &applied)
+{
+	for (size_t partition = 0; partition < partition_count; partition++)
+	{
+		raise_term(partition, applied[partition]);
+	}
+}
+
 bool cluster::etcd_cluster::raise_term(size_t partition, int64_t term)
 {
 	std::atomic<int64_t> &seen = terms[partition];

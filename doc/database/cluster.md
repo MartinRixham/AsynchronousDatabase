@@ -243,6 +243,11 @@ and a copy that has applied a write of one term refuses anything older:
 That is what stops a leader which lost its lease, but not its network, from
 writing behind the leader that replaced it.
 
+A copy keeps the newest term it has applied in its store, written with the record
+that raised it, so a node that restarts onto the volume it kept refuses exactly
+what it refused before. The tables' term needs no record of its own: every name
+in the schema already carries the term its create or delete was ordered in.
+
 ### The tables are led too
 
 A table is held by **every** node rather than by the copies of a partition, so
@@ -674,15 +679,6 @@ it ends.
   every other node has carried it out — they are all asked at once, so one
   refusing does not stop the rest. Creating a table and deleting one are both
   idempotent, so the remedy is to run the request again.
-- **A term is remembered in memory, not on disk.** A node that restarts has
-  forgotten which terms it has applied, so it accepts the first write it is sent
-  afterwards whatever term ordered it — a stale leader's included. The store is
-  a volume that outlives the process, so the node comes back holding the very
-  records that term was protecting, and the stale write overwrites a newer value
-  with an older one. It is a real hole, not a theoretical one: the only restart
-  that avoids the overwrite is an instance replaced onto an empty store, which
-  has no newer value under the key to lose — it still accepts the stale write.
-  Persisting the term with the data is what closes it.
 - **Nodes trust each other.** `X-Asyncdb-Forwarded` and `X-Asyncdb-Term` are
   honoured from anyone who sends them, so the API port belongs on a private network, exactly as it does
   without a cluster. The nginx in the image

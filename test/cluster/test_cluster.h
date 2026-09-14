@@ -28,6 +28,9 @@ namespace cluster
 
 		int64_t term = 0;
 
+		// Restored by the router before the server listens, and read by every session after.
+		partition_terms restored = {};
+
 		std::vector<member> member_list;
 
 		bool started = false;
@@ -102,6 +105,8 @@ namespace cluster
 		etcd_registration registration() const override;
 
 		bool accept(const std::string &key, int64_t term) override;
+
+		void restore_terms(const partition_terms &applied) override;
 
 		router::response send(const std::string &node, const router::request &request) const override;
 

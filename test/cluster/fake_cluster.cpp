@@ -317,7 +317,17 @@ bool cluster::fake_cluster::accept(const std::string &key, int64_t term)
 {
 	std::map<std::string, int64_t>::const_iterator seen = refused.find(key);
 
-	return term == 0 || seen == refused.end() || term >= seen->second;
+	if (term == 0)
+	{
+		return true;
+	}
+
+	return term >= restored[partition_of(key)] && (seen == refused.end() || term >= seen->second);
+}
+
+void cluster::fake_cluster::restore_terms(const partition_terms &terms)
+{
+	restored = terms;
 }
 
 std::vector<std::vector<std::string>> cluster::fake_cluster::zones() const

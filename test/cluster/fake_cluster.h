@@ -38,6 +38,8 @@ namespace cluster
 
 		std::map<std::string, int64_t> refused;
 
+		partition_terms restored = {};
+
 		bool unled_node = false;
 
 		bool alone_node = false;
@@ -156,6 +158,8 @@ namespace cluster
 		etcd_registration registration() const override;
 
 		bool accept(const std::string &key, int64_t term) override;
+
+		void restore_terms(const partition_terms &terms) override;
 
 		router::response send(const std::string &node, const router::request &request) const override;
 

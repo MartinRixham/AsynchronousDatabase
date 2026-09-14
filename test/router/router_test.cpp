@@ -1522,6 +1522,37 @@ TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_that_has_pa
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 }
 
+// A router over a store that was written in a later term is a node restarted onto the volume it
+// kept, and the record that term fenced is still there to be overwritten.
+TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_older_than_the_store_took_before_a_restart)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster before = paired_zones();
+
+	{
+		router::router router(repository, before);
+
+		create_table(router, "account");
+
+		router::request newer = put("/table/account/key/4821", "newer");
+
+		newer.forwarded = true;
+		newer.term = 60;
+
+		EXPECT_EQ(router.route(newer).status, boost::beast::http::status::no_content);
+	}
+
+	cluster::fake_cluster after = paired_zones();
+	router::router restarted(repository, after);
+	router::request older = put("/table/account/key/4821", "older");
+
+	older.forwarded = true;
+	older.term = 41;
+
+	EXPECT_EQ(error_code(restarted.route(older)), "stale_leader");
+	EXPECT_EQ(repository.read_record("account", "4821"), "newer");
+}
+
 // Two nodes disagreeing about who leads a partition must not bounce a write between them, so a
 // write sent here to be ordered, at a node that does not order it, is refused.
 TEST(router_cluster_test, refuse_a_write_sent_here_to_be_ordered_that_this_node_does_not_lead)
@@ -2056,6 +2087,24 @@ TEST(router_cluster_test, refuse_a_table_create_ordered_in_a_term_that_has_passe
 
 	EXPECT_EQ(error_code(router.route(forwarded)), "stale_leader");
 	EXPECT_FALSE(repository.has_table("account"));
+}
+
+// The tables' term is the schema's own stamps, so a restart remembers it without a record of its own.
+TEST(router_cluster_test, refuse_a_table_create_ordered_in_a_term_older_than_the_schema_the_store_holds)
+{
+	repository::fake_repository repository;
+
+	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 60, 1 });
+
+	cluster::fake_cluster nodes = two_nodes();
+	router::router router(repository, nodes);
+	router::request forwarded = put("/table/ledger", "{}");
+
+	forwarded.forwarded = true;
+	forwarded.term = 41;
+
+	EXPECT_EQ(error_code(router.route(forwarded)), "stale_leader");
+	EXPECT_FALSE(repository.has_table("ledger"));
 }
 
 // Two nodes disagreeing about who leads the tables must not bounce a create between them.

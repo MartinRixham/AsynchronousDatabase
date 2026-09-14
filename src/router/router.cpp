@@ -126,6 +126,25 @@ router::router::router(repository::repository &repo, cluster::cluster &cluster_n
 	repository(repo),
 	nodes(cluster_nodes)
 {
+	cluster::partition_terms applied = repository.read_terms();
+
+	// The tables are fenced by the partition of cluster::table_key, and every name in the schema
+	// already carries the term its create or delete was ordered in.
+	table::schema schema = repository.read_schema();
+	std::set<std::string> names = schema.names();
+	int64_t &tables = applied[cluster::partition_of(cluster::table_key)];
+
+	for (std::set<std::string>::const_iterator it = names.begin(); it != names.end(); ++it)
+	{
+		std::optional<table::entry> entry = schema.read_entry(*it);
+
+		if (entry && static_cast<int64_t>(entry->stamp.term) > tables)
+		{
+			tables = static_cast<int64_t>(entry->stamp.term);
+		}
+	}
+
+	nodes.restore_terms(applied);
 }
 
 bool router::router::is_incomplete() const

@@ -776,6 +776,30 @@ TEST_F(repository_test, counts_rise_across_the_store_being_opened_again)
 	EXPECT_GT(repository->next_count(), last);
 }
 
+// A term outlives the process that applied it because the records it fences do: a node that came
+// back having forgotten it would take a stale leader's write over a record written after it.
+TEST_F(repository_test, the_newest_term_a_store_was_written_in_is_read_back_by_the_instance_started_after_it)
+{
+	create_table("a_table");
+
+	record::record newer = record::valid_record("4821", "newer");
+	record::record older = record::valid_record(record::compose_key("4821", "a sort"), "older");
+
+	newer.stamp = record::version { 60, 1 };
+	older.stamp = record::version { 41, 2 };
+
+	repository->write_record("a_table", newer);
+	repository->write_record("a_table", older);
+
+	repository = nullptr;
+	repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
+
+	cluster::partition_terms terms = repository->read_terms();
+
+	EXPECT_EQ(terms[cluster::partition_of("4821")], 60);
+	EXPECT_EQ(terms[cluster::partition_of("a key of another partition")], 0);
+}
+
 // A share larger than one file is several of them, resumed from the key the walk reached — which
 // is a key of the store and not one a client would name, the partition being in front of it. A
 // budget spent on the last record of a share cannot know it was the last, so the walk asks once
