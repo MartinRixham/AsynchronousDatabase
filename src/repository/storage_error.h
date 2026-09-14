@@ -1,5 +1,4 @@
-#ifndef REPOSITORY_STORAGE_ERROR_H
-#define REPOSITORY_STORAGE_ERROR_H
+#pragma once
 
 #include <stdexcept>
 #include <string>
@@ -18,5 +17,3 @@ namespace repository
 		const std::string &code() const;
 	};
 }
-
-#endif

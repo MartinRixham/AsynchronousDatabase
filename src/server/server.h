@@ -1,5 +1,4 @@
-#ifndef SERVER_SERVER_H
-#define SERVER_SERVER_H
+#pragma once
 
 #include <atomic>
 #include <chrono>
@@ -135,5 +134,3 @@ namespace server
 		void stop_reconciling();
 	};
 }
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef RECONCILE_RECONCILE_H
-#define RECONCILE_RECONCILE_H
+#pragma once
 
 #include <atomic>
 #include <cstddef>
@@ -75,5 +74,3 @@ namespace reconcile
 		long seconds = default_seconds,
 		size_t workers = transfer::default_workers);
 }
-
-#endif

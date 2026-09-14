@@ -1,5 +1,4 @@
-#ifndef HTTP_BOUND_UNACKNOWLEDGED_H
-#define HTTP_BOUND_UNACKNOWLEDGED_H
+#pragma once
 
 namespace http
 {
@@ -7,5 +6,3 @@ namespace http
 	// connection after this many seconds. False is a socket that refused the option.
 	bool bound_unacknowledged(int socket, long seconds);
 }
-
-#endif

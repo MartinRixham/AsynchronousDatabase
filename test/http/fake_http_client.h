@@ -1,5 +1,4 @@
-#ifndef HTTP_FAKE_HTTP_CLIENT_H
-#define HTTP_FAKE_HTTP_CLIENT_H
+#pragma once
 
 #include <mutex>
 #include <string>
@@ -56,5 +55,3 @@ namespace http
 	// A HEAD as a node answers one: the headers of the body and none of the body.
 	response head_answer(long status, const std::string &content_type, long content_length);
 }
-
-#endif

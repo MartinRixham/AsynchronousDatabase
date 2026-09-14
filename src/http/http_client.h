@@ -1,5 +1,4 @@
-#ifndef HTTP_HTTP_CLIENT_H
-#define HTTP_HTTP_CLIENT_H
+#pragma once
 
 #include <string>
 #include <utility>
@@ -57,5 +56,3 @@ namespace http
 		virtual std::vector<response> send_all(const std::vector<request> &requests, long timeout_seconds) const = 0;
 	};
 }
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef RECORD_RECORD_H
-#define RECORD_RECORD_H
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -91,5 +90,3 @@ namespace record
 
 	bool is_valid_utf8(const std::string &text);
 }
-
-#endif

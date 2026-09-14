@@ -1,5 +1,4 @@
-#ifndef CLUSTER_FORWARDER_H
-#define CLUSTER_FORWARDER_H
+#pragma once
 
 #include <string>
 #include <vector>
@@ -35,5 +34,3 @@ namespace cluster
 		std::vector<router::response> forward_each(const std::vector<enquiry> &enquiries) const;
 	};
 }
-
-#endif

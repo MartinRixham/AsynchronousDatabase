@@ -1,5 +1,4 @@
-#ifndef CLUSTER_MEMBER_H
-#define CLUSTER_MEMBER_H
+#pragma once
 
 #include <memory>
 #include <string>
@@ -19,5 +18,3 @@ namespace cluster
 	// exclude the thread that replaces it.
 	typedef std::shared_ptr<const std::vector<member>> membership;
 }
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef TRANSFER_RELAY_H
-#define TRANSFER_RELAY_H
+#pragma once
 
 #include <condition_variable>
 #include <mutex>
@@ -37,5 +36,3 @@ namespace transfer
 		void close();
 	};
 }
-
-#endif

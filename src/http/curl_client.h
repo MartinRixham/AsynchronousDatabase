@@ -1,5 +1,4 @@
-#ifndef HTTP_CURL_CLIENT_H
-#define HTTP_CURL_CLIENT_H
+#pragma once
 
 #include <vector>
 
@@ -28,5 +27,3 @@ namespace http
 		std::vector<response> send_all(const std::vector<request> &requests, long timeout_seconds) const override;
 	};
 }
-
-#endif

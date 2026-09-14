@@ -1,5 +1,4 @@
-#ifndef TRANSFER_TRANSFER_H
-#define TRANSFER_TRANSFER_H
+#pragma once
 
 #include <atomic>
 #include <cstddef>
@@ -78,5 +77,3 @@ namespace transfer
 		progress::patience &waiting,
 		const taking &take);
 }
-
-#endif

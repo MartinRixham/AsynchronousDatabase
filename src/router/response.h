@@ -1,5 +1,4 @@
-#ifndef ROUTER_RESPONSE_H
-#define ROUTER_RESPONSE_H
+#pragma once
 
 #include <cstddef>
 #include <string>
@@ -58,5 +57,3 @@ namespace router
 
 	std::string response_body(const response &response);
 }
-
-#endif

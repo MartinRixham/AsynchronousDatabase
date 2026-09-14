@@ -1,5 +1,4 @@
-#ifndef TABLE_TABLE_H
-#define TABLE_TABLE_H
+#pragma once
 
 #include <string>
 #include <set>
@@ -38,5 +37,3 @@ namespace table
 
 	bool is_valid_name(const std::string &name);
 }
-
-#endif

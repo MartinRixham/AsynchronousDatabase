@@ -1,5 +1,4 @@
-#ifndef SCAN_SCAN_H
-#define SCAN_SCAN_H
+#pragma once
 
 #include <cstddef>
 #include <optional>
@@ -71,5 +70,3 @@ namespace scan
 	// partition is refused rather than answered with the nothing that key holds there.
 	std::string encode_cursor(const std::string &key, const std::string &instance, size_t partition);
 }
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef HTTP_HANDLE_H
-#define HTTP_HANDLE_H
+#pragma once
 
 #include <curl/curl.h>
 
@@ -21,5 +20,3 @@ namespace http
 		CURL *get() const;
 	};
 }
-
-#endif

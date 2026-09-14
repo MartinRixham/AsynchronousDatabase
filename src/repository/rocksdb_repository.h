@@ -1,5 +1,4 @@
-#ifndef REPOSITORY_ROCSKDB_REPOSITORY_H
-#define REPOSITORY_ROCSKDB_REPOSITORY_H
+#pragma once
 
 #include <array>
 #include <atomic>
@@ -157,5 +156,3 @@ namespace repository
 		std::string transfer_name() const;
 	};
 }
-
-#endif

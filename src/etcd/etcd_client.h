@@ -1,5 +1,4 @@
-#ifndef ETCD_ETCD_CLIENT_H
-#define ETCD_ETCD_CLIENT_H
+#pragma once
 
 #include <atomic>
 #include <cstdint>
@@ -78,5 +77,3 @@ namespace etcd
 			bool every_member) const;
 	};
 }
-
-#endif

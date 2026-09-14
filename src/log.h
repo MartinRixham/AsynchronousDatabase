@@ -1,5 +1,4 @@
-#ifndef LOG_H
-#define LOG_H
+#pragma once
 
 #include <iostream>
 #include <syncstream>
@@ -13,6 +12,4 @@
 #define DEBUG(message) std::osyncstream(std::cerr) << "DEBUG: " << message << std::endl;
 #else
 #define DEBUG(message)
-#endif
-
 #endif

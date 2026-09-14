@@ -1,5 +1,4 @@
-#ifndef REPOSITORY_FAKE_REPOSITORY_H
-#define REPOSITORY_FAKE_REPOSITORY_H
+#pragma once
 
 #include <map>
 #include <memory>
@@ -77,5 +76,3 @@ namespace repository
 		bool holds(const std::string &table_name) const;
 	};
 }
-
-#endif

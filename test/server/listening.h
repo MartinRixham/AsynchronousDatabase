@@ -1,5 +1,4 @@
-#ifndef SERVER_LISTENING_H
-#define SERVER_LISTENING_H
+#pragma once
 
 #include <boost/asio.hpp>
 
@@ -13,5 +12,3 @@ namespace server
 	// racing; it gives up rather than hanging the suite on a server that never listens.
 	void wait_until_listening(boost::asio::ip::port_type port);
 }
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef ROUTER_REQUEST_H
-#define ROUTER_REQUEST_H
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -30,5 +29,3 @@ namespace router
 		uint64_t count = 0;
 	};
 }
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef ROUTER_API_ERROR_H
-#define ROUTER_API_ERROR_H
+#pragma once
 
 #include <string>
 
@@ -13,5 +12,3 @@ namespace router
 
 	boost::beast::http::status error_status(const std::string &code);
 }
-
-#endif

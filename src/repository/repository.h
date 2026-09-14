@@ -1,5 +1,4 @@
-#ifndef REPOSITORY_REPOSITORY_H
-#define REPOSITORY_REPOSITORY_H
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -146,5 +145,3 @@ namespace repository
 		virtual std::string instance() const = 0;
 	};
 }
-
-#endif

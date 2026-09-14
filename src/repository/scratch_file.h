@@ -1,5 +1,4 @@
-#ifndef REPOSITORY_SCRATCH_FILE_H
-#define REPOSITORY_SCRATCH_FILE_H
+#pragma once
 
 #include <filesystem>
 #include <string>
@@ -32,5 +31,3 @@ namespace repository
 		bool write(const std::string &bytes);
 	};
 }
-
-#endif

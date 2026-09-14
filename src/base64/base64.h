@@ -1,5 +1,4 @@
-#ifndef BASE64_BASE64_H
-#define BASE64_BASE64_H
+#pragma once
 
 #include <optional>
 #include <string>
@@ -10,5 +9,3 @@ namespace base64
 
 	std::optional<std::string> decode(const std::string &encoded);
 }
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef ROUTER_ROUTER_H
-#define ROUTER_ROUTER_H
+#pragma once
 
 #include <array>
 #include <atomic>
@@ -136,8 +135,5 @@ namespace router
 		response answer_page(const request &request, const std::string &name);
 
 		std::set<std::string> table_names() const;
-
 	};
 }
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef HTTP_GROUP_H
-#define HTTP_GROUP_H
+#pragma once
 
 #include <cstddef>
 #include <memory>
@@ -32,5 +31,3 @@ namespace http
 		CURL *at(size_t index);
 	};
 }
-
-#endif

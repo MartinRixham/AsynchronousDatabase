@@ -1,5 +1,4 @@
-#ifndef URL_URL_H
-#define URL_URL_H
+#pragma once
 
 #include <string>
 #include <vector>
@@ -16,5 +15,3 @@ namespace url
 
 	std::string read_parameter(const std::string &query, const std::string &name);
 }
-
-#endif

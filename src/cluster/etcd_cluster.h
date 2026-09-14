@@ -1,5 +1,4 @@
-#ifndef CLUSTER_ETCD_CLUSTER_H
-#define CLUSTER_ETCD_CLUSTER_H
+#pragma once
 
 #include <array>
 #include <atomic>
@@ -241,5 +240,3 @@ namespace cluster
 		int64_t term_of(const std::string &holder, size_t partition) const;
 	};
 }
-
-#endif

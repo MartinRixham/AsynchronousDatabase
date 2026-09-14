@@ -1,5 +1,4 @@
-#ifndef CLUSTER_TEST_CLUSTER_H
-#define CLUSTER_TEST_CLUSTER_H
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -47,10 +46,7 @@ namespace cluster
 	public:
 		test_cluster();
 
-		void join(
-			const std::string &node,
-			const std::string &node_zone,
-			const std::vector<member> &nodes);
+		void join(const std::string &node, const std::string &node_zone, const std::vector<member> &nodes);
 
 		// The leader is told to the cluster rather than claimed in etcd, the same way the
 		// membership is: what is under test here is what a leader does, not how it is chosen.
@@ -119,5 +115,3 @@ namespace cluster
 		std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const override;
 	};
 }
-
-#endif

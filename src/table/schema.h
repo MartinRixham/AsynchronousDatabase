@@ -1,5 +1,4 @@
-#ifndef TABLE_SCHEMA_H
-#define TABLE_SCHEMA_H
+#pragma once
 
 #include <map>
 #include <optional>
@@ -75,5 +74,3 @@ namespace table
 
 	schema to_schema(const std::string &json);
 }
-
-#endif

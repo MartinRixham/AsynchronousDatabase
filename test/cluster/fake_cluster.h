@@ -1,5 +1,4 @@
-#ifndef CLUSTER_FAKE_CLUSTER_H
-#define CLUSTER_FAKE_CLUSTER_H
+#pragma once
 
 #include <chrono>
 #include <map>
@@ -174,5 +173,3 @@ namespace cluster
 		void forget();
 	};
 }
-
-#endif

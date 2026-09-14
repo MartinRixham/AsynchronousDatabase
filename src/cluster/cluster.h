@@ -1,5 +1,4 @@
-#ifndef CLUSTER_CLUSTER_H
-#define CLUSTER_CLUSTER_H
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -193,5 +192,3 @@ namespace cluster
 
 	std::optional<router::response> refusal(const std::vector<router::response> &answers);
 }
-
-#endif

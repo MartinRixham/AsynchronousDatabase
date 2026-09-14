@@ -1,5 +1,4 @@
-#ifndef SERVER_SESSION_H
-#define SERVER_SESSION_H
+#pragma once
 
 #include <atomic>
 #include <memory>
@@ -10,7 +9,7 @@
 
 #include "router/router.h"
 
-void fail(boost::beast::error_code ec, char const* what);
+void fail(boost::beast::error_code ec, char const *what);
 
 namespace server
 {
@@ -37,10 +36,7 @@ namespace server
 		bool waiting = false;
 
 	public:
-		session(
-			boost::asio::ip::tcp::socket&& socket,
-			router::router &router,
-			const std::atomic<bool> &stopping);
+		session(boost::asio::ip::tcp::socket &&socket, router::router &router, const std::atomic<bool> &stopping);
 
 		void run();
 
@@ -58,5 +54,3 @@ namespace server
 		void close();
 	};
 }
-
-#endif

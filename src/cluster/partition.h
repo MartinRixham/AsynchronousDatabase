@@ -1,5 +1,4 @@
-#ifndef CLUSTER_PARTITION_H
-#define CLUSTER_PARTITION_H
+#pragma once
 
 #include <array>
 #include <bitset>
@@ -91,5 +90,3 @@ namespace cluster
 		const std::string &node,
 		const std::string &zone);
 }
-
-#endif

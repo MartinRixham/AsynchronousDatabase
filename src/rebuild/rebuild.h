@@ -1,5 +1,4 @@
-#ifndef REBUILD_REBUILD_H
-#define REBUILD_REBUILD_H
+#pragma once
 
 #include <cstddef>
 
@@ -42,5 +41,3 @@ namespace rebuild
 		long seconds = default_seconds,
 		size_t workers = transfer::default_workers);
 }
-
-#endif

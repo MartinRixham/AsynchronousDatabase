@@ -1,5 +1,4 @@
-#ifndef PROGRESS_PATIENCE_H
-#define PROGRESS_PATIENCE_H
+#pragma once
 
 #include <atomic>
 #include <chrono>
@@ -31,5 +30,3 @@ namespace progress
 		void renew();
 	};
 }
-
-#endif
