@@ -245,7 +245,9 @@ writing behind the leader that replaced it.
 
 A copy keeps the newest term it has applied in its store, written with the record
 that raised it, so a node that restarts onto the volume it kept refuses exactly
-what it refused before. The tables' term needs no record of its own: every name
+what it refused before. A record handed over by a rebuild or a reconcile pass
+raises the term the same way, before it is taken in, so the node it moved to is
+fenced as the node it was written on was. The tables' term needs no record of its own: every name
 in the schema already carries the term its create or delete was ordered in.
 
 ### The tables are led too

@@ -426,9 +426,13 @@ with an older one.
 That is only reachable when a node restarts **onto a store it kept**, because it needs the record
 the term protects to still be there — and this is the one experiment where that happens. So it is
 tested here: before the kills, one node is sent a forwarded write in a high term and then one in a
-lower term, and the lower one is refused, which proves the guard is live. The kills land, the node
-comes back on its own volume, and the same lower-term write is sent again. It has to be refused
-again, and the node has to still hold the higher-term value.
+lower term, and the lower one is refused, which proves the guard is live. The kills land, the nodes
+come back on their own volumes, and the same lower-term write is sent again — **to every node that
+holds the higher-term value by then**, and not only to the one it was written on. A forwarded write
+is stored where it lands, and the first of the six is not necessarily the key's owner in its zone:
+the reconcile pass a restart sets off hands the record to the owner and clears it off the node it
+was written on. A record handed over carries its term with it, so every holder has to refuse the
+write and still hold the higher-term value.
 
 The probe writes into a table of its own, created through the load balancer and dropped at the end,
 and drives its terms up on a single node just before the kills — so a heightened term never reaches a

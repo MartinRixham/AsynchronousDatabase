@@ -39,7 +39,7 @@ namespace
 
 	reconcile::outcome fetch_from(
 		repository::repository &repository,
-		const cluster::cluster &nodes,
+		cluster::cluster &nodes,
 		const std::string &node,
 		const std::string &name,
 		const cluster::partition_set &partitions,
@@ -62,7 +62,11 @@ namespace
 			share_of(node, name, partitions, true, workers),
 			running,
 			waiting,
-			[&](const std::string &file) { fetched += repository.import_records(name, file); });
+			[&](const std::string &file)
+			{
+				fetched += repository.import_records(name, file);
+				nodes.restore_terms(repository.read_terms());
+			});
 
 		taken.finished = done.whole || done.refused;
 		taken.refused = done.refused;
@@ -293,7 +297,7 @@ bool reconcile::outcome::moved() const
 
 reconcile::outcome reconcile::reconcile(
 	repository::repository &repository,
-	const cluster::cluster &nodes,
+	cluster::cluster &nodes,
 	const std::atomic<bool> &running,
 	size_t page,
 	long seconds,

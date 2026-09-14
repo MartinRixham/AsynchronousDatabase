@@ -94,6 +94,9 @@ namespace repository
 
 		void reserve_counts();
 
+		// `terms` raised to the newest a file carries, on disk before any record of the file is.
+		void raise_terms(const cluster::partition_terms &carried, const std::string &what);
+
 		// `terms` read from the store, once, as it is opened.
 		void load_terms();
 

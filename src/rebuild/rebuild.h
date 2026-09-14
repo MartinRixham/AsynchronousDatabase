@@ -38,7 +38,7 @@ namespace rebuild
 	// from it and no write waits on it.
 	outcome rebuild(
 		repository::repository &repository,
-		const cluster::cluster &nodes,
+		cluster::cluster &nodes,
 		long seconds = default_seconds,
 		size_t workers = transfer::default_workers);
 }

@@ -159,7 +159,7 @@ namespace
 	// do is transfer_test's to say.
 	reconcile::outcome reconciled(
 		repository::repository &repository,
-		const cluster::cluster &nodes,
+		cluster::cluster &nodes,
 		const std::atomic<bool> &flag,
 		size_t page = reconcile::default_page,
 		long seconds = reconcile::default_seconds)
@@ -754,6 +754,24 @@ TEST(reconcile_test, keeps_a_record_written_after_the_one_a_file_carries)
 
 	EXPECT_EQ(0u, done.fetched);
 	EXPECT_EQ("fresh", repository.read_record("account", "a").value_or(""));
+}
+
+TEST(reconcile_test, refuses_a_write_older_than_the_term_of_a_record_it_fetched)
+{
+	repository::fake_repository repository;
+
+	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	repository.write_record("account", stamped("a", "stale", 2, 1));
+
+	cluster::fake_cluster nodes(self, three_zones());
+
+	nodes.copies("a", { self, peer, other });
+	nodes.answer(peer, versioned_file({ "a" }, "fresh", true, 60, 9));
+
+	reconciled(repository, nodes, running, reconcile::default_page, 1);
+
+	EXPECT_FALSE(nodes.accept("a", 41));
+	EXPECT_TRUE(nodes.accept("a", 60));
 }
 
 // Clearing down is where a version stops a write being lost rather than merely staling. The node

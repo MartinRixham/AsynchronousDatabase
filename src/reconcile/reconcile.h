@@ -69,7 +69,7 @@ namespace reconcile
 	// would have been invisible on the node it landed on for as long as the node lived.
 	outcome reconcile(
 		repository::repository &repository,
-		const cluster::cluster &nodes,
+		cluster::cluster &nodes,
 		const std::atomic<bool> &running,
 		size_t page = default_page,
 		long seconds = default_seconds,

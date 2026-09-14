@@ -56,7 +56,8 @@ probe_table=$table-term-probe
 probe_key=probe
 
 # The two terms are far above any etcd revision a short run reaches, and the low one is what a
-# leader superseded by the high one would carry. The node under test is the first of the six.
+# leader superseded by the high one would carry. The probe is armed on the first of the six, and
+# checked on whichever nodes hold the key once the restart has settled.
 probe_high=2000000000
 probe_low=1000000000
 probe_node=$(echo "$ids" | head -1)
@@ -104,22 +105,50 @@ term_probe_arm()
 	expect "$rejected" 409 "and one in an older term is refused before the restart"
 }
 
-# term_probe_check — after the restart, the same older-term write, which the node refuses again
-# because the term it applied is in its store. README.md#the-term-outlives-the-process is why.
+# term_holders — the nodes whose own store holds the higher-term value of the probe key.
+term_holders()
+{
+	local id values
+
+	while read -r id _; do
+		if ! values=$(walk_store "$id" "$probe_table" true "select(.key == \"$probe_key\") | .value"); then
+			echo "  ---- $id did not say what it holds of $probe_table." >&2
+
+			continue
+		fi
+
+		[ "$values" != high ] || echo "$id"
+	done < <(instances asyncdb)
+}
+
+# term_probe_check — after the restart, the same older-term write, sent to every node holding the
+# higher-term value by then. README.md#the-term-outlives-the-process is why.
 term_probe_check()
 {
-	local accepted held
+	local holders id accepted held
 
-	accepted=$(term_write "$probe_node" "$probe_low" stale-after)
-	expect "$accepted" 409 "the older-term write is still refused after the restart"
+	holders=$(term_holders)
 
-	held=$(term_read "$probe_node")
+	if [ -z "$holders" ]; then
+		result 1 "a node still holds the higher-term value after the restart"
 
-	if [ "$held" = high ]; then
-		result 0 "and the higher-term value it held was not overwritten by the older one"
-	else
-		result 1 "and the higher-term value it held was not overwritten by the older one — holds \"$held\""
+		return
 	fi
+
+	printf '  ---- the higher-term value was written on %s and is held on %s\n' "$probe_node" "$(echo $holders)"
+
+	for id in $holders; do
+		accepted=$(term_write "$id" "$probe_low" stale-after)
+		expect "$accepted" 409 "the older-term write is still refused after the restart by $id"
+
+		held=$(term_read "$id")
+
+		if [ "$held" = high ]; then
+			result 0 "and the higher-term value $id holds was not overwritten by the older one"
+		else
+			result 1 "and the higher-term value $id holds was not overwritten by the older one — holds \"$held\""
+		fi
+	done
 }
 
 # expect_seed_replicated <when> — every seeded record is in every zone's stores, and no key is in

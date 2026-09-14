@@ -168,9 +168,10 @@ namespace cluster
 
 		virtual bool accept(const std::string &key, int64_t term) = 0;
 
-		// The terms the store says this node applied before the process started, which accept()
-		// refuses anything older than as it does the terms applied since. A restart forgets what is
-		// held in memory, and the store it comes back to still holds the records those terms fenced.
+		// The terms the store says this node applied — before the process started, or in a file a
+		// pass has just taken in — which accept() refuses anything older than as it does the terms
+		// applied since. A restart forgets what is held in memory, and a record handed over is fenced
+		// by the term it was written in wherever it lands.
 		virtual void restore_terms(const partition_terms &applied) = 0;
 
 		virtual router::response send(const std::string &node, const router::request &request) const = 0;

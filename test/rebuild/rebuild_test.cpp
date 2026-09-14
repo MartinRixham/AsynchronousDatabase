@@ -72,7 +72,7 @@ namespace
 	// do is transfer_test's to say.
 	rebuild::outcome rebuilt(
 		repository::repository &repository,
-		const cluster::cluster &nodes,
+		cluster::cluster &nodes,
 		long seconds = rebuild::default_seconds)
 	{
 		return rebuild::rebuild(repository, nodes, seconds, 1);
@@ -148,6 +148,31 @@ TEST(rebuild_test, writes_the_records_of_another_zone)
 
 	EXPECT_EQ("value of a", repository.read_record("account", "a").value_or(""));
 	EXPECT_EQ("value of b", repository.read_record("account", "b").value_or(""));
+}
+
+TEST(rebuild_test, refuses_a_write_older_than_the_term_of_a_record_it_rebuilt)
+{
+	repository::fake_repository source;
+	record::record written = record::valid_record("a", "value of a");
+
+	source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	written.stamp = record::version { 60, 1 };
+	source.write_record("account", written);
+
+	repository::share whole;
+
+	whole.partitions.set();
+
+	repository::extract taken = source.export_records("account", whole);
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes(self, two_zones());
+
+	nodes.answer_in_turn(peer, { tables({ "account" }), router::file_response(taken.file, taken.records, "") });
+
+	rebuilt(repository, nodes);
+
+	EXPECT_FALSE(nodes.accept("a", 41));
+	EXPECT_TRUE(nodes.accept("a", 60));
 }
 
 // What a file carries is decided by the node asking for it and not by the node answering, so what

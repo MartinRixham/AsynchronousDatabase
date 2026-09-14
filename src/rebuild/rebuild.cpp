@@ -31,7 +31,7 @@ namespace
 
 	restored copy_table(
 		repository::repository &repository,
-		const cluster::cluster &nodes,
+		cluster::cluster &nodes,
 		const std::string &node,
 		const std::string &name,
 		const cluster::partition_set &partitions,
@@ -55,7 +55,11 @@ namespace
 			wanted,
 			running,
 			waiting,
-			[&](const std::string &file) { records += repository.import_records(name, file); }).whole;
+			[&](const std::string &file)
+			{
+				records += repository.import_records(name, file);
+				nodes.restore_terms(repository.read_terms());
+			}).whole;
 
 		taken.records = records;
 
@@ -64,7 +68,7 @@ namespace
 
 	restored from_zone(
 		repository::repository &repository,
-		const cluster::cluster &nodes,
+		cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
 		const cluster::partition_set &partitions,
 		size_t workers,
@@ -119,7 +123,7 @@ namespace
 
 rebuild::outcome rebuild::rebuild(
 	repository::repository &repository,
-	const cluster::cluster &nodes,
+	cluster::cluster &nodes,
 	long seconds,
 	size_t workers)
 {

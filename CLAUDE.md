@@ -829,9 +829,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   That is why `leader()` is not const on the seam. The **term** is the etcd revision that
   created the claim; it travels in `X-Asyncdb-Term` on every write the leader orders, and a copy
   refuses anything older than the newest term it has applied (`stale_leader`, 409). That term is
-  kept in the store, written in one batch with the record that raised it
-  (`repository::read_terms`), and the router hands it to `cluster::restore_terms` as it is
-  constructed — the tables' term taken from the schema's stamps — so a restart onto a kept volume
+  kept in the store, written in one batch with the record that raised it or ahead of the file that
+  carried it (`repository::read_terms`), and the router hands it to `cluster::restore_terms` as it is
+  constructed — the tables' term taken from the schema's stamps — as a rebuild or a reconcile pass
+  does after every file it takes in, so a record that moved is fenced where it lands and a restart onto a kept volume
   forgets nothing. A partition
   nothing leads yet answers `no_leader` (503) to a write and serves reads as normal. **The term is
   what tells the two write hops apart**: a write *to* the leader carries none, a write *from* it

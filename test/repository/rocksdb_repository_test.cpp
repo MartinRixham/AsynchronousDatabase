@@ -800,6 +800,26 @@ TEST_F(repository_test, the_newest_term_a_store_was_written_in_is_read_back_by_t
 	EXPECT_EQ(terms[cluster::partition_of("a key of another partition")], 0);
 }
 
+TEST_F(repository_test, a_file_raises_the_term_of_the_partitions_it_carries_for_the_instance_started_after_it)
+{
+	create_table("a_table");
+	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
+
+	repository->write_record("a_table", versioned("4821", "newer", 60, 1));
+
+	other_repository->import_records("a_table", repository->export_records("a_table", every_partition()).file);
+
+	EXPECT_EQ(other_repository->read_terms()[cluster::partition_of("4821")], 60);
+
+	other_repository = nullptr;
+	other_repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb_other");
+
+	cluster::partition_terms terms = other_repository->read_terms();
+
+	EXPECT_EQ(terms[cluster::partition_of("4821")], 60);
+	EXPECT_EQ(terms[cluster::partition_of("a key of another partition")], 0);
+}
+
 // A share larger than one file is several of them, resumed from the key the walk reached — which
 // is a key of the store and not one a client would name, the partition being in front of it. A
 // budget spent on the last record of a share cannot know it was the last, so the walk asks once

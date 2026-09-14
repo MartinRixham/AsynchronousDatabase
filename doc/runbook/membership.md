@@ -293,14 +293,13 @@ done
 **Do:** take the flapping node out. Its partitions are led by another copy within
 a lease, and the `stale_leader` answers stop.
 
-## What a term does not survive
+## What a term survives
 
-**A term is remembered in memory, not on disk.** A node that restarts has
-forgotten which terms it has applied, so it accepts the first write it is sent
-afterwards whatever term ordered it. A node that restarts on AWS has also lost
-its RocksDB, so this is a smaller hole than it sounds — but it is a hole, and it
-is the reason a `stale_leader` that appears immediately after a restart is not
-evidence that the fencing failed.
+**A term is kept on disk, beside the records it fences.** A node that restarts
+onto the volume it kept refuses exactly what it refused before, and a node
+handed records by a rebuild or a reconcile pass is fenced by the terms they were
+written in. A `stale_leader` straight after a restart is a write ordered in a
+term older than one that node has applied, as it is at any other time.
 
 ## What this cannot tell you
 

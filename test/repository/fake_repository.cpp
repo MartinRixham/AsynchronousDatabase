@@ -365,6 +365,14 @@ size_t repository::fake_repository::import_records(const std::string &table_name
 			return taken;
 		}
 
+		int64_t &term = terms[cluster::partition_of(*key)];
+		int64_t carried = static_cast<int64_t>(record::version_of(*value).term);
+
+		if (carried > term)
+		{
+			term = carried;
+		}
+
 		// A key this store holds at a later version is kept, which is what the real store does and
 		// what makes a fetch safe: the record here was written after the one the file carries.
 		std::map<std::string, std::string>::iterator held = table_records.find(*key);

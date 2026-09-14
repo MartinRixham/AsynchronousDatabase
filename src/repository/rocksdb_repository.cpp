@@ -68,6 +68,15 @@ namespace
 			: std::string(key.data() + partition_prefix_size, key.size() - partition_prefix_size);
 	}
 
+	// The partition a key of the store is held under, read off its prefix.
+	size_t partition_held(const rocksdb::Slice &key)
+	{
+		return key.size() < partition_prefix_size
+			? 0
+			: (static_cast<size_t>(static_cast<unsigned char>(key[0])) << 8) |
+				static_cast<unsigned char>(key[1]);
+	}
+
 	// Beside the table documents in the default column family, and named so that it is no table's
 	// document: what a block of write counts has been reserved up to.
 	const std::string count_key = "COUNT";
@@ -566,6 +575,40 @@ void repository::rocksdb_repository::load_terms()
 	}
 }
 
+void repository::rocksdb_repository::raise_terms(const cluster::partition_terms &carried, const std::string &what)
+{
+	std::lock_guard<std::mutex> raising(term_mutex);
+	rocksdb::WriteBatch batch;
+	cluster::partition_terms raised = {};
+	bool any = false;
+
+	for (size_t partition = 0; partition < cluster::partition_count; partition++)
+	{
+		if (carried[partition] > terms[partition].load())
+		{
+			written(batch.Put(term_key(partition), std::to_string(carried[partition])), what);
+
+			raised[partition] = carried[partition];
+			any = true;
+		}
+	}
+
+	if (!any)
+	{
+		return;
+	}
+
+	written(database->Write(rocksdb::WriteOptions(), &batch), what);
+
+	for (size_t partition = 0; partition < cluster::partition_count; partition++)
+	{
+		if (raised[partition] > 0)
+		{
+			terms[partition] = raised[partition];
+		}
+	}
+}
+
 std::optional<std::string> repository::rocksdb_repository::read_record(
 	const std::string &table_name,
 	const std::string &key) const
@@ -845,6 +888,7 @@ size_t repository::rocksdb_repository::import_records(const std::string &table_n
 
 	size_t records = 0;
 	size_t held = 0;
+	cluster::partition_terms carried = {};
 
 	// Two walks of the file rather than one, because the first is what says whether the second is
 	// needed: a store holding none of these keys — a node being rebuilt, which is most of them —
@@ -855,6 +899,14 @@ size_t repository::rocksdb_repository::import_records(const std::string &table_n
 
 		for (it->SeekToFirst(); it->Valid(); it->Next())
 		{
+			size_t partition = partition_held(it->key());
+			int64_t term = static_cast<int64_t>(record::version_of(it->value().ToStringView()).term);
+
+			if (partition < cluster::partition_count && term > carried[partition])
+			{
+				carried[partition] = term;
+			}
+
 			value.Reset();
 
 			if (!database->Get(rocksdb::ReadOptions(), handle, it->key(), &value).ok())
@@ -874,6 +926,8 @@ size_t repository::rocksdb_repository::import_records(const std::string &table_n
 
 		check(it->status(), what);
 	}
+
+	raise_terms(carried, what);
 
 	if (records == 0)
 	{
