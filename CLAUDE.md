@@ -822,7 +822,11 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   healthy cluster leading nothing for as long as it lives, and leadership that settles wherever the
   first race left it is one node ordering the writes of a third of the keyspace and another
   ordering none. Giving one up costs the round trip
-  claiming one does and comes out of the same 64. The **term** is the etcd revision that
+  claiming one does and comes out of the same 64. **A write does not wait for a pass**:
+  `etcd_cluster::leader` asks etcd for a claim the list does not name, and when nothing holds it the
+  node the membership names creates it there and then — any other node sends the write to that one —
+  so a claim gone with a lease or given up is a window as long as the membership read, not a pass.
+  That is why `leader()` is not const on the seam. The **term** is the etcd revision that
   created the claim; it travels in `X-Asyncdb-Term` on every write the leader orders, and a copy
   refuses anything older than the newest term it has applied (`stale_leader`, 409). A partition
   nothing leads yet answers `no_leader` (503) to a write and serves reads as normal. **The term is

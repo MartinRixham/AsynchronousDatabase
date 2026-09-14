@@ -112,7 +112,7 @@ cluster::partition_set cluster::test_cluster::vouched() const
 {
 	std::lock_guard<std::mutex> lock(vouch_mutex);
 
-	return filled;
+	return filled & holdings();
 }
 
 std::map<std::string, cluster::partition_set> cluster::test_cluster::holders(
@@ -148,7 +148,7 @@ std::vector<std::vector<std::string>> cluster::test_cluster::zones() const
 	return zones_of(member_list, self, zone);
 }
 
-std::optional<cluster::leadership> cluster::test_cluster::leader(const std::string &) const
+std::optional<cluster::leadership> cluster::test_cluster::leader(const std::string &)
 {
 	if (leader_node.empty())
 	{

@@ -95,6 +95,10 @@ namespace router
 		// any of them is.
 		bool is_incomplete() const;
 
+		// Whether this node holds the partition and cannot vouch for it. One it does not hold is
+		// answered out of what its store has, because a forwarded request is served where it lands.
+		bool is_short_of(size_t partition) const;
+
 		// Whether this node carries a schema operation out, and what it does with it once it has.
 		// A table is not a record of any partition, so what orders one is the leader of
 		// cluster::table_key: the same two hops a record write takes, and the same term fencing

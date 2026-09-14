@@ -139,7 +139,7 @@ namespace
 			return std::vector<std::vector<std::string>>();
 		}
 
-		std::optional<::cluster::leadership> leader(const std::string &) const override
+		std::optional<::cluster::leadership> leader(const std::string &) override
 		{
 			return std::nullopt;
 		}

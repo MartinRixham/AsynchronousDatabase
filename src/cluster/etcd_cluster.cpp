@@ -368,9 +368,11 @@ std::vector<std::string> cluster::etcd_cluster::peers() const
 	return peers;
 }
 
-std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::string &key) const
+std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::string &key)
 {
-	if (!answered || snapshot()->size() < 2)
+	membership registered = snapshot();
+
+	if (!answered || registered->size() < 2)
 	{
 		if (configuration.serve_unled)
 		{
@@ -396,23 +398,81 @@ std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::stri
 		}
 	}
 
-	// A partition changing hands is one the node giving it up has deleted and the node named now
-	// claims a moment later, and the list is not read again for a third of a lease: asking etcd for
-	// the one key is a write taken rather than refused for as long as that.
+	// The list is not read again for a third of a lease, so a claim made since is asked of etcd.
 	std::string claim = configuration.leader_prefix + std::to_string(partition);
 	std::optional<std::map<std::string, std::string>> held = etcd_client.get(claim);
 
-	if (!held || held->count(claim) == 0)
+	if (!held)
 	{
 		return leadership();
+	}
+
+	if (held->count(claim) != 0)
+	{
+		leadership led;
+
+		led.known = true;
+		led.local = held->at(claim) == configuration.node;
+		led.node = held->at(claim);
+		led.term = term_of(led.node, partition);
+
+		return led;
+	}
+
+	// Nothing claims it: a leader that went away took its claims with its lease, or one that was
+	// renamed gave its claim up. The node named now claims it on the write rather than on its next
+	// pass, which is the same create on the same lease a moment sooner, and another node sends the
+	// write to the node named.
+	std::string named = ::cluster::leader_of(::cluster::partition_name(partition), *registered);
+
+	if (named != configuration.node)
+	{
+		leadership led;
+
+		led.known = true;
+		led.node = named;
+
+		return led;
+	}
+
+	int64_t claiming = lease.load();
+
+	if (claiming == 0)
+	{
+		return leadership();
+	}
+
+	std::optional<etcd::claim> claimed = etcd_client.create(claim, configuration.node, claiming);
+
+	if (!claimed)
+	{
+		return leadership();
+	}
+
+	if (claimed->held)
+	{
+		raise_term(partition, claimed->revision);
+
+		DEBUG(
+			"Node " +
+			configuration.node +
+			" leads partition " +
+			std::to_string(partition) +
+			" in term " +
+			std::to_string(claimed->revision) +
+			", claimed for a write.");
 	}
 
 	leadership led;
 
 	led.known = true;
-	led.local = held->at(claim) == configuration.node;
-	led.node = held->at(claim);
-	led.term = term_of(led.node, partition);
+	led.local = claimed->holder == configuration.node;
+	led.node = claimed->holder;
+	led.term = claimed->revision;
+
+	std::unique_lock<std::shared_mutex> lock(leader_mutex);
+
+	leader_list[partition] = led;
 
 	return led;
 }

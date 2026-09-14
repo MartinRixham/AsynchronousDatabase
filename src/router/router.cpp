@@ -133,6 +133,11 @@ bool router::router::is_incomplete() const
 	return (nodes.holdings() & ~nodes.vouched()).any();
 }
 
+bool router::router::is_short_of(size_t partition) const
+{
+	return nodes.holdings().test(partition) && !nodes.vouched().test(partition);
+}
+
 void router::router::is_draining(bool value)
 {
 	draining = value;
@@ -562,7 +567,7 @@ router::response router::router::route_record(
 
 	// A partition this node has just been handed is one it holds nothing of until it has fetched
 	// it, so a miss there is a record it may never have received.
-	if (!nodes.vouched().test(cluster::partition_of(key)))
+	if (is_short_of(cluster::partition_of(key)))
 	{
 		return node_incomplete();
 	}
@@ -801,7 +806,7 @@ router::response router::router::scan_records(const request &request, const std:
 	// does not answer — the hops a read of a key takes. There is nothing to merge: every record of
 	// the partition is in the one answer, in the one order the store holds them in.
 	cluster::placement where = request.forwarded ? cluster::placement() : nodes.copies_of(*named);
-	bool whole = nodes.vouched().test(*named);
+	bool whole = !is_short_of(*named);
 
 	if (where.local && whole)
 	{

@@ -1206,10 +1206,72 @@ TEST(etcd_cluster_test, lead_nothing_that_etcd_does_not_answer_for)
 
 	cluster.start();
 
-	std::optional<cluster::leadership> led = cluster.leader("4821");
+	std::optional<cluster::leadership> led =
+		cluster.leader(key_led_by({ cluster::member { one, "a" }, cluster::member { two, "b" } }, one));
 
 	ASSERT_TRUE(led.has_value());
 	EXPECT_FALSE(led->known);
+
+	cluster.stop();
+}
+
+TEST(etcd_cluster_test, claim_a_partition_nothing_claims_when_a_write_asks_who_leads_it)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
+	std::string key = key_led_by(members, one);
+
+	answer_etcd(&http, members);
+	answer_elections(&http, 77);
+
+	cluster::config config = configuration(one, "a");
+
+	config.claims_per_refresh = 0;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	ASSERT_TRUE(claimed(http).empty());
+
+	std::optional<cluster::leadership> led = cluster.leader(key);
+
+	ASSERT_TRUE(led.has_value());
+	EXPECT_TRUE(led->known);
+	EXPECT_TRUE(led->local);
+	EXPECT_EQ(led->term, 77);
+	EXPECT_EQ(
+		claimed(http), (std::set<std::string> { "/asyncdb/leader/" + std::to_string(cluster::partition_of(key)) }));
+	EXPECT_TRUE(cluster.accept(key, 77));
+
+	cluster.stop();
+}
+
+TEST(etcd_cluster_test, name_the_node_the_membership_names_for_a_partition_nothing_claims)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
+
+	answer_etcd(&http, members);
+	answer_elections(&http, 77);
+
+	cluster::config config = configuration(one, "a");
+
+	config.claims_per_refresh = 0;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	std::optional<cluster::leadership> led = cluster.leader(key_led_by(members, two));
+
+	ASSERT_TRUE(led.has_value());
+	EXPECT_TRUE(led->known);
+	EXPECT_FALSE(led->local);
+	EXPECT_EQ(led->node, two);
+	EXPECT_TRUE(claimed(http).empty());
 
 	cluster.stop();
 }

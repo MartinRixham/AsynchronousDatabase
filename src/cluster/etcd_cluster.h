@@ -109,8 +109,8 @@ namespace cluster
 
 		std::atomic<size_t> registrations = 0;
 
-		// Who leads each partition, as this node last read it from etcd. Read by every write and
-		// written only by the membership thread.
+		// Who leads each partition, as this node last read it from etcd. Read by every write, and
+		// written by the membership thread and by a write claiming a partition nothing claimed.
 		mutable std::shared_mutex leader_mutex;
 
 		std::map<size_t, leadership> leader_list;
@@ -178,7 +178,7 @@ namespace cluster
 
 		std::vector<std::vector<std::string>> zones() const override;
 
-		std::optional<leadership> leader(const std::string &key) const override;
+		std::optional<leadership> leader(const std::string &key) override;
 
 		size_t leads() const override;
 

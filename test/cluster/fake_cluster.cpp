@@ -211,7 +211,7 @@ void cluster::fake_cluster::applied(const std::string &key, int64_t term)
 
 // A key nothing was said about is a cluster with no leadership at all, which is how every test
 // that is not about leadership writes.
-std::optional<cluster::leadership> cluster::fake_cluster::leader(const std::string &key) const
+std::optional<cluster::leadership> cluster::fake_cluster::leader(const std::string &key)
 {
 	std::map<std::string, leadership>::const_iterator led = leaders.find(key);
 
@@ -264,11 +264,12 @@ void cluster::fake_cluster::vouch(const partition_set &partitions, uint64_t)
 	filled |= partitions;
 }
 
+// A partition this node does not hold is one it has nothing to vouch for, as in etcd_cluster.
 cluster::partition_set cluster::fake_cluster::vouched() const
 {
 	std::lock_guard<std::mutex> lock(*mutex);
 
-	return filled;
+	return filled & holdings();
 }
 
 void cluster::fake_cluster::reads_etcd(const std::string &endpoint)

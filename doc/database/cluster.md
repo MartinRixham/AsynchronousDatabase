@@ -198,13 +198,19 @@ A node claims **a few partitions at a time** — sixty-four on each pass of the
 membership thread, walking the ring from an offset of its own name. Claiming
 costs a round trip to etcd each, and there are 256 of them; taking a few at a
 time keeps a node's start-up short. Between them, the nodes of a fresh cluster
-settle it in a pass or two, and a partition nobody has claimed yet answers
-`no_leader` to a write in the meantime.
+settle it in a pass or two.
+
+A write does not wait for a pass. **A partition nothing claims is claimed by the
+write that asks who leads it**: the node taking the write reads the one key out
+of etcd, and when nobody holds it, the node the membership names makes the same
+create on the same lease there and then — and any other node sends the write to
+that one, which does. A write answers `no_leader` only where that create does
+not land: etcd not answering, or a node that holds no lease.
 
 A claim outlives the membership it was made under. Nothing but a lease takes one
 away, and a membership change renames the leader of a partition without any node
 losing its lease — so a node the membership has stopped naming **gives its claim
-up**, and the node named now claims it on a later pass. Until it does, the
+up**, and the node named now claims it on a later pass or on the first write. Until it does, the
 partition is led by a node that is no longer the answer, and the node that is
 cannot claim it, because the key is there.
 
@@ -328,10 +334,12 @@ A partition nothing leads yet has nowhere to order a write:
 
 > `503 no_leader` — no node is leading this key's partition, so try again.
 
-That is the window a leader's lease leaves when the node holding it goes away:
-up to ten seconds, and then the node the membership names next has claimed it. A
-membership change that moves leadership without anybody losing a lease leaves a
-shorter one — a pass to give the claim up and a pass to make it again. **Reads
+That is the window a leader's lease leaves when the node holding it goes away
+without revoking it: up to ten seconds, the key still held and naming a node that
+does not answer. Once the key is gone — the lease ran out or was revoked, or a
+renamed leader gave its claim up — the first write claims it for the node the
+membership names, so what is left is how long the nodes take to read the
+membership that names it. **Reads
 are not in either window** — they are answered by a copy and never wait for a
 leader.
 
