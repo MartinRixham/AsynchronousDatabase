@@ -414,6 +414,37 @@ The writer is what the first of those needs and no other experiment has: a clien
 throughout, each key once and never again, recording which writes were acknowledged. A key written
 twice could read back either value with nothing wrong, and then the check would say nothing.
 
+#### The one assertion here that is meant to fail
+
+There is a sixth claim, and it is the only assertion anywhere in this suite that the current code
+does **not** satisfy. A [term](../doc/database/cluster.md) is what a copy refuses a stale leader by:
+a node remembers the newest term it has applied for a partition and rejects any write ordered in an
+older one with `stale_leader`. But it remembers it [in memory
+only](../doc/database/cluster.md) — nothing writes the term down beside the record it
+stamped. So a node that restarts has forgotten every term it applied, and accepts the next write
+whatever term ordered it, older ones included.
+
+That hole is only reachable when a node restarts **onto a store it kept**, because it needs the
+record the forgotten term protected to still be there — and this is the one experiment where that
+happens. So it is tested here: before the kills, one node is sent a forwarded write in a high term
+and then one in a lower term, and the lower one is refused, which proves the guard is live. The kills
+land, the node comes back on its own volume, and the same lower-term write is sent again. **It is
+now accepted, and overwrites the higher-term value the node still holds with an older one** — a
+newer record replaced by a stale write the guard was there to stop.
+
+The assertion is written as the behaviour that *should* hold — the older-term write is refused after
+the restart too — so on the current code it is a `FAIL`, and the run's exit is non-zero. That is the
+point of it: it is what says out loud that
+[persisting the term with the data](../doc/database/cluster.md) is still to be done, rather than
+leaving a known hole unmarked because nothing exercised it. Closing it — writing the term to disk
+with the record — is what turns this assertion green, and until then it is the one line here that a
+green suite cannot have.
+
+The probe writes into a table of its own, created through the load balancer and dropped at the end,
+and drives its terms up on a single node just before the kills — so a heightened term never reaches a
+write the load or the seed made for long enough to matter, and a write it did refuse is one the
+cluster never acknowledged and no other assertion rests on.
+
 ### The one that applies faults on top of each other
 
 Every other experiment here applies one fault and asks what it cost. `write-storm` applies them in

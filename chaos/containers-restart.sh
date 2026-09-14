@@ -47,6 +47,83 @@ before=before-$stamp
 
 container=$chaos_container
 
+# A table and a key of the probe's own, so that the terms it drives up on one node never reach a
+# write the load or the seed made: a copy that has seen a high term refuses everything older for
+# that partition, which a real write ordered in a smaller term is. It is created through the load
+# balancer like any table and dropped at the end, so it perturbs no assertion here and is gone
+# before the later experiments walk the seeded table.
+probe_table=$table-term-probe
+probe_key=probe
+
+# The two terms are far above any etcd revision a short run reaches, and the low one is what a
+# leader superseded by the high one would carry. The node under test is the first of the six.
+probe_high=2000000000
+probe_low=1000000000
+probe_node=$(echo "$ids" | head -1)
+
+# term_write <node> <term> <value> — the status a forwarded write carrying that term gets from the
+# node's own curl. This is exactly the request a copy receives from the leader that ordered a
+# write: X-Asyncdb-Forwarded so it is served where it lands, and X-Asyncdb-Term so it is gated by
+# cluster::etcd_cluster::accept rather than ordered afresh. Sent over Run Command because the API
+# port is not the load balancer's, so only the instance itself can reach it.
+term_write()
+{
+	ssm_run "$1" "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X PUT \
+		-H '$forwarded_header: true' -H '$term_header: $2' \
+		-H 'Content-Type: application/octet-stream' --data '$3' \
+		'http://localhost:8080/table/$probe_table/key/$probe_key'"
+}
+
+# term_read <node> — what that node holds for the probe key in its own store, forwarded so it
+# answers out of its own copy and asks the membership nothing.
+term_read()
+{
+	ssm_run "$1" "curl -s --max-time 10 -H '$forwarded_header: true' \
+		'http://localhost:8080/table/$probe_table/key/$probe_key'"
+}
+
+# term_probe_arm — before the kills, establish a term on one node and prove the guard is live:
+# a write carrying a term older than the newest that node has applied is refused (stale_leader,
+# 409). The high term goes into that node's own store as the probe value.
+term_probe_arm()
+{
+	local created armed rejected
+
+	created=$(status --request PUT --header 'Content-Type: application/json' \
+		--data '{}' "$base/table/$probe_table")
+
+	case $created in
+		200 | 201) ;;
+		*) die "Could not create $probe_table: $created." ;;
+	esac
+
+	armed=$(term_write "$probe_node" "$probe_high" high)
+	expect "$armed" 204 "a forwarded write in a high term is applied on $probe_node"
+
+	rejected=$(term_write "$probe_node" "$probe_low" stale-before)
+	expect "$rejected" 409 "and one in an older term is refused before the restart"
+}
+
+# term_probe_check — after the restart, the same older-term write, which a node that persisted the
+# term it applied would refuse again. This one forgot it (cluster::etcd_cluster::terms is in memory
+# only) and accepts it. The assertion is the behaviour that should hold, so it FAILS on the current
+# code deliberately — README.md#the-one-assertion-here-that-is-meant-to-fail is why.
+term_probe_check()
+{
+	local accepted held
+
+	accepted=$(term_write "$probe_node" "$probe_low" stale-after)
+	expect "$accepted" 409 "the older-term write is still refused after the restart"
+
+	held=$(term_read "$probe_node")
+
+	if [ "$held" = high ]; then
+		result 0 "and the higher-term value it held was not overwritten by the older one"
+	else
+		result 1 "and the higher-term value it held was not overwritten by the older one — holds \"$held\""
+	fi
+}
+
 # expect_seed_replicated <when> — every seeded record is in every zone's stores, and no key is in
 # two stores of one zone. It is given time the way expect_copies is: a key written to the node
 # standing in for one that was away is one the returning owner has to be handed, and until it is,
@@ -194,6 +271,11 @@ failed=$(write_seed "$before")
 
 expect "$failed" 0 "every seeded record was written before the first kill"
 
+# Raised on one node just before the kills, so the window in which its heightened term could refuse
+# a load write to the same partition is a round trip and no more — and a write so refused is one the
+# cluster never acknowledged, which no assertion here rests on.
+term_probe_arm
+
 started=$SECONDS
 
 fault_start || { verdict; exit 1; }
@@ -249,5 +331,11 @@ expect_seed_replicated "once every container had been killed $rounds times"
 expect_round_trip 10 "a key written after the last kill reads back what was written"
 
 expect_load_kept "once every container had come back"
+
+# The node is back on its own store, so the term it applied before the kills is the thing the
+# restart is asked to have kept.
+term_probe_check
+
+status --request DELETE "$base/table/$probe_table" > /dev/null
 
 verdict

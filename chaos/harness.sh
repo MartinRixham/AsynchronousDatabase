@@ -644,8 +644,11 @@ ssm_output_limit=24000
 holdings_asked=0
 holdings_total=0
 
-# cluster::forwarded_header in src/cluster/cluster.h.
+# cluster::forwarded_header and cluster::term_header in src/cluster/cluster.h. A forwarded write
+# carrying a term is what a copy receives from the leader that ordered it, and the two headers
+# together are how a walk over Run Command can send one.
 forwarded_header=X-Asyncdb-Forwarded
+term_header=X-Asyncdb-Term
 
 # walk_store <instance> <table> <values> <jq filter> — that node's own store, the filter applied to
 # every record it holds, sorted. Non-zero when the node could not be asked.

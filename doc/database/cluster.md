@@ -651,14 +651,17 @@ it ends.
   take a write, so a zone that is down stops writes to the keys it holds while
   reads carry on from the zones that are up. Replication here is for reading
   through the loss of a zone, not for writing through it.
-- **Records do not move when the membership changes.** A key that changes owner
-  is a key the new owner does not have, and the old owner still does. A read
-  still finds it, because the new owner asks the other zones for what it holds
-  nothing of, and a scan still sees it, because the old owner is asked as well —
-  but nothing rebuilds the copy in that zone until the record is written again,
-  and a *write* lands on the new owner and leaves the old one holding a value
-  that is now stale. Growing a cluster is therefore still a thing to do
-  deliberately, at a quiet moment, and with the keys rewritten afterwards.
+- **Records move when ownership moves, and only then.** A membership change
+  redraws which of a zone's nodes owns each partition, and every node runs
+  [a reconcile pass](/runbook/rebuild#when-ownership-moves) that fetches what it
+  now owns and holds nothing of and clears down what it no longer owns. It is
+  background work and convergent, not part of the change that caused it: a node
+  handed a partition answers `node_incomplete` for a miss in it until the pass
+  has fetched the whole of it, so a read falls to a copy that has the key and
+  nothing is answered as absent that is not. What no pass puts back is a copy
+  that was *lost* rather than moved — a node replaced onto an empty store
+  [rebuilds from the other zones](/runbook/rebuild), and a key whose every copy
+  went at once is gone with them.
 - **A table is created on every node that is a member at the time.** A node that
   was not one misses it, and what puts it right is the pass that moves records:
   it reads the schema from a node that has it and takes every name that node
@@ -673,9 +676,13 @@ it ends.
   idempotent, so the remedy is to run the request again.
 - **A term is remembered in memory, not on disk.** A node that restarts has
   forgotten which terms it has applied, so it accepts the first write it is sent
-  afterwards whatever term ordered it. A node that restarts has also lost its
-  RocksDB, so this is a smaller hole than it sounds — but it is a hole, and
-  persisting the term with the data is what closes it.
+  afterwards whatever term ordered it — a stale leader's included. The store is
+  a volume that outlives the process, so the node comes back holding the very
+  records that term was protecting, and the stale write overwrites a newer value
+  with an older one. It is a real hole, not a theoretical one: the only restart
+  that avoids the overwrite is an instance replaced onto an empty store, which
+  has no newer value under the key to lose — it still accepts the stale write.
+  Persisting the term with the data is what closes it.
 - **Nodes trust each other.** `X-Asyncdb-Forwarded` and `X-Asyncdb-Term` are
   honoured from anyone who sends them, so the API port belongs on a private network, exactly as it does
   without a cluster. The nginx in the image
