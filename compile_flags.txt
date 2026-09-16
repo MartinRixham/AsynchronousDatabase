@@ -1,5 +1,7 @@
 g++
 -Wall
+-Wextra
+-Wshadow
 -std=c++20
 -DBOOST_ASIO_NO_DEPRECATED
 -Isrc

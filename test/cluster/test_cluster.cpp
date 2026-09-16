@@ -1,3 +1,6 @@
+#include <mutex>
+#include <shared_mutex>
+
 #include "cluster/partition.h"
 #include "test_cluster.h"
 
@@ -13,6 +16,8 @@ void cluster::test_cluster::join(
 	const std::string &node_zone,
 	const std::vector<member> &nodes)
 {
+	std::unique_lock<std::shared_mutex> lock(membership_mutex);
+
 	self = node;
 	zone = node_zone;
 	member_list = nodes;
@@ -20,6 +25,8 @@ void cluster::test_cluster::join(
 
 void cluster::test_cluster::led_by(const std::string &node, int64_t node_term)
 {
+	std::unique_lock<std::shared_mutex> lock(membership_mutex);
+
 	leader_node = node;
 	term = node_term;
 }
@@ -46,6 +53,8 @@ void cluster::test_cluster::stop()
 
 std::vector<cluster::member> cluster::test_cluster::members() const
 {
+	std::shared_lock<std::shared_mutex> lock(membership_mutex);
+
 	return member_list;
 }
 
@@ -56,6 +65,7 @@ cluster::placement cluster::test_cluster::replicas(const std::string &key) const
 
 cluster::placement cluster::test_cluster::copies_of(size_t partition) const
 {
+	std::shared_lock<std::shared_mutex> lock(membership_mutex);
 	std::vector<member> owners = owners_of(partition_name(partition), member_list);
 	placement where;
 
@@ -78,6 +88,7 @@ cluster::placement cluster::test_cluster::copies_of(size_t partition) const
 
 cluster::partition_set cluster::test_cluster::holdings() const
 {
+	std::shared_lock<std::shared_mutex> lock(membership_mutex);
 	partition_set held;
 
 	for (size_t partition = 0; partition < partition_count; partition++)
@@ -118,6 +129,8 @@ cluster::partition_set cluster::test_cluster::vouched() const
 std::map<std::string, cluster::partition_set> cluster::test_cluster::holders(
 	const partition_set &partitions) const
 {
+	std::shared_lock<std::shared_mutex> lock(membership_mutex);
+
 	return holders_of(partitions, member_list, self, zone);
 }
 
@@ -130,6 +143,7 @@ std::map<std::string, cluster::partition_set> cluster::test_cluster::holders_in(
 
 std::vector<std::string> cluster::test_cluster::peers() const
 {
+	std::shared_lock<std::shared_mutex> lock(membership_mutex);
 	std::vector<std::string> peers;
 
 	for (const member &listed : member_list)
@@ -145,11 +159,15 @@ std::vector<std::string> cluster::test_cluster::peers() const
 
 std::vector<std::vector<std::string>> cluster::test_cluster::zones() const
 {
+	std::shared_lock<std::shared_mutex> lock(membership_mutex);
+
 	return zones_of(member_list, self, zone);
 }
 
 std::optional<cluster::leadership> cluster::test_cluster::leader(const std::string &)
 {
+	std::shared_lock<std::shared_mutex> lock(membership_mutex);
+
 	if (leader_node.empty())
 	{
 		return std::nullopt;
@@ -167,6 +185,8 @@ std::optional<cluster::leadership> cluster::test_cluster::leader(const std::stri
 
 size_t cluster::test_cluster::leads() const
 {
+	std::shared_lock<std::shared_mutex> lock(membership_mutex);
+
 	return leader_node == self ? partition_count : 0;
 }
 
@@ -187,6 +207,8 @@ cluster::etcd_registration cluster::test_cluster::registration() const
 
 bool cluster::test_cluster::accept(const std::string &key, int64_t sent)
 {
+	std::shared_lock<std::shared_mutex> lock(membership_mutex);
+
 	return sent == 0 || (sent >= term && sent >= restored[partition_of(key)]);
 }
 

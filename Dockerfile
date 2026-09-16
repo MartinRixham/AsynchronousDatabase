@@ -8,7 +8,7 @@ RUN apk update && \
 RUN git clone https://github.com/martinrixham/cheesemake
 COPY src/ src/
 COPY test/ test/
-COPY recipe.json valgrind.chevre valgrind.supp ./
+COPY recipe.json valgrind.chevre sanitize.chevre valgrind.supp tsan.supp ./
 RUN cheesemake/cheesemake verify
 
 FROM alpine:latest AS ui

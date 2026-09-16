@@ -1,0 +1,9 @@
+# RocksDB is not built with ThreadSanitizer, so the memory it guards with synchronisation of its own is
+# reported as raced wherever an intercepted call such as memcpy reaches it. A race of ours is in our
+# frames, and those are still reported.
+called_from_lib:librocksdb.so
+
+# Its background thread pool locks a mutex in RocksDB's own code and waits on it through libstdc++, so the
+# wait is the first TSan sees of that mutex, and it is seen released without being taken. A mutex of ours
+# is first seen where our instrumented code locks it, never in a wait.
+mutex:std::condition_variable::wait

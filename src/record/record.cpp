@@ -119,12 +119,12 @@ record::record record::parse_record(const std::string &key, const std::string &v
 
 record::record record::valid_record(const std::string &key, const std::string &value)
 {
-	return { true, key, value, "", "" };
+	return { true, key, value, "", "", version() };
 }
 
 record::record record::invalid_record(const std::string &code, const std::string &message)
 {
-	return { false, "", "", code, message };
+	return { false, "", "", code, message, version() };
 }
 
 bool record::is_valid_utf8(const std::string &text)

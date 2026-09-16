@@ -1,10 +1,12 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -19,6 +21,10 @@ namespace cluster
 	// key, and how a request reaches the node that does — is the cluster the server runs.
 	class test_cluster : public cluster
 	{
+		// A test redraws the membership and names the leader while the servers are running, and
+		// their sessions and reconcile passes read both throughout.
+		mutable std::shared_mutex membership_mutex;
+
 		std::string self;
 
 		std::string zone;
@@ -32,7 +38,7 @@ namespace cluster
 
 		std::vector<member> member_list;
 
-		bool started = false;
+		std::atomic<bool> started = false;
 
 		// Vouched for by the server's thread before it listens, and read by every session after.
 		mutable std::mutex vouch_mutex;

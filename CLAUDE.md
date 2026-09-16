@@ -39,7 +39,22 @@ build/test/test_main --gtest_filter='table_test.fail_to_deserialise_table_with_n
 ```
 
 Notes:
-- `-Wall -Werror` — any warning fails the build. `cppcheck --enable=style` runs in the `validate` phase.
+- `-Wall -Wextra -Wshadow -Werror` — any warning fails the build. `cppcheck --enable=style` runs in the
+  `validate` phase, and its `useStlAlgorithm` check is why a loop that only builds or searches a container is
+  written as a `std::ranges` algorithm.
+- **The `verify` phase also runs the tests under two sanitizers**, after valgrind: `sanitize.chevre` is a
+  plugin of this project's, named twice in `recipe.json` — once with `"sanitizer": "address"` (AddressSanitizer
+  and UBSan) and once with `"sanitizer": "thread"` (ThreadSanitizer, for the data races memcheck does not look
+  for) — because the two cannot be linked into one binary. Cheesemake has one set of compiler flags, so each
+  is a build of its own under `build/sanitize/<sanitizer>`, incremental against hashes of its own the way
+  gcovr's is. **A report fails the build.** LeakSanitizer is off: leaks are valgrind's. `tsan.supp` is the
+  thread entry's `suppressions`, and it names what TSan cannot judge rather than races it found: RocksDB is
+  not built with TSan, so the memory it synchronises for itself and the mutexes its thread pool locks are
+  reported without it. A report with a frame of ours in it is still a report. It needs the
+  sanitizer runtimes (`libasan`, `libubsan`, `libtsan`). **ThreadSanitizer does not run on musl** — its
+  runtime aborts at the first thread a test starts — so the `thread` entry skips itself where the compiler
+  targets musl, and the image build checks for no races at all. AddressSanitizer runs there with
+  `-fno-sanitize=vptr`, because Alpine's RocksDB is built without RTTI and the vptr check needs its typeinfo.
 - The `verify` phase memchecks under valgrind, which is why `cmk verify` takes minutes rather than seconds.
   Cheesemake's own `valgrind.chevre` runs `build/bin/asyncdb`, and that serves until it is signalled, so the
   root `valgrind.chevre` overrides it and runs `build/test/test_main` instead, keeping the report in
@@ -735,8 +750,9 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   above every count the one before it issued. It is the same count a schema operation is stamped
   with. **A store of another format refuses to open**: `check_format` holds `format_version`, 2
   for records held under their partition (1 held them under the key alone, which is the wrong place
-  for every one of them), and a store that names a different one or names none at
-  all and has something in it is refused rather than read as versions that were never written.
+  for every one of them), and a store that names a different one is refused rather than read in a
+  layout it was never written in. A store that names none is taken to be this format and stamped with
+  it, whatever it holds.
 - **A file overwrites only what was written before it.** `import_records` keeps a record the store
   holds at a later version and replaces an earlier one, which is what catches up a copy that was
   not there for a write the others took. It is the store that decides and not the caller — the

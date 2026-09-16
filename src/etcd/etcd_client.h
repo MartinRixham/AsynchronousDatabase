@@ -39,7 +39,7 @@ namespace etcd
 		long timeout_seconds;
 
 	public:
-		client(const http::client &http, const std::vector<std::string> &endpoints, long timeout_seconds = 5);
+		client(const http::client &http, const std::vector<std::string> &endpoints, long timeout = 5);
 
 		// A lease is what makes membership expire: the node's key is written with it, and the key
 		// is gone TTL seconds after the node stops saying it is alive.

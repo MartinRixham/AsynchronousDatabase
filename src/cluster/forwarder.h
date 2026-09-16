@@ -16,10 +16,10 @@ namespace cluster
 	{
 		const http::client &http_client;
 
-		long timout_seconds;
+		long timeout_seconds;
 
 	public:
-		explicit forwarder(const http::client &http, long timeout_seconds = 30);
+		explicit forwarder(const http::client &http, long timeout = 30);
 
 		[[nodiscard]] router::response forward(const std::string &node, const router::request &request) const;
 

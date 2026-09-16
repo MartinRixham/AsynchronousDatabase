@@ -2,17 +2,17 @@
 
 router::response router::json_response(boost::beast::http::status status, const boost::json::object &json)
 {
-	return { status, json_content_type, json, "", 0 };
+	return { status, json_content_type, json, "", 0, {} };
 }
 
 router::response router::text_response(boost::beast::http::status status, const std::string &text)
 {
-	return { status, text_content_type, boost::json::object(), text, 0 };
+	return { status, text_content_type, boost::json::object(), text, 0, {} };
 }
 
 router::response router::empty_response(boost::beast::http::status status)
 {
-	return { status, "", boost::json::object(), "", 0 };
+	return { status, "", boost::json::object(), "", 0, {} };
 }
 
 router::response router::file_response(const std::string &file, size_t records, const std::string &next)
@@ -25,7 +25,7 @@ router::response router::head_response(
 	const std::string &content_type,
 	size_t length)
 {
-	return { status, content_type, boost::json::object(), "", length };
+	return { status, content_type, boost::json::object(), "", length, {} };
 }
 
 std::string router::response_body(const response &response)

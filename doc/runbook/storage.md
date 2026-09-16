@@ -109,22 +109,15 @@ is a store that will not open again. Replace it.
 A different message is a store this build will not read rather than one RocksDB
 cannot:
 
-> `The store predates record versions and has to be rebuilt from a node that has them.`
+> `The store is format 1 and this build reads format 2.`
 
-Records carry [the version they were written
-in](/database/cluster#every-record-carries-a-version) in front of their values,
-and a store written before they did holds values that are values all the way
-through. The two cannot be told apart by looking, so a store with tables in it
-and no note of its format is refused rather than read as versions that were never
-written. A store that names a format this build does not read is refused the same
-way and says so:
-
-> `The store is format 2 and this build reads format 1.`
-
-Format 1 is [the schema in one versioned
-record](/database/cluster#the-schema-is-one-record-and-every-name-in-it-carries-a-version),
-and it is the only format there has been: a store naming another one was written
-by a build this one is not. **Moving across a format is therefore a rebuild and not a restart**: empty
+Format 2 holds every record under its partition, which is what lets a share of a
+table be read as one range of the store for each partition in it; format 1 held
+them under the key alone. A store naming another format is refused rather than
+read in a layout it was never written in. **A store that names no format at all
+is not refused**: it is taken to be format 2 and stamped with it as it opens, so
+a volume written before stores named their format has to be emptied by hand
+rather than left to fail. **Moving across a format is therefore a rebuild and not a restart**: empty
 the volume and let the node fill itself from a zone that is already on the new
 build — which is what happens by itself wherever an instance is replaced rather
 than restarted, the root volume going with it. Do one node at a time, and never

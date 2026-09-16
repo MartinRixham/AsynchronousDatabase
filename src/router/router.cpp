@@ -552,7 +552,7 @@ router::response router::router::route_record(
 			return nodes.send(lead->node, request);
 		}
 
-		std::lock_guard<std::mutex> ordering(write_lock(record.key));
+		std::lock_guard<std::mutex> ordered(write_lock(record.key));
 
 		record.stamp = record::version { lead->term, repository.next_count() };
 

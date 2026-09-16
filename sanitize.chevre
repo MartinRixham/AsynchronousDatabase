@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# Builds the test binary with a sanitizer and runs it: `thread` for data races, which valgrind's
+# memcheck does not look for, and `address` for use after free, overflows and undefined behaviour.
+# The recipe names one sanitizer a plugin entry, because the two cannot be linked into one binary.
+#
+# Cheesemake has one set of compiler flags, so this is a build of its own, the way gcovr's is: the
+# tree is copied under build/sanitize/<sanitizer> and compiled there against hashes of its own, so
+# only what changed since the last sanitized build is compiled again.
+
+sanitizer="$(echo "$@" | jq -r .sanitizer)"
+options="$(echo "$@" | jq -r .options | not is_null)"
+args="$(echo "$@" | jq -r .args | not is_null)"
+suppressions="$(echo "$@" | jq -r .suppressions | not is_null)"
+
+case "$sanitizer" in
+	# GCC warns that TSan cannot model the atomic Asio fences a handler with, which is Asio's code
+	# and not a race of ours.
+	thread) flags="-fsanitize=thread -Wno-tsan" ;;
+	# The vptr check needs the typeinfo of every polymorphic class it sees, and Alpine's RocksDB is
+	# built without RTTI, so the test binary would not link against it.
+	address) flags="-fsanitize=address,undefined -fno-sanitize=vptr -fno-sanitize-recover=undefined" ;;
+	*)
+		echo "$SCRIPT_NAME: sanitize needs a sanitizer of thread or address, not $sanitizer" >&2
+		exit 1
+		;;
+esac
+
+# TSan's runtime assumes glibc's thread layout and aborts on musl as soon as a test starts a thread.
+if [[ "$sanitizer" == thread && "$($(get_compiler) -dumpmachine)" == *musl* ]]; then
+	echo "$SCRIPT_NAME: ThreadSanitizer does not run on musl, skipping it"
+	exit 0
+fi
+
+directory="build/sanitize/$sanitizer"
+compiler="$(get_compiler) $(get_defines) -O1 -fno-omit-frame-pointer $flags $options"
+includes="-Isrc -Ibuild/include $(get_includes source_dependencies)"
+test_includes="-Isrc -Ibuild/include $(get_includes identity)"
+links="-Lbuild/lib $(get_module_links identity) $(get_links identity) $(get_static_links identity | non_empty | map link_statically)"
+
+get_includes()
+{
+	echo "$includes"
+}
+
+get_test_includes()
+{
+	echo "$test_includes"
+}
+
+compile()
+{
+	verbose $compiler -c -o $(get_output "$4") $($2 $4) $($3) $4
+
+	if [[ $? -eq 0 ]]; then
+		generate_hash "$4" >> build/hashes
+	fi
+}
+
+link()
+{
+	verbose $compiler -o $(get_executable "$1") $1 $(all_sources | map get_output | not is_executable_object) $links
+}
+
+# LeakSanitizer is left off: leaks are valgrind's to fail the build on, and it would report the block
+# valgrind.supp names without the suppression.
+run_test()
+{
+	TSAN_OPTIONS="halt_on_error=1 second_deadlock_stack=1${suppressions:+ suppressions=$suppressions}" \
+		ASAN_OPTIONS="detect_leaks=0${suppressions:+ suppressions=$suppressions}" \
+		UBSAN_OPTIONS="print_stacktrace=1" \
+		verbose "$directory/$1" $args
+}
+
+# The hashes say what changed in the sources and not what they were compiled with, so a build made
+# with other flags is thrown away rather than linked against.
+if [[ "$(cat "$directory/flags" 2> /dev/null)" != "$compiler" ]]; then
+	rm -rf "$directory"
+fi
+
+mkdir -p "$directory/build"
+rm -rf "$directory/src" "$directory/test"
+copy_all src "$directory"
+copy_all test "$directory"
+copy_all build/lib "$directory/build"
+copy_all build/include "$directory/build"
+echo "$compiler" > "$directory/flags"
+
+(
+	cd "$directory"
+	filter_old_hashes has_object
+	get_missing_sources src | map remove_hash | map make_directory | parmap compile blank blank get_includes
+	get_missing_sources test | map remove_hash | map make_directory | parmap compile blank include_source get_test_includes
+	get_sources test | map get_output | filter is_executable_object | map link
+)
+
+get_sources test | map get_output | filter is_executable_object | map get_executable | map run_test

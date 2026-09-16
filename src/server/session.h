@@ -9,8 +9,6 @@
 
 #include "router/router.h"
 
-void fail(boost::beast::error_code ec, char const *what);
-
 namespace server
 {
 	class session : public std::enable_shared_from_this<session>
@@ -36,7 +34,7 @@ namespace server
 		bool waiting = false;
 
 	public:
-		session(boost::asio::ip::tcp::socket &&socket, router::router &router, const std::atomic<bool> &stopping);
+		session(boost::asio::ip::tcp::socket &&socket, router::router &routing, const std::atomic<bool> &shutting_down);
 
 		void run();
 

@@ -24,7 +24,7 @@ void http::fake_client::forget(const std::string &url)
 	std::erase_if(answers, [&url](const reply &answered) { return answered.url == url; });
 }
 
-http::response http::fake_client::send(const request &request, long timeout_seconds) const
+http::response http::fake_client::send(const request &request, long) const
 {
 	std::lock_guard<std::mutex> lock(mutex);
 

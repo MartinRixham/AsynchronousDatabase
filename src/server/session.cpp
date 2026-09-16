@@ -108,11 +108,11 @@ namespace
 
 server::session::session(
 	boost::asio::ip::tcp::socket&& socket,
-	router::router &router,
-	const std::atomic<bool> &stopping):
+	router::router &routing,
+	const std::atomic<bool> &shutting_down):
 		stream(std::move(socket)),
-		router(router),
-		stopping(stopping)
+		router(routing),
+		stopping(shutting_down)
 {
 	DEBUG("Session started.");
 }

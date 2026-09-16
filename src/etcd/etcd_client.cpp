@@ -114,10 +114,10 @@ namespace
 	}
 }
 
-etcd::client::client(const http::client &http, const std::vector<std::string> &etcd_endpoints, long timeout_seconds):
+etcd::client::client(const http::client &http, const std::vector<std::string> &etcd_endpoints, long timeout):
 	http_client(http),
 	endpoints(etcd_endpoints),
-	timeout_seconds(timeout_seconds)
+	timeout_seconds(timeout)
 {
 }
 

@@ -124,9 +124,9 @@ namespace
 	}
 }
 
-cluster::forwarder::forwarder(const http::client &http, long timout_seconds):
+cluster::forwarder::forwarder(const http::client &http, long timeout):
 	http_client(http),
-	timout_seconds(timout_seconds)
+	timeout_seconds(timeout)
 {
 }
 
@@ -136,7 +136,7 @@ router::response cluster::forwarder::forward(const std::string &node, const rout
 
 	DEBUG("Forwarding " + forwarded.method + " " + forwarded.url + ".");
 
-	return to_response(node, http_client.send(forwarded, timout_seconds), is_head(request));
+	return to_response(node, http_client.send(forwarded, timeout_seconds), is_head(request));
 }
 
 std::vector<router::response> cluster::forwarder::forward_each(const std::vector<enquiry> &enquiries) const
@@ -155,7 +155,7 @@ std::vector<router::response> cluster::forwarder::forward_each(const std::vector
 		DEBUG("Forwarding " + forwarded.back().method + " " + forwarded.back().url + ".");
 	}
 
-	std::vector<http::response> answers = http_client.send_all(forwarded, timout_seconds);
+	std::vector<http::response> answers = http_client.send_all(forwarded, timeout_seconds);
 	std::vector<router::response> responses;
 
 	for (size_t i = 0; i < enquiries.size() && i < answers.size(); i++)
@@ -180,7 +180,7 @@ std::vector<router::response> cluster::forwarder::forward_all(
 		DEBUG("Forwarding " + forwarded.back().method + " " + forwarded.back().url + ".");
 	}
 
-	std::vector<http::response> answers = http_client.send_all(forwarded, timout_seconds);
+	std::vector<http::response> answers = http_client.send_all(forwarded, timeout_seconds);
 	std::vector<router::response> responses;
 
 	// One answer for each node asked, whatever the client made of them, so that the node a

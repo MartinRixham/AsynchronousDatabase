@@ -296,8 +296,6 @@ void repository::rocksdb_repository::check_format()
 		return;
 	}
 
-	std::unique_ptr<rocksdb::Iterator> it(database->NewIterator(rocksdb::ReadOptions()));
-
 	written(database->Put(rocksdb::WriteOptions(), format_key, format_version), "Writing the store format");
 }
 

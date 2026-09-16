@@ -70,8 +70,8 @@ namespace repository
 
 		std::mutex term_mutex;
 
-		// Refuses a store written before records carried a version, whose values would otherwise
-		// be read as a version and a value that were never written.
+		// Refuses a store that names a format other than this build's, and writes this build's into a
+		// store that names none.
 		void check_format();
 
 		// The schema record read into `tables`, once, as the store is opened.
