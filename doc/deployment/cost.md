@@ -554,19 +554,22 @@ without buying a copy.
 
 ## What the pipeline costs
 
-The [four verify shares](/pipeline/#the-shares) each create a whole stack, run
-their share of the tests against it and delete it again. At $0.182 an hour a
-stack standing for half an hour costs about ten cents, so **a release is
-somewhere around forty-five cents of stack** — EC2 bills per second past a one
-minute minimum, and EBS and the public addresses are prorated the same way, but
-each load balancer is charged by the hour or part of one, so four short-lived
-stacks pay four full hours of it and that is most of the forty-five cents.
+The [five verify shares](/pipeline/#the-shares) each create a whole stack, run
+their share of the tests against it and delete it again. Four of them stand for
+about twenty-three minutes and `asyncdb-five`, which runs `write-storm` alone, for
+about forty. EC2 bills per second past a one minute minimum, and EBS and the
+public addresses are prorated the same way, so the stacks without their load
+balancers are $0.156 an hour for about two and a half stack-hours between them:
+34 cents. Each load balancer is charged by the hour or part of one, so five
+short-lived stacks pay five full hours of it, 13 cents. **A release is somewhere
+around forty-seven cents of stack.**
 
-**Running them at once costs a little more than running them in turn and takes a
-third of the time.** The four loads of nine instances overlap where one used to
-follow another, and it is four load-balancer-hours rather than one; against that,
-the suite takes about half an hour rather than nearly two, and a GitHub runner is
-billed by the minute too.
+**Running them at once costs more than running them in turn and takes less than
+half the time.** One stack running everything would stand for well over an hour
+and a half and pay two load-balancer-hours, which is about thirty cents. Five at
+once is five load-balancer-hours and five loads of nine instances standing up and
+tearing down; against that, the suite takes about forty minutes rather than over
+an hour and a half, and a GitHub runner is billed by the minute too.
 
 Three footnotes on that:
 
@@ -577,15 +580,14 @@ Three footnotes on that:
   stack alone — and running. A stack forgotten after a failed build is $133 a
   month, and the fixed share names mean you will find out the next time a release
   tries to deploy.
-- **Four at once is four VPCs**, against a default quota of five to a region.
-  The bill is not what stops a fifth share; [nothing does, and nothing needs
-  to](/pipeline/#why-four) — the run is already as short as the longest
-  experiment makes it.
+- **Five at once is five VPCs**, against a default quota of five to a region, so
+  the run needs the quota raised or the default VPC removed. The bill is not what
+  set the number of shares; [the time a stack takes to stand up
+  did](/pipeline/#why-four-and-then-a-fifth).
 
-ECR holds one image per released tag at $0.10 a GB-month and nothing prunes
-them, so the repository grows by an image per release forever. It is small
-money and it is unbounded; a lifecycle policy keeping the last few tags is the
-one-line fix, and it is not in this repository.
+ECR storage is small and bounded. `ecr-lifecycle.json` is set on both the
+`asyncdb` and `etcd` repositories when the pipeline creates them: an image is
+expired after a week, and no repository keeps more than five.
 
 ## What is not costed here
 

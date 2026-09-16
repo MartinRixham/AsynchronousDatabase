@@ -9,6 +9,13 @@ vanilla-JS single-page UI that draws the tables and their dependencies as a DAG.
 partition a keyspace between them and keep one copy of it in each availability zone, finding each
 other through etcd — see [Clustering](#clustering).
 
+## Where to look
+
+Most work needs [Working here](#working-here), [Build and test](#build-and-test),
+[Comments and documentation](#comments-and-documentation) and [Server architecture](#server-architecture).
+[Chaos tests](#chaos-tests-chaos) and [Release](#release) are summaries: `chaos/README.md`,
+`doc/pipeline/` and `doc/deployment/` hold the detail.
+
 ## Working here
 
 **A change already in the working tree is deliberate.** Take an edit, a deletion or a revert as
@@ -46,8 +53,8 @@ Notes:
   plugin of this project's, named twice in `recipe.json` — once with `"sanitizer": "address"` (AddressSanitizer
   and UBSan) and once with `"sanitizer": "thread"` (ThreadSanitizer, for the data races memcheck does not look
   for) — because the two cannot be linked into one binary. Cheesemake has one set of compiler flags, so each
-  is a build of its own under `build/sanitize/<sanitizer>`, incremental against hashes of its own the way
-  gcovr's is. **A report fails the build.** LeakSanitizer is off: leaks are valgrind's. `tsan.supp` is the
+  is a build of its own under `build/sanitize/<sanitizer>`, incremental against hashes of its own.
+  **A report fails the build.** LeakSanitizer is off: leaks are valgrind's. `tsan.supp` is the
   thread entry's `suppressions`, and it names what TSan cannot judge rather than races it found: RocksDB is
   not built with TSan, so the memory it synchronises for itself and the mutexes its thread pool locks are
   reported without it. A report with a frame of ours in it is still a report. It needs the
@@ -123,7 +130,7 @@ cmk run   # serves on 8080 with no cluster; or docker-compose up -d and use the 
 newman run api/asyncdb.postman_collection.json -e api/asyncdb.local.postman_environment.json
 ```
 
-The eight folders are ordered and depend on each other — folder 0 drops what the last run left, and
+The nine folders (0–8) are ordered and depend on each other — folder 0 drops what the last run left, and
 a scan's second page carries the cursor its first page issued — so run whole folders, in order. The
 `clusterSize` variable is how many nodes folder 8 expects `/health` to name: 3 for compose, 6 for the
 AWS stack, 1 for a lone instance.
@@ -178,7 +185,7 @@ reported and never asserted on: nothing here is a threshold.
 
 The failure modes in `doc/runbook`, injected into the **deployed AWS stack** with the AWS CLI and
 asserted on from outside. No part of `cmk`, and the only suite here that breaks the thing it is
-testing:
+testing. **`chaos/README.md` is the page** — the experiments, their order, and what each asserts.
 
 ```bash
 make create-stack            # or the stack a build stood up
@@ -188,194 +195,24 @@ chaos/run.sh                 # all twelve experiments, in order
 make delete-chaos-stack
 ```
 
-`chaos/harness.sh` is sourced by each experiment the way `perf/harness.sh` is, and owns the same
-four things every one of them needs: the stack, the fault, a client reading and writing throughout,
-and the verdict. Everything is an environment variable — `CHAOS_EXPERIMENTS`,
-`CHAOS_SETTLE`, `CHAOS_RECOVERY`, `CHAOS_CONVERGE` — and a failed assertion is a non-zero exit,
-which is what lets `build.yaml` run it after the load tests and fail the build on it.
+What someone editing an experiment has to keep true:
 
-**An experiment declares three functions and the harness owns when they run**: `inject` applies
-the fault, `heal` takes it away, and `preflight` asks whether `inject` would work while applying
-nothing. `fault_start` and `fault_stop` are the two calls an experiment makes, so the rest of the
-script is the assertions and nothing else. `heal` is called by the exit trap as well, which is why
-every one of them is written to be safe run twice, or against a fault that never landed.
-
-**A duration is a ceiling and nothing else.** A fault lasts until `fault_stop` takes it away, which
-is as soon as that experiment's assertions are done; the seconds an experiment names are what its
-script sleeps for if nothing ever comes back to remove it. That is what lets them stay generous:
-**a fault that expires mid-assertion is a false failure and not a weaker test**, because
-`nodes-go-deaf` counts the partitions a hearing node cannot reach while the fault stands. None of
-it is taken on trust: the recovery assertion every experiment runs next is the check that the fault
-went, **and it has to be one the fault would fail**. A rule left standing changes no membership, so
-`nodes-go-deaf` waits on a write rather than on `/health`: a write needs every copy, and a node no
-peer can reach fails one.
-
-- **Every experiment runs under load**, because a fault that lands on an idle cluster is not the
-  fault anybody has. `start_load` keeps a client on the load balancer for the whole of an
-  experiment — reads of the seeded keys as fast as one connection answers them, and a write every
-  `CHAOS_LOAD_PAUSE` (0.2 seconds) — and `CHAOS_LOAD=0` turns it off. The reads are reported a
-  phase at a time and never asserted on — everywhere but `write-storm` and `nodes-removed` — a fault costing reads
-  being the load balancer's health check as much as the database. The writes are the assertion no error code can make:
-  `expect_load_kept` is every write the cluster answered 2xx still being there and holding what was
-  written, which every fault that breaks nothing permanently has to leave standing. The three that
-  terminate instances call `report_load_kept` instead and print what was lost, for the same reason
-  the seed is counted there and not asserted. **Both of them end in `copies_agree`**, which asks
-  each node what it holds of that table in its own store and asserts that no key is held at two
-  different values: the readback goes through the load balancer, so it says a 2xx write survived
-  somewhere and never that the copies of it survived as one record, and `expect_copies` compares
-  key sets, which say nothing about what is in them. A copy that is *missing* a key is not a
-  disagreement and is not counted as one. It is given no time to converge because it needs none —
-  every key it compares is written once and never again, so two copies holding two values is a
-  cluster that invented one, and nothing would ever put it right. **The load writes into a table of its own**: a
-  refused write may still have been taken by one copy — the copies of a write are written beside
-  each other rather than in turn — and nothing puts the rest of that record back, so a load in the
-  seeded table would leave the zones holding different keys, which is what `expect_copies` asserts
-  they do not.
-- **The suite refuses to start** against a cluster that is not already six nodes in three zones
-  with nothing stalled and every node holding what it owns, and stops early if an experiment's
-  damage did not heal — everything after that would be measuring the previous fault. `every_node_whole`
-  in `chaos/harness.sh` is the last of those, and it asks **each node** over Run Command rather
-  than sampling `/health` through the load balancer: `incomplete` is a node's own state, and a
-  node that came back from a rebuild short of its share is in the membership and answering, so
-  the shape cannot show it. A node that cannot be asked fails it. It runs at the start and after
-  every experiment, which is what makes `node-stops` and the three resizes a test of the rebuild
-  and not only of the records that moved.
-- **Order matters.** The three that need nothing of the instances are first; `write-storm` comes
-  after the faults it is made of; the three that resize the tier come after every fault that only
-  breaks it, because they are the only ones that change what the deployment *is*; `etcd-quorum-lost`
-  is last, because it is the only one that leaves the cluster having been wrong about itself, and
-  the pipeline deletes the stack next.
-- **Six of the twelve inject through `ssm:SendCommand`** and the `AWS-RunShellScript` document,
-  which needs the private subnets' [route out](#release): `node-latency` installs `tc` from the
-  distribution repositories, so what it depends on is an instance being able to install a package
-  while it is under test. Four of the five send the script `fault_script` builds — write the removal down,
-  arm a detached timer, install, sleep, remove — and none of them waits that sleep out: `heal`
-  takes the fault away over a second Run Command, and the timer is for the run that died holding
-  it. `nodes-go-deaf` and `etcd-unreachable` install their rule in the **`DOCKER-USER`** chain,
-  because a container behind a published port is reached through `FORWARD` and sends through it
-  too, so **a rule in `INPUT` or `OUTPUT` blocks nothing here**. A deaf node is still asked over
-  Run Command, because a request the host makes to a published port never crosses `FORWARD` —
-  which is how the rule is taken out again, and how `nodes-go-deaf` scans a node that hears rather
-  than whichever one the load balancer picked. **A scan there is a read and no more fragile than
-  one**: it names a partition and is answered by one copy of it, so the partitions it cannot answer
-  for are the ones whose every copy went deaf. The other three (`ec2:StopInstances`
-  twice, and a network acl on one zone's subnet) need nothing of the instances, which is why they
-  are first. `chaos/README.md` is the page.
-- **`containers-restart` is the fifth, and the only fault here that stands for no time at all**:
-  `kill -9` on every container's own init at once, from the host, several rounds of it, while a
-  client is writing. There is nothing for `fault_script` to hold and nothing for `heal` to take
-  away — `docker run --restart always` is what brings a container back, and that the container
-  came back by itself is one of the assertions. It is the only experiment whose fault is allowed
-  to cost nothing: the store is a volume that outlives the container, so a node returns at the
-  address it had, owning what it owned. Every write the cluster acknowledged has to read back what
-  was written, no copy of a key may answer a different value from another copy, and **a restart is
-  not a rebuild** — an empty store is the only thing that triggers one, so a rebuild in the log
-  since the first kill is a node that came back to an empty directory. `ssm_all` in
-  `chaos/harness.sh` is what sends one kill to every instance at once, because six sends in turn
-  are a rolling restart and not this fault.
-- **`write-storm` is the sixth, and the only one that applies two faults at once**: a zone cut off
-  while a node of another zone is held out of the membership under it, an instance stopped while a
-  node of the third zone is held out, and then every zone in turn held out whole, twice round.
-  **Every fault in it outlasts the ten second membership lease, and that is the design and not a
-  setting**: a fault shorter than the lease takes no copy out of the write path, because the node
-  is still a member and the write it cannot take is *refused* rather than taken without it — the
-  client retries, the node takes the retry on its way back, and it was never behind. A container
-  kill is that fault, measured at two seconds a time, so what is held here is a node's path to
-  **etcd** (`etcd-unreachable`'s rule and deliberately not `nodes-go-deaf`'s, which leaves the node
-  renewing and stalls the cluster instead): it stops renewing, its peers drop it within a lease,
-  and they go on taking writes its copy will never see. `CHAOS_STORM_HOLD` is how long, six leases
-  by default. What
-  makes the overlap assertable is its client, which is not the harness's: **a write is retried until
-  the cluster takes it** — the same bytes again, a repair of the first write rather than a second
-  value — so every write it issued was acknowledged in the end and the assertions cover all of them
-  rather than the ones that got through. That is what lets it assert what no other experiment can —
-  that **every zone holds every one of those keys** — because a refused write is what leaves the
-  zones apart, and it leaves none. **It writes a few keys many times over rather than many keys
-  once each**, and that is what makes divergence reachable at all: a key written once has one
-  value, so its copies cannot hold two without the store inventing bytes, and a lagging copy is
-  simply *missing* it — which `import_records` repairs by taking a file whole. A key written a
-  hundred times leaves a lagging copy holding something **different**, which is the other half of
-  `import_records`, the `record::is_newer` comparison against what is already under the key. So it
-  writes two populations: `hot-` keys over and over, and a `storm-` key once every
-  `CHAOS_STORM_SPREAD` of them. It asserts, **while the fault stands**, that the two sides of it hold different
-  values for those keys — across the cut in round one and across the isolated zone in round three,
-  the precondition observed rather than assumed, because a run where the faults never overlapped
-  the writes would otherwise pass every assertion after it over nothing —
-  and then that no copy of a key disagrees with another and that
-  **every hot key holds the value last acknowledged for it**, both given `CHAOS_CONVERGE` — a copy
-  that was away is entitled to lag until the reconcile fetch catches it up, so **lagging is allowed
-  and staying behind is not**, which is what separates this from `copies_agree`, where every key is
-  written once and the question needs no time at all. Beside them, a readback for durability. **It is also the only fault experiment that asserts on reads** (`nodes-removed` is the resize that does): a read the
-  **database** refused — a 404 or any API error document — fails it wherever it falls, and a read
-  the proxy or the load balancer failed fails it unless it falls in the window the load balancer
-  itself owns — `HealthCheckIntervalSeconds` × `UnhealthyThresholdCount` from `cloudformation.yaml`
-  and its idle timeout, with the membership lease on top for a node losing etcd, which answers `/health` as normal until
-  it has decided it is unled. That rule is a claim about the database and not about arithmetic because **no fault
-  here kills two zones at once**: a key's copies are one node per zone, so a zone with both its
-  nodes serving holds a copy of every key. `blackhole` and `blackhole_clear` in `chaos/harness.sh` are the rule, the
-  same pair `nodes-go-deaf` and `etcd-unreachable` install.
-- **Three of the twelve inject with a stack update**, because the shape of the database tier is two
-  parameters of `cloudformation.yaml` and nothing else: `Zones` is how many copies of the keyspace
-  there are — a zone holds exactly one — and `Nodes` is how many ways a zone splits the copy it
-  holds. `zone-retired` takes the replication factor from three to two and back, `nodes-added`
-  takes the tier to nine instances and `nodes-removed` to four, and `heal` is the update back, so
-  a run that dies inside one leaves the stack the shape it found it. **`zone-retired` then stops
-  the instances the group is no longer allowed to keep**, because a group given one subnet fewer
-  rebalances out of the one it lost in its own time — a quarter of an hour of the scheduler's
-  pacing, which says nothing about this system. Stopping them is what `doc/deployment/database.md`
-  documents as the procedure: the health check is `EC2`, so the group terminates them and launches
-  the replacements in the subnets it still spans, and both go at once, so the zones that stay
-  redraw their split while the replacements are still booting. They carry
-  `--use-previous-template`: what is under test is the stack the pipeline stood up. Three is the
-  ceiling for `Zones` and two the floor, so **the increase in replication is asserted on the way
-  back** rather than as a fault of its own — and that half is what `zone-lost` cannot test, because
-  a zone cut off comes back with its copy and a zone retired comes back with instances that have
-  never held anything.
-- **The three resizes are the test of `reconcile`.** Each asserts two invariants after every
-  transition: **every zone holds the same keys** (a zone holds a copy of the whole keyspace, so two
-  zones naming different keys is a copy that is short) and **no key is held by two nodes of one
-  zone** (a zone's nodes split the copy it holds). The first is the fetch half of a reconcile pass,
-  the second the clear down half, so which one fails says which half of the mechanism broke.
-- **Neither invariant can be seen through the load balancer**, which answers a read from whichever
-  copy has the key and so says a record exists somewhere and never where. `holdings` in
-  `chaos/harness.sh` asks each node what is in its own store, over Run Command, with a scan of
-  every partition carrying `X-Asyncdb-Forwarded` — served where it lands, so it is that node's own
-  share and never another node's. **A scan reads one partition, so a walk of a table is 256 of
-  them**, sent as one Run Command because Run Command is seconds a call however small the call is.
-  A node that cannot be asked is a failed assertion and not an empty store.
-- **What a terminated instance took with it is measured and never asserted.** A key whose owner in
-  every zone was terminated by the same update went with them, and nothing in the cluster puts that
-  back — no rebuild of a copy, no backup. `nodes-added` and `zone-retired` print how many seeded
-  keys are still held somewhere, and assert of a failed read only its shape: a 2xx or a 404, never a
-  5xx and never a request that did not answer. **`nodes-removed` shrinks by two so that it can
-  assert instead**: one zone keeps both its nodes and so a copy of every key, and every read of
-  the load and of the seed has to answer 2xx.
-- **`disk-fills` tests the proxy as much as the store.** nginx spools a request body over 8 KiB
-  to a temporary file, so a full volume answers `500 unavailable` out of `server/50x.json` before
-  the database is asked at all — which is why the experiment writes in two sizes, a megabyte the
-  proxy refuses and a kilobyte that reaches RocksDB. What the store does with the kilobytes is
-  reported and not asserted: the write ahead log is preallocated, so a node whose disk filled a
-  minute ago still has tens of megabytes reserved to write into. What it asserts instead is that
-  every write answered `2xx` while the disk was full is still there afterwards.
-- `node-stops` is the only test anywhere of the rebuild in `doc/runbook/rebuild.md` as a
-  *replacement* runs it; `nodes-added` and `zone-retired` reach the same mechanism from a tier
-  that grew, and `zone-retired` is the only one that has a whole zone's copy built.
-- **`chaos.yaml` is the permission to break things.** `ChaosPolicy` attaches stopping and
-  starting an instance tagged `asyncdb` or `etcd`, writing a network acl, sending a Run Command,
-  updating the stack under test and suspending the etcd group's `ReplaceUnhealthy` to the IAM
-  groups in the `Operators` parameter (default `builders`, which holds the pipeline's identity).
-  Nothing else in the account
-  grants the destructive half of that, so outside a chaos run nobody here can stop an instance of
-  either tier or run a shell command on one. `make update-chaos-stack` applies a change to a chaos
-  stack that is already standing.
-- **Run `chaos/validate.sh` after touching an experiment.** It runs every `preflight` and no
-  fault at all: the targets are resolved, EC2's own `--dry-run` answers the calls that offer one,
-  Systems Manager is asked whether the agent answers on the instances a fault would go through,
-  and a resize creates the change set its update would apply, reads it and deletes it. That is
-  the whole of "would this run?" for a handful of API calls and nothing applied — a chaos stack
-  that is not standing, an instance whose agent never registered, a group whose logical id moved
-  and a stack whose template predates the two resize parameters are caught in seconds rather than
-  by a full run.
+- `chaos/harness.sh` is sourced by each experiment the way `perf/harness.sh` is. An experiment
+  declares `inject`, `heal` and `preflight`, and calls `fault_start` and `fault_stop`; the harness
+  owns when they run. **`heal` is also called by the exit trap**, so it must be safe run twice or
+  against a fault that never landed. Everything is an environment variable (`CHAOS_EXPERIMENTS`,
+  `CHAOS_SETTLE`, `CHAOS_RECOVERY`, `CHAOS_CONVERGE`, `CHAOS_LOAD`, …), and a failed assertion is a
+  non-zero exit.
+- **A duration is a ceiling**: a fault lasts until `fault_stop`, and one that expires mid-assertion
+  is a false failure. The recovery assertion after it **has to be one the fault would fail**.
+- **Every experiment runs under load** (`start_load`), and the load writes into a table of its own.
+- **Neither placement invariant can be seen through the load balancer**, so `holdings` and
+  `every_node_whole` ask each node over Run Command, with scans carrying `X-Asyncdb-Forwarded`.
+- Five of the six Run Command experiments send the script `fault_script` builds (all but
+  `containers-restart`). Firewall rules go in the **`DOCKER-USER`** chain: a rule in `INPUT` or
+  `OUTPUT` blocks nothing for a container behind a published port.
+- **Run `chaos/validate.sh` after touching an experiment**, and `make update-chaos-stack` after
+  touching `chaos/chaos.yaml`, which is the only thing in the account granting the destructive calls.
 
 ### Running the whole thing
 
@@ -557,7 +394,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   `server/413.json` rather than nginx's own HTML. Change one of the four and change its pair.
 - **`url`** splits the target at its unencoded slashes *before* percent-decoding each segment, so a key
   containing `/`, `?` or a zero byte stays one segment. Query values are decoded the same way.
-- **`router::router`** matches routes by hand — `/health`, `/table`, `/table/{table}`,
+- **`router::router`** matches routes by hand — `/health`, `/schema`, `/table`, `/table/{table}`,
   `/table/{table}/key`, `/table/{table}/key/{key}`, `/table/{table}/key/{key}/{sort}`,
   `/table/{table}/file` and `/table/{table}/split` — and returns a
   `router::response` (status, content type, and either a `boost::json::object` or the raw text of a
@@ -934,154 +771,35 @@ Built on [@datumjs/datum](https://www.npmjs.com/package/@datumjs/datum), not a m
 
 ## Release
 
-Pushing to `master` builds the Docker image and uploads it as a workflow artifact. The workflow is
-`.github/workflows/build.yaml`; `github/` at the root holds a byte-identical copy of it and of
-`pull-request.yaml` that nothing runs, so a change to one leaves the other stale. That first job,
-`build`, has no condition on any step and asks AWS nothing: it builds, reads `version`, answers the
-gate and hands the image on.
+`.github/workflows/build.yaml` is the pipeline, and **`doc/pipeline/` is the page**;
+`doc/deployment/` is the AWS stack (`cloudformation.yaml`, driven by `make create-stack` /
+`update-stack` / `delete-stack`). `github/` at the root holds a byte-identical copy of `build.yaml`
+and `pull-request.yaml` that nothing runs, so **a change to one has to be made to the other**.
 
-**Everything that publishes or costs anything is downstream of the second job, `publish`, gated on
-the tag in the `version` file not having passed the suite already, so it runs once per version
-rather than once per push.** `publish` loads the artifact and pushes it to ECR, creating the
-repository `asyncdb` if the account has none (with `ecr-lifecycle.json`, set only at creation: five
-images at most and none older than a week, which is also the most a released version stays pullable), writes that tag to the SSM parameter
-`/asyncdb/version`, mirrors the etcd tag `etcd-version` names into ECR if it is not there already
-and writes `/asyncdb/etcd`, creates the CloudWatch Logs group `asyncdb` and sets it to seven days,
-and `make create-chaos-stack`s the permission to inject a fault, once for every share below it.
-**The log group is outside every stack on purpose**: the containers of both tiers log into it through
-Docker's `awslogs` driver, a stream per instance named `{stack}/asyncdb-{instance id}` or
-`{stack}/etcd-{instance id}`, and a group in the template would be deleted with the stack a share
-tears down — taking with it the logs of the instances a failed experiment terminated, which are
-the ones nothing else can still read.
+What a change here has to keep true:
 
-**`verify` is then a matrix of five, one stack each, `fail-fast: false`.** Each share
-`make create-stack`s `asyncdb-{one,two,three,four,five}` — `STACK` and `CHAOS_STACK` come from the matrix —
-waits for `/health` to name six nodes **and then for those nodes' own `leads` to sum to 256**,
-asked of each instance over Run Command because `leads` is a node's own count and the load balancer
-answers from one of them — a membership is not yet a cluster that takes writes, and a suite that
-starts before the claims settle is answered `no_leader`. It then runs `chaos/validate.sh` and
-`chaos/run.sh` over the experiments the matrix names it in `CHAOS_EXPERIMENTS`, and
-`make delete-stack`s it again whether they passed or not. **The share carrying `matrix.suites` also
-runs the Postman collection, the Playwright journeys and `perf/write.sh` / `perf/read.sh` first**,
-before anything has broken its stack. Four of the shares are balanced by measured time — about ten
-minutes of experiments each out of the forty the eleven of them take, with the suites counting as
-four beside them — so those four land within a minute or two of twenty-three. **`asyncdb-five` is
-not balanced against anything**: `write-storm` is near thirty minutes on its own, which is longer
-than a whole share of the rest, so it has a stack to itself and is what the run waits for.
-`doc/pipeline/index.md` is the page. **An experiment nobody names in
-the matrix is an experiment nobody runs**: there is no default list in the workflow.
-
-`release` then pushes the git tag and `cleanup` deletes the chaos permissions. A share's teardown
-deletes only a stack that share created, so a stack standing under one of those five names makes
-`create-stack` fail and is then left alone — while a stack standing by hand as `asyncdb` collides
-with nothing and only costs quota. **Five stacks at once is five VPCs, five load balancers and
-forty-five `t3.micro`**, against a default of five VPCs to a region — so **the run now needs that
-quota raised, or the default VPC gone**, where four left room for exactly one of them. The fifth
-is not there to make the run shorter: **four was where more stacks stopped paying** for the eleven
-experiments that balance, a share costing about eight minutes to stand its cluster up and tear it
-down against about ten of work. `write-storm` is the one thing that does not fit that arithmetic —
-thirty minutes that cannot be divided, because an experiment has the cluster to itself by design —
-so it buys a stack by being longer than a share rather than by shortening one.
-
-**There is one gate, and it is the `{version}` git tag.** It is the `if:` on `publish` and
-**nowhere else in the workflow** — no step repeats it, and every job that costs anything is
-downstream of `publish` by `needs:`, so a skipped `publish` skips them all. It is
-`git ls-remote --exit-code --tags origin refs/tags/$VERSION` finding nothing, carried across the job
-boundary as an output. The tag is pushed by `release`, which needs every share of `verify` and
-carries no `if:` of its own — the same mechanism one level up: a job with no condition runs only
-when every job it needs succeeded, as a step with no condition runs only when every step before it
-did. The `if:`s that do appear on steps are about something else — `matrix.suites` picks the share
-that runs the API, browser and load suites, and `always()` marks the teardowns — and none of them
-is the gate.
-So a version that fails is published and retried on every push until it passes, and a version that
-has passed is neither republished nor stood up again — which is what keeps thirty-six instances
-and four load balancers off a push that only touched a comment. **A version tag means
-passed, and never merely published**; the workflow asks git alone, and neither ECR nor
-`/asyncdb/version` is a question it puts.
-
-**The image tag in ECR is therefore overwritten**, for as long as the version has not passed — the
-repository is created mutable, which is the default. It has to be: every stack pulls the image it
-tests out of ECR, so the push is what `publish` does before a share stands anything up, and every
-commit carrying a red version has to be the one the suite then runs against. The window in which a version's bytes
-move is exactly the window before it passes, so **do not pull a version that has no git tag**.
-
-**Nothing is held outside the repository to make that work**: `git tag -l` is the list of versions
-that have been through the suite, and `git push --delete origin {version}` is how one is made to go
-through it again without bumping it — which rebuilds and republishes it, rather than re-testing what
-is in ECR. The gate asks the remote rather than the working tree, because the checkout is one commit
-deep and fetches no tags; `--exit-code` is 0 for found and 2 for not, and a remote that cannot be
-reached at all is 128, which reads as not verified and both publishes and deploys. **The gate fails
-towards spending money, never towards skipping a suite that should have run.**
-Bump `version` to cut a release; leaving it unchanged makes CI a no-op publish that deploys nothing.
-AWS infrastructure lives in `cloudformation.yaml`, driven by the `Makefile` (`make create-stack` /
-`update-stack` / `delete-stack`), and is documented in `doc/deployment/`.
-
-`version` is the only place the asyncdb tag is written by hand (`etcd-version` is the same thing for
-the mirrored etcd tag — see [Machine images](#machine-images)). The template's `Version` parameter is an
-`AWS::SSM::Parameter::Value<String>` defaulting to `/asyncdb/version`, so `make update-stack` resolves
-the tag at deploy time from what CI actually published rather than from the working tree — which is why
-the Makefile passes no parameter, and why passing one means passing the *parameter name* and never the
-tag. A `LaunchTemplate` change does not recycle running instances, so a release reaches an instance only
-when that instance is replaced. **The parameter has to exist before the first deploy**: CloudFormation
-cannot resolve it otherwise, and an instance that cannot pull its tag has no container at all and fails
-the ALB health check on `/asyncdb/health`. The group's health check is `EC2`, so nothing replaces it
-either: it sits there running nothing, and the load balancer answers 502 throughout.
-
-**Both tiers are in private subnets**, and where a NAT gateway would be there is an
-`EgressOnlyInternetGateway`: the private subnets are dual stack (`Ipv6CidrBlock` gives the VPC an
-Amazon `/56`, `Fn::Cidr` cuts a `/64` for each of them, `AssignIpv6AddressOnCreation` is on), and
-`PrivateRoute` sends `::/0` to that gateway. **No instance has a public IPv4 address, there is no
-`0.0.0.0/0` anywhere in `PrivateRouteTable`, and nothing outside the VPC can open a connection to
-an instance** — an egress-only gateway is outbound only and stateful — but an instance can open one
-outwards over IPv6. There is no SSH and no key pair (Session Manager is the way onto an instance),
-and the three public subnets hold the ALB alone.
-
-**Everything an instance calls therefore has to be named in its dual-stack form**, because an AWS
-endpoint is IPv4-only otherwise: both user data scripts export `AWS_USE_DUALSTACK_ENDPOINT=true`
-for the CLI (`ecr.…api.aws`, `ec2.…api.aws`), pull from `332187735950.dkr-ecr.eu-west-2.on.aws`
-rather than `dkr.ecr.eu-west-2.amazonaws.com`, and write `UseDualStackEndpoint` into
-`/etc/amazon/ssm/amazon-ssm-agent.json` before restarting the agent, which is what keeps Session
-Manager and the Run Commands `chaos/` injects with working. The `awslogs` driver runs in the Docker
-daemon and reads none of that, so both `docker run`s name `awslogs-endpoint=https://logs.….api.aws`
-themselves, with `mode=non-blocking` so that CloudWatch being unreachable costs log lines and never
-the database. Get one of those wrong and the instance boots
-with no container and is replaced by another that does the same. `doc/deployment/network.md` is
-the page.
-
-The database tier is **six** instances, `DesiredCapacity: 6` across three subnets, which an auto
-scaling group balances into two per availability zone — three copies of the keyspace (one per zone,
-because `ASYNCDB_ZONE` is the instance's real AZ), each split in half between that zone's two nodes.
-Capacity is worth moving three at a time so that no zone holds a larger share than the others.
-
-The etcd tier is a second auto scaling group of three, one per AZ, with no fixed addresses anywhere:
-every instance of both tiers calls `ec2:DescribeInstances` at boot, filtered to `Name=etcd` in this
-VPC. An etcd node builds `--initial-cluster` from the answer and either bootstraps, starts as a member
-somebody else's bootstrap already named, or **prunes the members no instance answers for and
-`member add`s itself** — which is what makes a replaced instance rejoin, and it starts from what the
-add printed. A node that finds a cluster it cannot join (no quorum) exits rather than bootstrap a
-second one. `ASYNCDB_ETCD` is the same query without the join, read **once at boot**, so replacing
-every etcd instance without rolling the database tier strands it. `doc/deployment/etcd.md` is the page.
-
-### Machine images
-
-**There are none, deliberately.** Both tiers launch from `BaseAmi`, the public parameter
-`/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id`, resolved by
-CloudFormation at deploy time — the ECS-optimised Amazon Linux 2023, taken for the Docker daemon
-already on it and **not** for ECS: there is no cluster, no task definition and no agent doing
-anything. Each tier's user data does its own host preparation, which is `systemctl enable --now
-docker`, one `mkdir` and the dual-stack lines above, and then pulls its container from ECR.
-
-**The etcd container is mirrored into this account's ECR rather than baked**, which keeps quay.io
-off the boot path — a private subnet has no route to it — and puts the tag on the pipeline that
-already runs. The price of taking a base image AWS republishes patched is that two instances of one
-auto scaling group launched a fortnight apart can be two different operating systems; that is
-accepted, and pinning it is one parameter override away.
-
-**The etcd tag is written by hand in one place, `etcd-version`.** The build reads it, mirrors
-`quay.io/coreos/etcd:$ETCD_VERSION` into ECR if it is not there already, and writes
-`/asyncdb/etcd`, which the template's `EtcdVersion` parameter resolves — exactly the arrangement
-`version` and `/asyncdb/version` have for the asyncdb image. It sits in `publish` beside
-that push, so it runs when a stack is about to pull the tag and not otherwise: **bumping
-`etcd-version` alone mirrors nothing**, and wants a `version` bump with it. `docker-compose.yml`
-names the same version against quay.io directly, because a laptop has an internet connection.
-`doc/pipeline/index.md` is the page.
+- **There is one gate, the `{version}` git tag**: `git ls-remote --exit-code --tags origin
+  refs/tags/$VERSION` finding nothing is the `if:` on `publish` and nowhere else, and every job that
+  costs anything is downstream of `publish` by `needs:`. `release` pushes the tag once every share of
+  `verify` passed, so **a tag means passed**. The gate fails towards spending money: an unreachable
+  remote reads as not verified.
+- Bump `version` to cut a release; an unchanged version makes CI a no-op. `git push --delete origin
+  {version}` re-runs one. The ECR tag is overwritten until the version passes, so **do not pull a
+  version that has no git tag**.
+- `verify` is a matrix of five stacks (`asyncdb-one` … `asyncdb-five`), `fail-fast: false`. The
+  share with `suites: 'true'` also runs the Postman collection, Playwright and `perf/`. `asyncdb-five`
+  runs `write-storm` alone. **An experiment nobody names in the matrix is never run** — there is no
+  default list. Five stacks at once is five VPCs, which needs the default VPC quota raised.
+- `version` and `etcd-version` are the only places a tag is written by hand. The template's
+  `Version` and `EtcdVersion` are `AWS::SSM::Parameter::Value<String>` resolving `/asyncdb/version`
+  and `/asyncdb/etcd`, so **passing one means passing a parameter name, never a tag**, and the
+  parameter must exist before the first deploy. Bumping `etcd-version` alone mirrors nothing.
+- The database tier is `DesiredCapacity: !Ref Nodes` (default 6; 3, 4, 6 or 9) over `Zones`
+  subnets (default 3; 2 or 3), a copy of the keyspace per zone. The etcd tier is three instances,
+  found by `ec2:DescribeInstances` at boot. `ASYNCDB_ETCD` is read once, so replacing every etcd
+  instance without rolling the database tier strands it.
+- **Both tiers are in private dual-stack subnets with an `EgressOnlyInternetGateway` and no IPv4
+  route out**, so everything an instance calls must be the dual-stack endpoint (the CLI, the ECR
+  pull, the SSM agent, and `awslogs-endpoint` on each `docker run`). Get one wrong and the instance
+  boots with no container. There are no custom AMIs, and the CloudWatch Logs group `asyncdb` is
+  created by `publish`, outside every stack, on purpose.

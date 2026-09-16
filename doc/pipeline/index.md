@@ -3,7 +3,7 @@
 `.github/workflows/build.yaml` is the push side of CI: one workflow, five jobs
 and no reusable workflow. `build` builds the Docker image and hands it on as an
 artifact. `publish` pushes it to ECR and writes down what was published.
-`verify` is **a matrix of four, each standing up a stack of its own, running its
+`verify` is **a matrix of five, each standing up a stack of its own, running its
 share of the tests against it and deleting it again**. `release` tags the version
 once every share has passed, and `cleanup` takes the chaos permissions away.
 Everything from `publish` down happens only for a version that has not passed the
@@ -15,7 +15,7 @@ rewrites the version's image in ECR. The other half of CI is
 **Five stacks, because the chaos suite is the pipeline.** Most of the hour and a
 half the suite would take on one stack is `chaos/run.sh`: twenty minutes of that is
 the three experiments that resize the tier and wait for instances to launch, and
-thirty is `write-storm` on its own. Nothing about them is parallel on one stack —
+forty is `write-storm` on its own. Nothing about them is parallel on one stack —
 an experiment has the cluster to itself by design — so the way to run them at once
 is to have several clusters. [Four of the shares](#the-shares) carry about twelve
 minutes of experiments each; the fifth carries `write-storm` and nothing else.
@@ -59,30 +59,30 @@ minutes of experiments each; the fifth carries `write-storm` and nothing else.
           │ mirror etcd │  and put-parameter /asyncdb/etcd
           └──────┬──────┘
           ┌──────┴──────┐
-          │chaos policy │  make create-chaos-stack, once for all three
+          │chaos policy │  make create-chaos-stack, once for all five
           └──────┬──────┘
                  │
-      ═══════════╪═══════════  job boundary: verify, three at once, fail-fast: false
+      ═══════════╪═══════════  job boundary: verify, five at once, fail-fast: false
                  │
-     ┌───────────┼───────────┬───────────┐
-     │           │           │           │
-┌────┴────┐ ┌────┴────┐ ┌────┴────┐ ┌────┴────┐
-│asyncdb- │ │asyncdb- │ │asyncdb- │ │asyncdb- │  create-stack, and wait for
-│  one    │ │  two    │ │ three   │ │  four   │  six nodes leading 256
-│         │ │         │ │         │ │         │  partitions between them
-├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤
-│         │ │ newman  │ │         │ │         │  the API, browser and load
-│         │ │playwrgt │ │         │ │         │  suites run on one share only —
-│         │ │  perf   │ │         │ │         │  they need a stack nothing has
-│         │ │         │ │         │ │         │  broken yet
-├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤
-│  its    │ │  its    │ │  its    │ │  its    │  CHAOS_EXPERIMENTS, in the
-│ share   │ │ share   │ │ share   │ │ share   │  order given
-├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤
-│ delete  │ │ delete  │ │ delete  │ │ delete  │  if: always() — a red share
-└────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘  leaves nothing standing
-     │           │           │           │
-     └───────────┼───────────┴───────────┘
+     ┌───────────┼───────────┬───────────┬───────────┐
+     │           │           │           │           │
+┌────┴────┐ ┌────┴────┐ ┌────┴────┐ ┌────┴────┐ ┌────┴────┐
+│asyncdb- │ │asyncdb- │ │asyncdb- │ │asyncdb- │ │asyncdb- │  create-stack, and wait for
+│  one    │ │  two    │ │ three   │ │  four   │ │  five   │  six nodes leading 256
+│         │ │         │ │         │ │         │ │         │  partitions between them
+├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤
+│ newman  │ │         │ │         │ │         │ │         │  the API, browser and load
+│playwrgt │ │         │ │         │ │         │ │         │  suites run on one share only —
+│  perf   │ │         │ │         │ │         │ │         │  they need a stack nothing has
+│         │ │         │ │         │ │         │ │         │  broken yet
+├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤
+│  its    │ │  its    │ │  its    │ │  its    │ │ write-  │  CHAOS_EXPERIMENTS, in the
+│ share   │ │ share   │ │ share   │ │ share   │ │ storm   │  order given
+├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤
+│ delete  │ │ delete  │ │ delete  │ │ delete  │ │ delete  │  if: always() — a red share
+└────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘  leaves nothing standing
+     │           │           │           │           │
+     └───────────┼───────────┴───────────┴───────────┘
                  │
       ═══════════╪═══════════  job boundary: release, needs every share
                  │
@@ -180,8 +180,8 @@ The consequences worth knowing:
 
 `Record that this version passed` tags the commit `$VERSION` as
 `github-actions[bot]` and pushes the tag. It carries **no `if:` of its own**, and it is the only step of a job that needs
-every share of `verify`. That is the whole mechanism, one level up from where it
-used to be: a job with no condition runs only when every job it needs succeeded,
+every share of `verify`. That is the whole mechanism, one level up from a
+step: a job with no condition runs only when every job it needs succeeded,
 the way a step with no condition runs only when every step before it did. The
 teardown steps below it are `always()`, so they still run either way, and a step
 that is `always()` succeeding does not make a failed job look green to the steps
@@ -250,7 +250,7 @@ workspace and a `$GITHUB_ENV` do not — and takes `$VERSION` from
 | Create the log group | `aws logs describe-log-groups` or else `create-log-group`, then a retention of seven days — [below](#keeping-the-logs) |
 | The chaos permissions | `make create-chaos-stack` — the policy every share injects with, one stack for all of them, with a `created` output `cleanup` keys off |
 
-Then `verify`, four times over, `fail-fast: false` so that one share failing
+Then `verify`, five times over, `fail-fast: false` so that one share failing
 never cancels another's teardown. Each share is the same steps against a stack of
 its own, named by the matrix and passed to both the Makefile and the chaos
 harness as `STACK` and `CHAOS_STACK`:
@@ -341,7 +341,7 @@ finish around twenty-three.
 against a default of five to a region leaves no room for the default VPC, where
 four left room for exactly one. The quota has to be raised, or the default VPC
 removed, or `write-storm` named in one of the other four shares instead — which
-costs the fifteen minutes above and nothing else.
+costs the seventeen minutes above and nothing else.
 
 What more stacks would buy is **isolation**: inside a share, an experiment runs
 on a cluster the one before it broke and healed. `chaos/run.sh` refuses to start
