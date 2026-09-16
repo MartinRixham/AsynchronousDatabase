@@ -214,6 +214,8 @@ bool cluster::test_cluster::accept(const std::string &key, int64_t sent)
 
 void cluster::test_cluster::restore_terms(const partition_terms &applied)
 {
+	std::unique_lock<std::shared_mutex> lock(membership_mutex);
+
 	restored = applied;
 }
 

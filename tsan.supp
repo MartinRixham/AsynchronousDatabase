@@ -7,3 +7,7 @@ called_from_lib:librocksdb.so
 # wait is the first TSan sees of that mutex, and it is seen released without being taken. A mutex of ours
 # is first seen where our instrumented code locks it, never in a wait.
 mutex:std::condition_variable::wait
+
+# RocksDB's out-of-line std::string copies bind to the instrumented copy in test_main, so memory it
+# synchronises for itself is reported from our binary rather than from the library.
+race:rocksdb::VersionStorageInfo::VersionStorageInfo
