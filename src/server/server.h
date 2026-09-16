@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <vector>
@@ -80,16 +81,15 @@ namespace server
 
 		// Moving the records whose owner changed is work of its own and not part of serving, so it
 		// is a thread of its own — the one the membership is watched on.
-		std::thread reconciler;
+		//
+		// Its stop token is read by the pass in flight as well as by the wait for the next one: a node
+		// being shut down waits for a pass, and a pass moving a share of a terabyte is not one to
+		// wait out.
+		std::jthread reconciler;
 
 		std::mutex reconcile_mutex;
 
-		std::condition_variable reconcile_wake;
-
-		// Read by the pass in flight as well as by the thread waiting to run the next one: a node
-		// being shut down waits for a pass, and a pass moving a share of a terabyte is not one to
-		// wait out.
-		std::atomic<bool> reconciling = false;
+		std::condition_variable_any reconcile_wake;
 
 	public:
 		// The cluster is handed in and never made here: this server joins and leaves whichever one
@@ -109,7 +109,7 @@ namespace server
 
 		void on_accept(boost::beast::error_code error, boost::asio::ip::tcp::socket socket);
 
-		boost::asio::ip::port_type port() const;
+		boost::asio::ip::port_type port() const noexcept;
 
 		void close();
 
@@ -129,7 +129,7 @@ namespace server
 
 		// Watches the membership, and moves records when it moves. Started once this node has
 		// joined, because a node that is not a member owns nothing and would clear down the store.
-		void reconcile(bool behind);
+		void reconcile(const std::stop_token &token, bool behind);
 
 		void stop_reconciling();
 	};

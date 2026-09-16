@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <thread>
@@ -100,7 +102,7 @@ protected:
 	{
 		CURL *curl = curl_easy_init();
 		answer answer;
-		struct curl_slist *headers = NULL;
+		struct curl_slist *headers = nullptr;
 
 		headers = curl_slist_append(headers, "Connection: close");
 
@@ -240,10 +242,9 @@ protected:
 	{
 		std::vector<std::string> found;
 
-		for (size_t i = 0; i < written.size(); i++)
+		for (const auto &written_key : written)
 		{
-			answer answered = request(
-				server, "GET", "/table/account/key?key=" + written[i], "", forwarded);
+			answer answered = request(server, "GET", "/table/account/key?key=" + written_key, "", forwarded);
 
 			if (answered.code != 200)
 			{
@@ -267,10 +268,10 @@ protected:
 		boost::json::array records = boost::json::parse(answer.body).as_object().at("records").as_array();
 		std::vector<std::string> keys;
 
-		for (size_t i = 0; i < records.size(); i++)
-		{
-			keys.push_back(std::string(records[i].as_object().at("key").as_string()));
-		}
+		std::ranges::transform(
+			records,
+			std::back_inserter(keys),
+			[](const boost::json::value &item) { return std::string(item.as_object().at("key").as_string()); });
 
 		return keys;
 	}

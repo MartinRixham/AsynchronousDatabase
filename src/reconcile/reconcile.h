@@ -1,8 +1,8 @@
 #pragma once
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <stop_token>
 
 #include "cluster/cluster.h"
 #include "repository/repository.h"
@@ -66,10 +66,10 @@ namespace reconcile
 	// moved, which lands on a node that is no longer a copy and is cleared down in favour of what
 	// the new owner has. The window is the leader's own refresh, and without this pass that write
 	// would have been invisible on the node it landed on for as long as the node lived.
-	outcome reconcile(
+	[[nodiscard]] outcome reconcile(
 		repository::repository &repository,
 		cluster::cluster &nodes,
-		const std::atomic<bool> &running,
+		const std::stop_token &token,
 		size_t page = default_page,
 		long seconds = default_seconds,
 		size_t workers = transfer::default_workers);

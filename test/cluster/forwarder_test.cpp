@@ -61,7 +61,8 @@ TEST(forwarder_test, forward_a_key_that_holds_punctuation_of_a_url)
 
 	cluster::forwarder forwarder(http);
 
-	forwarder.forward(one, request(boost::beast::http::verb::get, { "table", "account", "key", "a/b?c" }));
+	static_cast<void>(
+		forwarder.forward(one, request(boost::beast::http::verb::get, { "table", "account", "key", "a/b?c" })));
 
 	EXPECT_EQ(http.sent()[0].url, one + "/table/account/key/a%2Fb%3Fc");
 }
@@ -76,7 +77,7 @@ TEST(forwarder_test, forward_a_request_that_names_no_path)
 
 	cluster::forwarder forwarder(http);
 
-	forwarder.forward(one, request(boost::beast::http::verb::get, {}));
+	static_cast<void>(forwarder.forward(one, request(boost::beast::http::verb::get, {})));
 
 	EXPECT_EQ(http.sent()[0].url, one + "/");
 }
@@ -90,7 +91,7 @@ TEST(forwarder_test, forward_a_query_as_it_stands)
 	cluster::forwarder forwarder(http);
 	router::request scan { boost::beast::http::verb::get, { "table", "account", "key" }, "limit=10&from=a", "", false };
 
-	forwarder.forward(one, scan);
+	static_cast<void>(forwarder.forward(one, scan));
 
 	EXPECT_EQ(http.sent()[0].url, one + "/table/account/key?limit=10&from=a");
 }
@@ -138,7 +139,7 @@ TEST(forwarder_test, forward_the_version_a_write_was_ordered_in)
 		7
 	};
 
-	forwarder.forward(one, write);
+	static_cast<void>(forwarder.forward(one, write));
 
 	ASSERT_EQ(http.sent()[0].headers.size(), 3u);
 	EXPECT_EQ(http.sent()[0].headers[1], "X-Asyncdb-Term: 60");
@@ -154,7 +155,8 @@ TEST(forwarder_test, forward_no_term_when_the_request_was_ordered_in_none)
 
 	cluster::forwarder forwarder(http);
 
-	forwarder.forward(one, request(boost::beast::http::verb::put, { "table", "account", "key", "4821" }));
+	static_cast<void>(
+		forwarder.forward(one, request(boost::beast::http::verb::put, { "table", "account", "key", "4821" })));
 
 	EXPECT_EQ(http.sent()[0].headers.size(), 1u);
 }

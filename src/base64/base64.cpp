@@ -34,16 +34,16 @@ std::optional<std::string> base64::decode(const std::string &encoded)
 	int bits = 0;
 	std::string text;
 
-	for (size_t i = 0; i < encoded.size(); i++)
+	for (char character : encoded)
 	{
-		if (encoded[i] == '=')
+		if (character == '=')
 		{
 			break;
 		}
 
-		const char *found = strchr(alphabet, encoded[i]);
+		const char *found = strchr(alphabet, character);
 
-		if (found == NULL || encoded[i] == '\0')
+		if (found == nullptr || character == '\0')
 		{
 			return std::nullopt;
 		}

@@ -95,7 +95,7 @@ namespace cluster
 		// False when there was no membership to read, which is an instance standing alone or a
 		// cluster a test handed in. A membership that was not read here is not one a rebuild should
 		// act on: its nodes were never asked whether they are serving yet.
-		virtual bool discover() = 0;
+		[[nodiscard]] virtual bool discover() = 0;
 
 		virtual void stop() = 0;
 
@@ -145,7 +145,7 @@ namespace cluster
 		virtual std::vector<std::vector<std::string>> zones() const = 0;
 
 		// Not const: a partition nothing claims is claimed here by the node the membership names.
-		virtual std::optional<leadership> leader(const std::string &key) = 0;
+		[[nodiscard]] virtual std::optional<leadership> leader(const std::string &key) = 0;
 
 		virtual size_t leads() const = 0;
 
@@ -165,7 +165,7 @@ namespace cluster
 		// configured.
 		virtual etcd_registration registration() const = 0;
 
-		virtual bool accept(const std::string &key, int64_t term) = 0;
+		[[nodiscard]] virtual bool accept(const std::string &key, int64_t term) = 0;
 
 		// The terms the store says this node applied — before the process started, or in a file a
 		// pass has just taken in — which accept() refuses anything older than as it does the terms
@@ -173,13 +173,13 @@ namespace cluster
 		// by the term it was written in wherever it lands.
 		virtual void restore_terms(const partition_terms &applied) = 0;
 
-		virtual router::response send(const std::string &node, const router::request &request) const = 0;
+		[[nodiscard]] virtual router::response send(const std::string &node, const router::request &request) const = 0;
 
 		// A cluster that can ask them at once asks them at once. A write is not done until every
 		// copy has taken it, and asking one after another holds the thread serving the write for a
 		// round trip each — and a thread waiting on another node cannot answer anything else, its
 		// health check included.
-		virtual std::optional<router::response> send_all(
+		[[nodiscard]] virtual std::optional<router::response> send_all(
 			const std::vector<std::string> &node_list,
 			const router::request &request) const = 0;
 
@@ -187,7 +187,7 @@ namespace cluster
 		// the order they were given. send_all() is this with everything but a refusal thrown away,
 		// which is what a write to the copies of a record wants; a walk reading a share in several
 		// pieces wants what each answer carried, and asks for a different piece in each.
-		virtual std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const = 0;
+		[[nodiscard]] virtual std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const = 0;
 	};
 
 	std::optional<router::response> refusal(const std::vector<router::response> &answers);

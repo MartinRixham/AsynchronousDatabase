@@ -27,7 +27,10 @@ namespace table
 
 	bool operator==(const table &lhs, const table &rhs);
 
-	table parse_table(const std::string &name, const boost::json::object &json, const std::set<std::string> &tables);
+	[[nodiscard]] table parse_table(
+		const std::string &name,
+		const boost::json::object &json,
+		const std::set<std::string> &tables);
 
 	table valid_table(const std::string &name, const std::vector<std::string> &dependencies);
 

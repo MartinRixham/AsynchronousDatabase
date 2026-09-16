@@ -21,12 +21,12 @@ namespace progress
 		std::atomic<std::chrono::steady_clock::rep> expires;
 
 	public:
-		explicit patience(long seconds);
+		explicit patience(long seconds) noexcept;
 
 		// Whether nothing has happened for long enough to stop asking.
-		bool spent() const;
+		bool spent() const noexcept;
 
 		// Something happened, so the waiting starts again.
-		void renew();
+		void renew() noexcept;
 	};
 }

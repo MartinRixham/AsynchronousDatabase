@@ -6,7 +6,7 @@
 
 std::string url::encode(const std::string &text)
 {
-	char *encoded = curl_easy_escape(NULL, text.c_str(), static_cast<int>(text.size()));
+	char *encoded = curl_easy_escape(nullptr, text.c_str(), static_cast<int>(text.size()));
 	std::string out(encoded);
 
 	curl_free(encoded);
@@ -17,7 +17,7 @@ std::string url::encode(const std::string &text)
 std::string url::decode(const std::string &encoded)
 {
 	int length = 0;
-	char *decoded = curl_easy_unescape(NULL, encoded.c_str(), static_cast<int>(encoded.size()), &length);
+	char *decoded = curl_easy_unescape(nullptr, encoded.c_str(), static_cast<int>(encoded.size()), &length);
 
 	std::string out(decoded, static_cast<size_t>(length));
 
@@ -34,11 +34,11 @@ std::vector<std::string> url::split_path(const std::string &target)
 
 	boost::algorithm::split(parts, path, boost::algorithm::is_any_of("/"));
 
-	for (size_t i = 0; i < parts.size(); i++)
+	for (const auto &part : parts)
 	{
-		if (!parts[i].empty())
+		if (!part.empty())
 		{
-			segments.push_back(decode(parts[i]));
+			segments.push_back(decode(part));
 		}
 	}
 
@@ -63,13 +63,13 @@ std::string url::read_parameter(const std::string &query, const std::string &nam
 
 	boost::algorithm::split(parameters, query, boost::algorithm::is_any_of("&"));
 
-	for (size_t i = 0; i < parameters.size(); i++)
+	for (const auto &parameter : parameters)
 	{
-		size_t equals = parameters[i].find('=');
+		size_t equals = parameter.find('=');
 
-		if (equals != std::string::npos && parameters[i].substr(0, equals) == name)
+		if (equals != std::string::npos && parameter.substr(0, equals) == name)
 		{
-			return decode(parameters[i].substr(equals + 1));
+			return decode(parameter.substr(equals + 1));
 		}
 	}
 

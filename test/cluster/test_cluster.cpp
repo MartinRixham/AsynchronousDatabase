@@ -61,15 +61,15 @@ cluster::placement cluster::test_cluster::copies_of(size_t partition) const
 
 	where.local = false;
 
-	for (size_t i = 0; i < owners.size(); i++)
+	for (const auto &owner : owners)
 	{
-		if (owners[i].node == self)
+		if (owner.node == self)
 		{
 			where.local = true;
 		}
 		else
 		{
-			where.nodes.push_back(owners[i].node);
+			where.nodes.push_back(owner.node);
 		}
 	}
 
@@ -84,9 +84,9 @@ cluster::partition_set cluster::test_cluster::holdings() const
 	{
 		std::vector<member> owners = owners_of(partition_name(partition), member_list);
 
-		for (size_t i = 0; i < owners.size(); i++)
+		for (const auto &owner : owners)
 		{
-			if (owners[i].node == self)
+			if (owner.node == self)
 			{
 				held.set(partition);
 			}
@@ -132,11 +132,11 @@ std::vector<std::string> cluster::test_cluster::peers() const
 {
 	std::vector<std::string> peers;
 
-	for (size_t i = 0; i < member_list.size(); i++)
+	for (const member &listed : member_list)
 	{
-		if (member_list[i].node != self)
+		if (listed.node != self)
 		{
-			peers.push_back(member_list[i].node);
+			peers.push_back(listed.node);
 		}
 	}
 

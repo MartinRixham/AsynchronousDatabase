@@ -84,7 +84,7 @@ protected:
 		auto curl = curl_easy_init();
 		result result;
 
-		struct curl_slist *headers = NULL;
+		struct curl_slist *headers = nullptr;
 
 		headers = curl_slist_append(headers, "Connection: close");
 
@@ -109,13 +109,13 @@ protected:
 		result.status = curl_easy_perform(curl);
 		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.code);
 
-		char *content_type = NULL;
+		char *content_type = nullptr;
 		curl_off_t content_length = 0;
 
 		curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &content_type);
 		curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &content_length);
 
-		result.content_type = content_type == NULL ? "" : content_type;
+		result.content_type = content_type == nullptr ? "" : content_type;
 		result.content_length = content_length;
 
 		curl_easy_cleanup(curl);
@@ -410,7 +410,7 @@ TEST_F(server_test, two_get_requests)
 	EXPECT_EQ(response, "{\"tables\":[]}");
 	response = "";
 
-	struct curl_slist *headers = NULL;
+	struct curl_slist *headers = nullptr;
 
 	headers = curl_slist_append(headers, "Connection: close");
 

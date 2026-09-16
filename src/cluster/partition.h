@@ -21,7 +21,7 @@ namespace cluster
 	// The partition a key belongs to. The partition key alone decides, so the same key of two
 	// tables is in one partition and is led, held and moved as one thing — and so is every record
 	// of one partition key, whatever it sorts under.
-	size_t partition_of(const std::string &key);
+	size_t partition_of(const std::string &key) noexcept;
 
 	// The partitions a node holds, as a set. A node asking another for its share of a table names
 	// what it holds rather than a key at a time: there is no key to ask about until the answer has
@@ -38,7 +38,7 @@ namespace cluster
 
 	// Nothing when the text is not a set of exactly this many partitions, which is a request from
 	// a node that does not agree with this one about how the keyspace is cut up.
-	std::optional<partition_set> decode_partitions(const std::string &text);
+	[[nodiscard]] std::optional<partition_set> decode_partitions(const std::string &text);
 
 	// The name a partition is hashed and registered under.
 	std::string partition_name(size_t partition);

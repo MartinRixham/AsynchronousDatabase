@@ -2,6 +2,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <iterator>
 #include <memory>
 #include <set>
 #include <utility>
@@ -22,7 +23,7 @@ namespace
 	{
 		const char *value = getenv(name);
 
-		return value == NULL ? "" : value;
+		return value == nullptr ? "" : value;
 	}
 
 	// A flag is turned off only by saying so: unset, empty and anything else is the default it
@@ -39,13 +40,10 @@ namespace
 
 		boost::algorithm::split(split, configured, boost::algorithm::is_any_of(","));
 
-		for (size_t i = 0; i < split.size(); i++)
-		{
-			if (!split[i].empty())
-			{
-				endpoints.push_back(split[i]);
-			}
-		}
+		std::ranges::copy_if(
+			split,
+			std::back_inserter(endpoints),
+			[](const std::string &endpoint) { return !endpoint.empty(); });
 
 		return endpoints;
 	}
@@ -118,27 +116,32 @@ void cluster::etcd_cluster::start()
 	{
 		std::lock_guard<std::mutex> lock(wait_mutex);
 
-		if (running)
+		if (thread.joinable())
 		{
 			return;
 		}
-
-		running = true;
 	}
 
 	refresh();
 
-	// A signal is delivered to whichever thread is able to take it, and this one holds the lock
-	// that stopping it needs, so it is started with every signal blocked and takes none of them.
+	std::lock_guard<std::mutex> lock(wait_mutex);
+
+	if (thread.joinable())
+	{
+		return;
+	}
+
+	// A signal is delivered to whichever thread is able to take it, and a thread cannot join itself,
+	// so this one is started with every signal blocked and takes none of them.
 	sigset_t blocked;
 	sigset_t previous;
 
 	sigfillset(&blocked);
 	pthread_sigmask(SIG_BLOCK, &blocked, &previous);
 
-	thread = std::thread([this]() { run(); });
+	thread = std::jthread([this](std::stop_token token) { run(token); });
 
-	pthread_sigmask(SIG_SETMASK, &previous, NULL);
+	pthread_sigmask(SIG_SETMASK, &previous, nullptr);
 
 	DEBUG("Node " + configuration.node + " joined the cluster at " + etcd_client.endpoint() + ".");
 }
@@ -162,23 +165,21 @@ void cluster::etcd_cluster::stop()
 
 void cluster::etcd_cluster::leave()
 {
+	std::jthread finishing;
+
 	{
 		std::lock_guard<std::mutex> lock(wait_mutex);
 
-		if (!running)
-		{
-			return;
-		}
-
-		running = false;
+		finishing = std::move(thread);
 	}
 
-	wake.notify_all();
-
-	if (thread.joinable())
+	if (!finishing.joinable())
 	{
-		thread.join();
+		return;
 	}
+
+	finishing.request_stop();
+	finishing.join();
 
 	if (lease != 0 && !etcd_client.revoke(lease))
 	{
@@ -224,19 +225,19 @@ cluster::placement cluster::etcd_cluster::copies_of(size_t partition) const
 
 	where.local = false;
 
-	for (size_t i = 0; i < owners.size(); i++)
+	for (const auto &owner : owners)
 	{
-		if (owners[i].node == configuration.node)
+		if (owner.node == configuration.node)
 		{
 			where.local = true;
 		}
-		else if (owners[i].zone == configuration.zone)
+		else if (owner.zone == configuration.zone)
 		{
-			where.nodes.insert(where.nodes.begin(), owners[i].node);
+			where.nodes.insert(where.nodes.begin(), owner.node);
 		}
 		else
 		{
-			where.nodes.push_back(owners[i].node);
+			where.nodes.push_back(owner.node);
 		}
 	}
 
@@ -267,9 +268,9 @@ cluster::partition_set cluster::etcd_cluster::holdings_of(const std::vector<memb
 	{
 		std::vector<member> owners = ::cluster::owners_of(::cluster::partition_name(partition), registered);
 
-		for (size_t i = 0; i < owners.size(); i++)
+		for (const auto &owner : owners)
 		{
-			if (owners[i].node == configuration.node)
+			if (owner.node == configuration.node)
 			{
 				owned.set(partition);
 			}
@@ -390,7 +391,7 @@ std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::stri
 	{
 		std::shared_lock<std::shared_mutex> lock(leader_mutex);
 
-		std::map<size_t, leadership>::const_iterator found = leader_list.find(partition);
+		auto found = leader_list.find(partition);
 
 		if (found != leader_list.end())
 		{
@@ -583,7 +584,7 @@ std::vector<router::response> cluster::etcd_cluster::send_each(const std::vector
 	return request_forwarder.forward_each(enquiries);
 }
 
-void cluster::etcd_cluster::run()
+void cluster::etcd_cluster::run(const std::stop_token &token)
 {
 	std::unique_lock<std::mutex> lock(wait_mutex);
 
@@ -593,7 +594,7 @@ void cluster::etcd_cluster::run()
 
 	// Waiting answers true when it was woken to stop and false when the interval ran out, which
 	// is the tick that renews the lease and reads the membership again.
-	while (!wake.wait_for(lock, interval, [this]() { return !running; }))
+	while (!wake.wait_for(lock, token, interval, [&token]() { return token.stop_requested(); }))
 	{
 		lock.unlock();
 		refresh();
@@ -675,7 +676,7 @@ void cluster::etcd_cluster::read_leaders()
 	{
 		size_t partition = (offset + i) % partition_count;
 		std::string key = configuration.leader_prefix + std::to_string(partition);
-		std::map<std::string, std::string>::const_iterator holder = held->find(key);
+		auto holder = held->find(key);
 
 		if (holder != held->end())
 		{
@@ -803,9 +804,9 @@ void cluster::etcd_cluster::read_members()
 	std::vector<member> names;
 	bool found = false;
 
-	for (std::map<std::string, std::string>::const_iterator it = registered->begin(); it != registered->end(); ++it)
+	for (const auto &[path, value] : *registered)
 	{
-		member read = read_member(it->second);
+		member read = read_member(value);
 
 		found = found || read.node == configuration.node;
 

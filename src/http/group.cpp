@@ -11,13 +11,13 @@ http::group::~group()
 	// so the handles go first.
 	handles.clear();
 
-	if (multi != NULL)
+	if (multi != nullptr)
 	{
 		curl_multi_cleanup(multi);
 	}
 }
 
-CURLM *http::group::get() const
+CURLM *http::group::get() const noexcept
 {
 	return multi;
 }
@@ -31,7 +31,7 @@ CURL *http::group::at(size_t index)
 
 	CURL *easy = handles[index]->get();
 
-	if (easy != NULL)
+	if (easy != nullptr)
 	{
 		curl_easy_reset(easy);
 	}

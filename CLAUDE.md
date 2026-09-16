@@ -78,7 +78,7 @@ Notes:
   `cluster::cluster &`, an `http::client &` or a `repository::repository &` takes it as a parameter of
   its one public constructor, and every caller — `main.cpp` and every test — supplies one. No second
   constructor taking a raw pointer for the first to delegate to, and no concrete member to fall back
-  on when that pointer is `NULL`: a fallback makes the class own the implementation the seam exists
+  on when that pointer is `nullptr`: a fallback makes the class own the implementation the seam exists
   to keep out of it, and leaves the object carrying two candidates for one field. Where the class
   needs a call the seam does not carry, the seam grows it — `start`, `discover` and `stop` are on
   `cluster::cluster`, so `server::server` joins and leaves the cluster it routes through rather than
@@ -612,7 +612,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   returns a table the router turns into the status that code names and the repository silently refuses
   to persist. Follow this pattern rather than throwing; exceptions are reserved for genuine
   infrastructure failure — `repository::storage_error` carries `storage_error` or `write_stalled`, and
-  `ERROR(...)` from `src/error.h` prefixes file/function/line.
+  `located(...)` from `src/error.h` prefixes the file, line and function it was called from.
 - `table::parse_table` enforces the invariants: a name of 1–64 characters that is not `default`, and
   every dependency must name an existing table — so the dependency graph can never contain a
   dangling edge. `PUT /table/{table}` is idempotent: the same options again are `200`, and

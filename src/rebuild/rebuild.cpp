@@ -2,6 +2,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -18,7 +19,7 @@ namespace
 {
 	// Nothing stops a rebuild but its own patience: the node is not in the membership yet, so
 	// there is no pass to shut down and nothing waiting on it to finish.
-	const std::atomic<bool> running(true);
+	const std::stop_token unstopped;
 
 	// What a rebuild took from one node or from one zone: whether the whole of it was read, and how
 	// many of its records this node now holds.
@@ -53,7 +54,7 @@ namespace
 		taken.whole = transfer::walk(
 			nodes,
 			wanted,
-			running,
+			unstopped,
 			waiting,
 			[&](const std::string &file)
 			{
@@ -95,16 +96,11 @@ namespace
 		// that out, which is what a share asked of every node of a zone costs.
 		std::map<std::string, cluster::partition_set> holders = nodes.holders_in(partitions, zone);
 
-		for (std::set<std::string>::const_iterator it = named.begin(); it != named.end(); ++it)
+		for (const std::string &name : named)
 		{
-			const std::string &name = *it;
-
-			for (std::map<std::string, cluster::partition_set>::const_iterator holder = holders.begin();
-				holder != holders.end();
-				++holder)
+			for (const auto &[holder, share] : holders)
 			{
-				restored copied =
-					copy_table(repository, nodes, holder->first, name, holder->second, workers, waiting);
+				restored copied = copy_table(repository, nodes, holder, name, share, workers, waiting);
 
 				taken.records += copied.records;
 

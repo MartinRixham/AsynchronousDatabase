@@ -25,9 +25,9 @@ namespace record
 	std::string compose_key(const std::string &partition, const std::string &sort);
 
 	// Views of the key handed in, which has to outlive them.
-	std::string_view partition_key(const std::string &key);
+	std::string_view partition_key(const std::string &key) noexcept;
 
-	std::string_view sort_key(const std::string &key);
+	std::string_view sort_key(const std::string &key) noexcept;
 
 	// What orders two writes to one key, so that a pass moving records can tell which of two
 	// copies is the later one. **It is not a clock.** The term is the etcd revision that created
@@ -37,7 +37,7 @@ namespace record
 	// two nodes ever issue the same pair for one key.
 	struct version
 	{
-		uint64_t term = 0;
+		int64_t term = 0;
 
 		uint64_t count = 0;
 	};
@@ -52,15 +52,15 @@ namespace record
 	// version between nodes.
 	std::string compose_value(const version &stamp, const std::string &value);
 
-	version version_of(std::string_view stored);
+	version version_of(std::string_view stored) noexcept;
 
 	// A view of the bytes handed in, which have to outlive it.
-	std::string_view value_of(std::string_view stored);
+	std::string_view value_of(std::string_view stored) noexcept;
 
 	// Whether the first of two stored values was written after the second. Two copies of one write
 	// carry one version, which is the pair this cannot order: it is not newer, so a store meeting
 	// one keeps what it holds.
-	bool is_newer(std::string_view stored, std::string_view than);
+	bool is_newer(std::string_view stored, std::string_view than) noexcept;
 
 	struct record
 	{
@@ -80,9 +80,9 @@ namespace record
 		version stamp;
 	};
 
-	record parse_key(const std::string &key);
+	[[nodiscard]] record parse_key(const std::string &key);
 
-	record parse_record(const std::string &key, const std::string &value);
+	[[nodiscard]] record parse_record(const std::string &key, const std::string &value);
 
 	record valid_record(const std::string &key, const std::string &value);
 

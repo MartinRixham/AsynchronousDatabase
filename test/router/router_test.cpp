@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -96,15 +97,9 @@ namespace
 
 		scan::page page = repository.scan_records(name, whole);
 
-		for (size_t i = 0; i < page.records.size(); i++)
-		{
-			if (page.records[i].key == key)
-			{
-				return page.records[i].stamp;
-			}
-		}
+		auto found = std::ranges::find(page.records, key, &record::record::key);
 
-		return record::version();
+		return found == page.records.end() ? record::version() : found->stamp;
 	}
 
 	// The sort halves of a page. The records of one partition key are one scan's worth of answer,
@@ -114,9 +109,9 @@ namespace
 		boost::json::array records = response.json.at("records").as_array();
 		std::vector<std::string> sorts;
 
-		for (size_t i = 0; i < records.size(); i++)
+		for (const auto &item : records)
 		{
-			const boost::json::object &record = records[i].as_object();
+			const boost::json::object &record = item.as_object();
 
 			sorts.push_back(record.contains("sort") ? std::string(record.at("sort").as_string()) : "");
 		}
@@ -129,10 +124,10 @@ namespace
 		boost::json::array records = response.json.at("records").as_array();
 		std::vector<std::string> keys;
 
-		for (size_t i = 0; i < records.size(); i++)
-		{
-			keys.push_back(std::string(records[i].as_object().at("key").as_string()));
-		}
+		std::ranges::transform(
+			records,
+			std::back_inserter(keys),
+			[](const boost::json::value &item) { return std::string(item.as_object().at("key").as_string()); });
 
 		return keys;
 	}
@@ -1406,7 +1401,7 @@ TEST(router_cluster_test, stamp_a_write_with_the_version_it_was_ordered_in)
 
 	record::version stamped = stamp_of(repository, "account", "4821");
 
-	EXPECT_EQ(stamped.term, 41u);
+	EXPECT_EQ(stamped.term, 41);
 	EXPECT_NE(stamped.count, 0u);
 
 	ASSERT_EQ(nodes.sent().size(), 1u);
@@ -1456,7 +1451,7 @@ TEST(router_cluster_test, apply_the_version_a_forwarded_write_was_ordered_in)
 
 	record::version stamped = stamp_of(repository, "account", "4821");
 
-	EXPECT_EQ(stamped.term, 60u);
+	EXPECT_EQ(stamped.term, 60);
 	EXPECT_EQ(stamped.count, 7u);
 }
 
@@ -1474,7 +1469,7 @@ TEST(router_test, count_a_write_no_leader_ordered)
 
 	record::version stamped = stamp_of(repository, "account", "4821");
 
-	EXPECT_EQ(stamped.term, 0u);
+	EXPECT_EQ(stamped.term, 0);
 	EXPECT_NE(stamped.count, 0u);
 }
 
@@ -1659,14 +1654,17 @@ namespace
 	{
 		std::vector<std::thread> writers;
 
-		for (size_t i = 0; i < keys.size(); i++)
-		{
-			writers.push_back(std::thread(write_record, std::ref(router), "account", keys[i], "a value"));
-		}
+		std::ranges::transform(
+			keys,
+			std::back_inserter(writers),
+			[&router](const std::string &key)
+			{
+				return std::thread(write_record, std::ref(router), "account", key, "a value");
+			});
 
-		for (size_t i = 0; i < writers.size(); i++)
+		for (auto &writer : writers)
 		{
-			writers[i].join();
+			writer.join();
 		}
 	}
 }
@@ -1844,7 +1842,7 @@ TEST(router_cluster_test, write_down_a_forwarded_deletion_of_a_table_that_is_not
 
 	ASSERT_TRUE(gone.has_value());
 	EXPECT_FALSE(gone->live);
-	EXPECT_EQ(gone->stamp.term, 41u);
+	EXPECT_EQ(gone->stamp.term, 41);
 	EXPECT_EQ(gone->stamp.count, 7u);
 }
 
@@ -1862,7 +1860,7 @@ TEST(router_cluster_test, carry_the_version_of_a_create_that_no_leader_ordered)
 	std::optional<table::entry> made = repository.read_schema().read_entry("account");
 
 	ASSERT_TRUE(made.has_value());
-	EXPECT_EQ(made->stamp.term, 0u);
+	EXPECT_EQ(made->stamp.term, 0);
 
 	ASSERT_EQ(nodes.sent().size(), 1u);
 	EXPECT_EQ(nodes.sent()[0].second.term, 0);
@@ -1884,7 +1882,7 @@ TEST(router_cluster_test, carry_the_version_a_table_was_created_in_to_the_other_
 	std::optional<table::entry> made = repository.read_schema().read_entry("account");
 
 	ASSERT_TRUE(made.has_value());
-	EXPECT_EQ(made->stamp.term, 41u);
+	EXPECT_EQ(made->stamp.term, 41);
 
 	ASSERT_EQ(nodes.sent().size(), 1u);
 	EXPECT_EQ(nodes.sent()[0].second.term, 41);
@@ -2181,9 +2179,9 @@ TEST(router_cluster_test, order_concurrent_table_creates)
 		creating.push_back(std::thread(create_table, std::ref(router), "account" + std::to_string(i)));
 	}
 
-	for (size_t i = 0; i < creating.size(); i++)
+	for (auto &creator : creating)
 	{
-		creating[i].join();
+		creator.join();
 	}
 
 	EXPECT_EQ(nodes.most_at_once(), 1u);
@@ -2599,9 +2597,9 @@ TEST(router_test, says_where_a_table_would_be_cut_up)
 	// One fewer key than the ways asked for, because the last piece runs to the end of the table.
 	ASSERT_EQ(3u, keys.size());
 
-	for (size_t i = 0; i < keys.size(); i++)
+	for (const auto &encoded : keys)
 	{
-		EXPECT_TRUE(base64::decode(std::string(keys[i].as_string())).has_value());
+		EXPECT_TRUE(base64::decode(std::string(encoded.as_string())).has_value());
 	}
 }
 
@@ -2777,10 +2775,10 @@ TEST(router_test, records_of_one_partition_key_scan_together_in_sort_key_order)
 	boost::json::array records =
 		router.route(get("/table/account/key?key=4821")).json.at("records").as_array();
 
-	for (size_t i = 0; i < records.size(); i++)
-	{
-		values.push_back(std::string(records[i].as_object().at("value").as_string()));
-	}
+	std::ranges::transform(
+		records,
+		std::back_inserter(values),
+		[](const boost::json::value &record) { return std::string(record.as_object().at("value").as_string()); });
 
 	EXPECT_EQ(values, (std::vector<std::string> { "the account", "a year", "a later year" }));
 

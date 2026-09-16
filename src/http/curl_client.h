@@ -22,8 +22,10 @@ namespace http
 	public:
 		curl_client(long connect_timeout, long unacknowledged_timeout);
 
-		response send(const request &request, long timeout_seconds) const override;
+		[[nodiscard]] response send(const request &request, long timeout_seconds) const override;
 
-		std::vector<response> send_all(const std::vector<request> &requests, long timeout_seconds) const override;
+		[[nodiscard]] std::vector<response> send_all(
+			const std::vector<request> &requests,
+			long timeout_seconds) const override;
 	};
 }

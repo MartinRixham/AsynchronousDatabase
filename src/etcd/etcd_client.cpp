@@ -263,14 +263,14 @@ std::optional<std::map<std::string, std::string>> etcd::client::read(const boost
 
 	const boost::json::array &pairs = response->at("kvs").as_array();
 
-	for (size_t i = 0; i < pairs.size(); i++)
+	for (const auto &held : pairs)
 	{
-		if (!pairs[i].is_object())
+		if (!held.is_object())
 		{
 			continue;
 		}
 
-		const boost::json::object &pair = pairs[i].as_object();
+		const boost::json::object &pair = held.as_object();
 
 		if (!pair.contains("key") ||
 			!pair.at("key").is_string() ||

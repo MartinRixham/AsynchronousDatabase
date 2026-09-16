@@ -83,7 +83,7 @@ namespace
 	{
 		thread_local http::handle handle;
 
-		if (handle.get() != NULL)
+		if (handle.get() != nullptr)
 		{
 			curl_easy_reset(handle.get());
 		}
@@ -108,11 +108,11 @@ namespace
 		long connect_timeout,
 		const long *unacknowledged_timeout)
 	{
-		struct curl_slist *headers = NULL;
+		struct curl_slist *headers = nullptr;
 
-		for (size_t i = 0; i < request.headers.size(); i++)
+		for (const auto &line : request.headers)
 		{
-			headers = curl_slist_append(headers, request.headers[i].c_str());
+			headers = curl_slist_append(headers, line.c_str());
 		}
 
 		// A body large enough to be worth a handshake would otherwise wait for a 100 Continue that
@@ -154,7 +154,7 @@ namespace
 	{
 		if (code == CURLE_OK)
 		{
-			char *content_type = NULL;
+			char *content_type = nullptr;
 			curl_off_t content_length = 0;
 			long connects = 0;
 
@@ -167,7 +167,7 @@ namespace
 
 			curl_easy_getinfo(curl, CURLINFO_NUM_CONNECTS, &connects);
 
-			response->content_type = content_type == NULL ? "" : content_type;
+			response->content_type = content_type == nullptr ? "" : content_type;
 			response->content_length = content_length > 0 ? static_cast<long>(content_length) : 0;
 			response->reused = connects == 0;
 			response->is_valid = true;
@@ -200,7 +200,7 @@ namespace
 				// A poll with nothing to wait on returns rather than blocking, and one that could
 				// block for ever is a fan out that never ends, so it is given a bound. Each
 				// transfer's own timeout is what ends a node that has stopped answering.
-				code = curl_multi_poll(multi, NULL, 0, 1000, NULL);
+				code = curl_multi_poll(multi, nullptr, 0, 1000, nullptr);
 			}
 
 			if (code != CURLM_OK)
@@ -211,28 +211,28 @@ namespace
 			}
 		} while (running > 0);
 
-		CURLMsg *message = NULL;
+		CURLMsg *message = nullptr;
 		int left = 0;
 
-		while ((message = curl_multi_info_read(multi, &left)) != NULL)
+		while ((message = curl_multi_info_read(multi, &left)) != nullptr)
 		{
 			if (message->msg != CURLMSG_DONE)
 			{
 				continue;
 			}
 
-			char *carried = NULL;
-			char *url = NULL;
+			char *carried = nullptr;
+			char *url = nullptr;
 
 			curl_easy_getinfo(message->easy_handle, CURLINFO_PRIVATE, &carried);
 			curl_easy_getinfo(message->easy_handle, CURLINFO_EFFECTIVE_URL, &url);
 
-			if (carried != NULL)
+			if (carried != nullptr)
 			{
 				complete(
 					message->easy_handle,
 					message->data.result,
-					url == NULL ? "" : url,
+					url == nullptr ? "" : url,
 					reinterpret_cast<http::response *>(carried));
 			}
 		}
@@ -250,7 +250,7 @@ http::response http::curl_client::send(const request &request, long timeout_seco
 	CURL *curl = thread_handle();
 	response response;
 
-	if (curl == NULL)
+	if (curl == nullptr)
 	{
 		response.message = "Failed to create a curl handle.";
 
@@ -268,7 +268,7 @@ http::response http::curl_client::send(const request &request, long timeout_seco
 	complete(curl, curl_easy_perform(curl), request.url, &response);
 
 	// The handle outlives this list, so it is told to forget the list before the list goes.
-	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, NULL);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, nullptr);
 	curl_slist_free_all(headers);
 
 	return response;
@@ -295,24 +295,24 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 	http::group &group = thread_group();
 	CURLM *multi = group.get();
 
-	if (multi == NULL)
+	if (multi == nullptr)
 	{
-		for (size_t i = 0; i < responses.size(); i++)
+		for (auto &failed : responses)
 		{
-			responses[i].message = "Failed to create a curl multi handle.";
+			failed.message = "Failed to create a curl multi handle.";
 		}
 
 		return responses;
 	}
 
-	std::vector<CURL *> handles(requests.size(), NULL);
-	std::vector<struct curl_slist *> lists(requests.size(), NULL);
+	std::vector<CURL *> handles(requests.size(), nullptr);
+	std::vector<struct curl_slist *> lists(requests.size(), nullptr);
 
 	for (size_t i = 0; i < requests.size(); i++)
 	{
 		CURL *easy = group.at(i);
 
-		if (easy == NULL)
+		if (easy == nullptr)
 		{
 			responses[i].message = "Failed to create a curl handle.";
 
@@ -343,10 +343,10 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 			responses[i].message = "Failed to add a curl handle to the fan out.";
 
 			// The handle is not going to be run, so it is told to forget the list all the same.
-			curl_easy_setopt(easy, CURLOPT_HTTPHEADER, NULL);
+			curl_easy_setopt(easy, CURLOPT_HTTPHEADER, nullptr);
 			curl_slist_free_all(lists[i]);
 
-			lists[i] = NULL;
+			lists[i] = nullptr;
 		}
 	}
 
@@ -354,12 +354,12 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 
 	for (size_t i = 0; i < handles.size(); i++)
 	{
-		if (handles[i] != NULL)
+		if (handles[i] != nullptr)
 		{
 			curl_multi_remove_handle(multi, handles[i]);
 
 			// The handle outlives this list, so it is told to forget the list before the list goes.
-			curl_easy_setopt(handles[i], CURLOPT_HTTPHEADER, NULL);
+			curl_easy_setopt(handles[i], CURLOPT_HTTPHEADER, nullptr);
 		}
 
 		curl_slist_free_all(lists[i]);

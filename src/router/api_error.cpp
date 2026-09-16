@@ -38,7 +38,7 @@ router::response router::error_response(const std::string &code, const std::stri
 
 boost::beast::http::status router::error_status(const std::string &code)
 {
-	std::map<std::string, boost::beast::http::status>::const_iterator status = statuses.find(code);
+	auto status = statuses.find(code);
 
 	if (status == statuses.end())
 	{

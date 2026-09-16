@@ -9,7 +9,7 @@ namespace http
 		CURL *easy;
 
 	public:
-		handle();
+		handle() noexcept;
 
 		~handle();
 
@@ -17,6 +17,6 @@ namespace http
 
 		handle &operator=(const handle &) = delete;
 
-		CURL *get() const;
+		CURL *get() const noexcept;
 	};
 }

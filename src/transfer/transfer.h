@@ -1,9 +1,9 @@
 #pragma once
 
-#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -63,17 +63,17 @@ namespace transfer
 	// record, because a record can only be written where its table is, and it carries the names
 	// the cluster has dropped as well as the ones it has. Nothing when no node of the zone
 	// answered, which is a zone to ask nothing else of.
-	std::optional<table::schema> tables(
+	[[nodiscard]] std::optional<table::schema> tables(
 		const cluster::cluster &nodes,
 		const std::vector<std::string> &zone,
 		progress::patience &waiting);
 
 	// Asks a node for its share of a table and hands every file to `take`, over several key ranges
 	// at once and asking for the next file of each while the last one is still being taken in.
-	outcome walk(
+	[[nodiscard]] outcome walk(
 		const cluster::cluster &nodes,
 		const share &wanted,
-		const std::atomic<bool> &running,
+		const std::stop_token &token,
 		progress::patience &waiting,
 		const taking &take);
 }

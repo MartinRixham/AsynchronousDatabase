@@ -2,6 +2,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -44,7 +45,7 @@ namespace
 		const std::string &name,
 		const cluster::partition_set &partitions,
 		size_t workers,
-		const std::atomic<bool> &running,
+		const std::stop_token &token,
 		progress::patience &waiting)
 	{
 		reconcile::outcome taken;
@@ -60,7 +61,7 @@ namespace
 		transfer::outcome done = transfer::walk(
 			nodes,
 			share_of(node, name, partitions, true, workers),
-			running,
+			token,
 			waiting,
 			[&](const std::string &file)
 			{
@@ -107,7 +108,7 @@ namespace
 		const std::string &name,
 		size_t partition,
 		size_t page,
-		const std::atomic<bool> &running,
+		const std::stop_token &token,
 		progress::patience &waiting,
 		misplaced *found)
 	{
@@ -118,16 +119,16 @@ namespace
 		range.limit = page;
 		range.values = false;
 
-		while (running && !waiting.spent())
+		while (!token.stop_requested() && !waiting.spent())
 		{
 			scan::page walked = repository.scan_records(name, range);
 			std::string last;
 			bool has_last = false;
 			bool read_any = false;
 
-			for (size_t i = 0; i < walked.records.size(); i++)
+			for (const auto &walked_record : walked.records)
 			{
-				const std::string &key = walked.records[i].key;
+				const std::string &key = walked_record.key;
 
 				last = key;
 				has_last = true;
@@ -173,7 +174,7 @@ namespace
 		const cluster::cluster &nodes,
 		const std::string &name,
 		size_t page,
-		const std::atomic<bool> &running,
+		const std::stop_token &token,
 		progress::patience &waiting)
 	{
 		misplaced found;
@@ -192,7 +193,7 @@ namespace
 				name,
 				partition,
 				page,
-				running,
+				token,
 				waiting,
 				&found))
 			{
@@ -222,9 +223,9 @@ namespace
 		const std::vector<std::vector<std::string>> &zones,
 		progress::patience &waiting)
 	{
-		for (size_t zone = 0; zone < zones.size(); zone++)
+		for (const auto &in_zone : zones)
 		{
-			std::optional<table::schema> named = transfer::tables(nodes, zones[zone], waiting);
+			std::optional<table::schema> named = transfer::tables(nodes, in_zone, waiting);
 
 			if (!named)
 			{
@@ -246,25 +247,23 @@ namespace
 		const std::string &name,
 		size_t page,
 		size_t workers,
-		const std::atomic<bool> &running,
+		const std::stop_token &token,
 		progress::patience &waiting)
 	{
-		misplaced found = walk_table(repository, nodes, name, page, running, waiting);
+		misplaced found = walk_table(repository, nodes, name, page, token, waiting);
 		reconcile::outcome given;
 		std::atomic<size_t> cleared = 0;
 
 		given.finished = found.finished;
 
-		for (std::map<std::string, cluster::partition_set>::const_iterator it = found.elsewhere.begin();
-			it != found.elsewhere.end();
-			++it)
+		for (const auto &[node, partitions] : found.elsewhere)
 		{
 			// The keys alone: what is being asked is which of them the owner has, and the values
 			// are already here.
 			transfer::outcome walked = transfer::walk(
 				nodes,
-				share_of(it->first, name, it->second, false, workers),
-				running,
+				share_of(node, name, partitions, false, workers),
+				token,
 				waiting,
 				[&](const std::string &file) { cleared += repository.clear_records(name, file); });
 
@@ -298,7 +297,7 @@ bool reconcile::outcome::moved() const
 reconcile::outcome reconcile::reconcile(
 	repository::repository &repository,
 	cluster::cluster &nodes,
-	const std::atomic<bool> &running,
+	const std::stop_token &token,
 	size_t page,
 	long seconds,
 	size_t workers)
@@ -329,7 +328,7 @@ reconcile::outcome reconcile::reconcile(
 	// empty store alone, so a node that missed a create while it was out of the membership has no
 	// other way back to the schema the rest of the cluster is on.
 	std::optional<size_t> declared =
-		running ? declare_tables(repository, nodes, zones, fetching) : std::optional<size_t>();
+		!token.stop_requested() ? declare_tables(repository, nodes, zones, fetching) : std::optional<size_t>();
 
 	if (declared && *declared > 0)
 	{
@@ -361,17 +360,14 @@ reconcile::outcome reconcile::reconcile(
 	// deferred is one it knows the owner has not taken over yet. Both leave the pass unsettled.
 	bool refused = false;
 
-	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
+	for (const auto &declaration : tables)
 	{
-		for (std::map<std::string, cluster::partition_set>::const_iterator holder = holders.begin();
-			holder != holders.end();
-			++holder)
+		for (const auto &[node, partitions] : holders)
 		{
-			outcome taken = fetch_from(
-				repository, nodes, holder->first, it->name, holder->second, workers, running, fetching);
+			outcome taken = fetch_from(repository, nodes, node, declaration.name, partitions, workers, token, fetching);
 
 			done.fetched += taken.fetched;
-			unfilled |= holder->second & ~taken.filled;
+			unfilled |= partitions & ~taken.filled;
 
 			if (!taken.finished)
 			{
@@ -392,9 +388,9 @@ reconcile::outcome reconcile::reconcile(
 
 	progress::patience clearing(seconds);
 
-	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
+	for (const auto &declaration : tables)
 	{
-		outcome given = clear_table(repository, nodes, it->name, page, workers, running, clearing);
+		outcome given = clear_table(repository, nodes, declaration.name, page, workers, token, clearing);
 
 		done.cleared += given.cleared;
 		done.deferred += given.deferred;

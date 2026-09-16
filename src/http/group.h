@@ -25,7 +25,7 @@ namespace http
 
 		group &operator=(const group &) = delete;
 
-		CURLM *get() const;
+		CURLM *get() const noexcept;
 
 		// As many handles as the widest fan out this thread has run, reset rather than remade.
 		CURL *at(size_t index);

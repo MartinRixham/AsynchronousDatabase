@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <optional>
 #include <thread>
 #include <utility>
@@ -148,10 +149,10 @@ namespace
 
 		const boost::json::array &keys = answer.json.at("keys").as_array();
 
-		for (size_t i = 0; i < keys.size(); i++)
+		for (const auto &encoded : keys)
 		{
-			std::optional<std::string> key = keys[i].is_string()
-				? base64::decode(std::string(keys[i].as_string()))
+			std::optional<std::string> key = encoded.is_string()
+				? base64::decode(std::string(encoded.as_string()))
 				: std::nullopt;
 
 			if (!key)
@@ -227,13 +228,13 @@ namespace
 transfer::outcome transfer::walk(
 	const cluster::cluster &nodes,
 	const share &wanted,
-	const std::atomic<bool> &running,
+	const std::stop_token &token,
 	progress::patience &waiting,
 	const taking &take)
 {
 	outcome done;
 
-	if (!running)
+	if (token.stop_requested())
 	{
 		return done;
 	}
@@ -258,7 +259,7 @@ transfer::outcome transfer::walk(
 		takers.emplace_back([&carrying, &take, &failed, i]() { take_in(carrying[i], take, failed); });
 	}
 
-	while (running && !waiting.spent())
+	while (!token.stop_requested() && !waiting.spent())
 	{
 		std::vector<cluster::enquiry> asking;
 		std::vector<size_t> asked;
@@ -288,24 +289,24 @@ transfer::outcome transfer::walk(
 		waiting.renew();
 	}
 
-	for (size_t i = 0; i < carrying.size(); i++)
+	for (auto &slot : carrying)
 	{
-		carrying[i].close();
+		slot.close();
 	}
 
-	for (size_t i = 0; i < takers.size(); i++)
+	for (auto &taker : takers)
 	{
-		takers[i].join();
+		taker.join();
 	}
 
 	// The share was read only if every piece of it was, and it was refused if any piece was: a node
 	// that stopped answering one piece has stopped answering.
 	done.whole = !failed;
 
-	for (size_t i = 0; i < pieces.size(); i++)
+	for (const auto &piece : pieces)
 	{
-		done.whole = done.whole && pieces[i].whole;
-		done.refused = done.refused || pieces[i].refused;
+		done.whole = done.whole && piece.whole;
+		done.refused = done.refused || piece.refused;
 	}
 
 	return done;
@@ -316,19 +317,19 @@ std::optional<table::schema> transfer::tables(
 	const std::vector<std::string> &zone,
 	progress::patience &waiting)
 {
-	for (size_t i = 0; i < zone.size(); i++)
+	for (const auto &node : zone)
 	{
 		if (waiting.spent())
 		{
 			return std::nullopt;
 		}
 
-		router::response answer = nodes.send(zone[i], schema_request());
+		router::response answer = nodes.send(node, schema_request());
 
 		if (answer.status != boost::beast::http::status::ok ||
 			!answer.json.contains("schema") || !answer.json.at("schema").is_array())
 		{
-			DEBUG("Node " + zone[i] + " did not name its tables.");
+			DEBUG("Node " + node + " did not name its tables.");
 
 			continue;
 		}

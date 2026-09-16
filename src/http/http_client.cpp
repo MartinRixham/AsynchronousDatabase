@@ -22,11 +22,11 @@ namespace
 
 std::string http::header_of(const response &response, const std::string &name)
 {
-	for (size_t i = 0; i < response.headers.size(); i++)
+	for (const auto &[held, value] : response.headers)
 	{
-		if (same_name(response.headers[i].first, name))
+		if (same_name(held, name))
 		{
-			return response.headers[i].second;
+			return value;
 		}
 	}
 

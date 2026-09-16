@@ -58,11 +58,11 @@ namespace scan
 	//
 	// **It is read on its own because it is what routes the scan**, and routing comes first: the
 	// rest of the range is read by the node that answers, which is the node whose cursor it is.
-	std::optional<size_t> read_partition(const std::string &query);
+	[[nodiscard]] std::optional<size_t> read_partition(const std::string &query);
 
 	// The whole of the range, for the node that is going to answer it. A query naming no partition
 	// is `invalid_partition` here.
-	range parse_range(const std::string &query, const std::string &instance);
+	[[nodiscard]] range parse_range(const std::string &query, const std::string &instance);
 
 	range invalid_range(const std::string &code, const std::string &message);
 

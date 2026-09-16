@@ -29,11 +29,11 @@ std::set<table::table> table::schema::tables() const
 {
 	std::set<table> live;
 
-	for (std::map<std::string, entry>::const_iterator it = entries.begin(); it != entries.end(); ++it)
+	for (const auto &[name, held] : entries)
 	{
-		if (it->second.live)
+		if (held.live)
 		{
-			live.insert(table { true, it->first, it->second.json, "", "" });
+			live.insert(table { true, name, held.json, "", "" });
 		}
 	}
 
@@ -44,11 +44,11 @@ std::set<std::string> table::schema::names() const
 {
 	std::set<std::string> live;
 
-	for (std::map<std::string, entry>::const_iterator it = entries.begin(); it != entries.end(); ++it)
+	for (const auto &[name, held] : entries)
 	{
-		if (it->second.live)
+		if (held.live)
 		{
-			live.insert(it->first);
+			live.insert(name);
 		}
 	}
 
@@ -57,14 +57,14 @@ std::set<std::string> table::schema::names() const
 
 bool table::schema::has(const std::string &name) const
 {
-	std::map<std::string, entry>::const_iterator held = entries.find(name);
+	auto held = entries.find(name);
 
 	return held != entries.end() && held->second.live;
 }
 
 table::table table::schema::read(const std::string &name) const
 {
-	std::map<std::string, entry>::const_iterator held = entries.find(name);
+	auto held = entries.find(name);
 
 	if (held == entries.end() || !held->second.live)
 	{
@@ -76,7 +76,7 @@ table::table table::schema::read(const std::string &name) const
 
 std::optional<table::entry> table::schema::read_entry(const std::string &name) const
 {
-	std::map<std::string, entry>::const_iterator held = entries.find(name);
+	auto held = entries.find(name);
 
 	return held == entries.end() ? std::nullopt : std::optional<entry>(held->second);
 }
@@ -95,25 +95,25 @@ std::vector<table::schema::change> table::schema::merge(const schema &named)
 {
 	std::vector<change> changed;
 
-	for (std::map<std::string, entry>::const_iterator it = named.entries.begin(); it != named.entries.end(); ++it)
+	for (const auto &[name, incoming] : named.entries)
 	{
-		std::map<std::string, entry>::const_iterator held = entries.find(it->first);
+		auto held = entries.find(name);
 		bool had = held != entries.end() && held->second.live;
 
-		if (held != entries.end() && !is_newer(it->second.stamp, held->second.stamp))
+		if (held != entries.end() && !is_newer(incoming.stamp, held->second.stamp))
 		{
 			continue;
 		}
 
-		entries[it->first] = it->second;
+		entries[name] = incoming;
 
 		// A live entry that replaced a live one is the same table twice over — a create carried
 		// to a node that had missed it is stamped again — so the column family stays where it is
 		// and only the document moved. It is a name going the other way that has one to make or
 		// to drop.
-		if (had != it->second.live)
+		if (had != incoming.live)
 		{
-			changed.push_back(change { it->first, it->second.live });
+			changed.push_back(change { name, incoming.live });
 		}
 	}
 
@@ -124,18 +124,18 @@ boost::json::object table::schema::json() const
 {
 	boost::json::array named;
 
-	for (std::map<std::string, entry>::const_iterator it = entries.begin(); it != entries.end(); ++it)
+	for (const auto &[name, held] : entries)
 	{
 		boost::json::object one {
-			{ "name", boost::json::string(it->first) },
-			{ "live", it->second.live },
-			{ "term", static_cast<int64_t>(it->second.stamp.term) },
-			{ "count", static_cast<int64_t>(it->second.stamp.count) }
+			{ "name", boost::json::string(name) },
+			{ "live", held.live },
+			{ "term", held.stamp.term },
+			{ "count", static_cast<int64_t>(held.stamp.count) }
 		};
 
-		if (it->second.live)
+		if (held.live)
 		{
-			one["table"] = it->second.json;
+			one["table"] = held.json;
 		}
 
 		named.push_back(one);
@@ -164,14 +164,14 @@ table::schema table::to_schema(const std::string &json)
 
 	const boost::json::array &named = object.at("schema").as_array();
 
-	for (size_t i = 0; i < named.size(); i++)
+	for (const auto &item : named)
 	{
-		if (!named[i].is_object())
+		if (!item.is_object())
 		{
 			continue;
 		}
 
-		const boost::json::object &one = named[i].as_object();
+		const boost::json::object &one = item.as_object();
 
 		if (!one.contains("name") || !one.at("name").is_string())
 		{
@@ -179,7 +179,7 @@ table::schema table::to_schema(const std::string &json)
 		}
 
 		std::string name = std::string(one.at("name").as_string());
-		record::version stamp { number(one, "term"), number(one, "count") };
+		record::version stamp { static_cast<int64_t>(number(one, "term")), number(one, "count") };
 
 		if (one.contains("live") && one.at("live").is_bool() && one.at("live").as_bool()
 			&& one.contains("table") && one.at("table").is_object())

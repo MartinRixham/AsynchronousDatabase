@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -38,10 +39,10 @@ namespace
 	{
 		std::vector<cluster::member> members;
 
-		for (size_t i = 0; i < nodes.size(); i++)
-		{
-			members.push_back(cluster::member { nodes[i], "" });
-		}
+		std::ranges::transform(
+			nodes,
+			std::back_inserter(members),
+			[](const std::string &name) { return cluster::member { name, "" }; });
 
 		return members;
 	}
@@ -50,13 +51,10 @@ namespace
 	{
 		std::vector<cluster::member> left;
 
-		for (size_t i = 0; i < members.size(); i++)
-		{
-			if (members[i].node != node)
-			{
-				left.push_back(members[i]);
-			}
-		}
+		std::ranges::copy_if(
+			members,
+			std::back_inserter(left),
+			[&node](const cluster::member &listed) { return listed.node != node; });
 
 		return left;
 	}
@@ -65,17 +63,14 @@ namespace
 	{
 		std::vector<std::string> nodes;
 
-		for (size_t i = 0; i < members.size(); i++)
-		{
-			nodes.push_back(members[i].node);
-		}
+		std::ranges::transform(members, std::back_inserter(nodes), &cluster::member::node);
 
 		return nodes;
 	}
 
 	std::string owner_in(const std::vector<cluster::member> &owners, const std::string &zone)
 	{
-		std::vector<cluster::member>::const_iterator found = std::find_if(
+		auto found = std::find_if(
 			owners.begin(),
 			owners.end(),
 			[&zone](const cluster::member &owner) { return owner.zone == zone; });
@@ -85,7 +80,7 @@ namespace
 
 	std::string zone_of(const std::vector<cluster::member> &members, const std::string &node)
 	{
-		std::vector<cluster::member>::const_iterator found = std::find_if(
+		auto found = std::find_if(
 			members.begin(),
 			members.end(),
 			[&node](const cluster::member &member) { return member.node == node; });
@@ -185,10 +180,10 @@ TEST(partition_test, the_shares_are_of_a_size)
 
 	// A thousand each, and a fifth either way is a hash that spreads keys rather than one that
 	// happens to agree with the way they are named.
-	for (std::map<std::string, size_t>::const_iterator it = counts.begin(); it != counts.end(); ++it)
+	for (const auto &[node, count] : counts)
 	{
-		EXPECT_GT(it->second, 800u);
-		EXPECT_LT(it->second, 1200u);
+		EXPECT_GT(count, 800u);
+		EXPECT_LT(count, 1200u);
 	}
 }
 
@@ -247,9 +242,9 @@ TEST(partition_test, every_zone_holds_one_copy_of_a_key)
 
 		ASSERT_EQ(owners.size(), 3u);
 
-		for (size_t j = 0; j < owners.size(); j++)
+		for (const auto &owner : owners)
 		{
-			zones.insert(owners[j].zone);
+			zones.insert(owner.zone);
 		}
 
 		EXPECT_EQ(zones, (std::set<std::string> { "a", "b", "c" }));
@@ -262,13 +257,13 @@ TEST(partition_test, the_copy_in_a_zone_is_held_by_a_node_of_that_zone)
 	{
 		std::vector<cluster::member> owners = cluster::owners_of(key(i), zoned);
 
-		for (size_t j = 0; j < owners.size(); j++)
+		for (const auto &owner : owners)
 		{
 			bool found = false;
 
-			for (size_t k = 0; k < zoned.size(); k++)
+			for (const auto &placed : zoned)
 			{
-				found = found || (zoned[k].node == owners[j].node && zoned[k].zone == owners[j].zone);
+				found = found || (placed.node == owner.node && placed.zone == owner.zone);
 			}
 
 			EXPECT_TRUE(found);
@@ -384,9 +379,9 @@ TEST(partition_test, every_node_leads_a_share_of_the_partitions)
 
 	ASSERT_EQ(led.size(), zoned.size());
 
-	for (std::map<std::string, size_t>::const_iterator it = led.begin(); it != led.end(); ++it)
+	for (const auto &[node, count] : led)
 	{
-		EXPECT_GT(it->second, cluster::partition_count / (2 * zoned.size()));
+		EXPECT_GT(count, cluster::partition_count / (2 * zoned.size()));
 	}
 }
 
@@ -458,11 +453,11 @@ TEST(partition_test, the_zones_of_a_scan_hold_every_node_but_this_one)
 		cluster::zones_of(zoned, "http://asyncdb-3:8080", "b");
 	std::set<std::string> asked;
 
-	for (size_t i = 0; i < zones.size(); i++)
+	for (const auto &zone : zones)
 	{
-		for (size_t j = 0; j < zones[i].size(); j++)
+		for (const auto &node : zone)
 		{
-			asked.insert(zones[i][j]);
+			asked.insert(node);
 		}
 	}
 
@@ -560,21 +555,19 @@ TEST(partition_test, a_partition_is_asked_of_the_one_node_of_a_zone_that_holds_i
 
 	cluster::partition_set asked;
 
-	for (std::map<std::string, cluster::partition_set>::const_iterator it = holders.begin();
-		it != holders.end();
-		++it)
+	for (const auto &[node, partitions] : holders)
 	{
 		// No partition is asked of two nodes of one zone: the two sets have nothing in common, and
 		// between them they are the whole of what was asked about.
-		EXPECT_TRUE((asked & it->second).none());
+		EXPECT_TRUE((asked & partitions).none());
 
-		asked |= it->second;
+		asked |= partitions;
 
 		for (size_t partition = 0; partition < cluster::partition_count; partition++)
 		{
-			if (it->second.test(partition))
+			if (partitions.test(partition))
 			{
-				EXPECT_EQ(cluster::owner_of(cluster::partition_name(partition), zone), it->first);
+				EXPECT_EQ(cluster::owner_of(cluster::partition_name(partition), zone), node);
 			}
 		}
 	}
@@ -611,13 +604,11 @@ TEST(partition_test, a_partition_is_asked_of_one_node_of_every_zone)
 
 		std::multiset<std::string> asked;
 
-		for (std::map<std::string, cluster::partition_set>::const_iterator it = holders.begin();
-			it != holders.end();
-			++it)
+		for (const auto &[holder, partitions] : holders)
 		{
-			if (it->second.test(partition))
+			if (partitions.test(partition))
 			{
-				asked.insert(zone_of(zoned, it->first));
+				asked.insert(zone_of(zoned, holder));
 			}
 		}
 
@@ -704,12 +695,10 @@ TEST(partition_test, no_node_is_asked_about_a_partition_the_share_does_not_name)
 
 	ASSERT_FALSE(holders.empty());
 
-	for (std::map<std::string, cluster::partition_set>::const_iterator it = holders.begin();
-		it != holders.end();
-		++it)
+	for (const auto &[node, partitions] : holders)
 	{
-		EXPECT_EQ(it->second.count(), 1u);
-		EXPECT_TRUE(it->second.test(7));
+		EXPECT_EQ(partitions.count(), 1u);
+		EXPECT_TRUE(partitions.test(7));
 	}
 }
 

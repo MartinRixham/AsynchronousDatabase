@@ -51,9 +51,9 @@ namespace router
 
 		// Whether this node is on its way out. It serves everything as normal and fails its health
 		// check, so that a load balancer has stopped choosing it by the time it stops answering.
-		void is_draining(bool draining);
+		void is_draining(bool draining) noexcept;
 
-		bool is_draining() const;
+		bool is_draining() const noexcept;
 
 	private:
 		response route_tables(const request &request);

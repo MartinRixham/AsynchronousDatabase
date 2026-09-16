@@ -1,10 +1,13 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <vector>
@@ -28,7 +31,7 @@ namespace
 
 	const std::string there = "http://two:8080";
 
-	const std::atomic<bool> running(true);
+	const std::stop_token running;
 
 	// The node being read from, with a real router over a real store behind it — which is what a
 	// walk is reading when it runs, rather than answers written out by hand. Only the two calls a
@@ -189,10 +192,10 @@ namespace
 				widest_fan_out = enquiries.size();
 			}
 
-			for (size_t i = 0; i < enquiries.size(); i++)
-			{
-				responses.push_back(send(enquiries[i].node, enquiries[i].request));
-			}
+			std::ranges::transform(
+				enquiries,
+				std::back_inserter(responses),
+				[this](const ::cluster::enquiry &one) { return send(one.node, one.request); });
 
 			return responses;
 		}
@@ -231,9 +234,9 @@ namespace
 	{
 		std::set<std::string> keys;
 
-		for (size_t i = 0; i < files.size(); i++)
+		for (const auto &carried : files)
 		{
-			taking.import_records("account", files[i]);
+			taking.import_records("account", carried);
 		}
 
 		// A scan reads one partition, so every key of the table is every partition asked in turn.
@@ -247,9 +250,9 @@ namespace
 
 			scan::page walked = taking.scan_records("account", whole);
 
-			for (size_t i = 0; i < walked.records.size(); i++)
+			for (const auto &walked_record : walked.records)
 			{
-				keys.insert(walked.records[i].key);
+				keys.insert(walked_record.key);
 			}
 		}
 
@@ -386,7 +389,7 @@ TEST(transfer_test, asks_for_the_next_file_while_the_last_one_is_being_taken_in)
 	std::atomic<bool> overlapped = false;
 
 	// A budget of a few bytes is a file a record, so there are several of them to run ahead of.
-	transfer::walk(
+	static_cast<void>(transfer::walk(
 		node,
 		share_of(1, 4),
 		running,
@@ -400,7 +403,7 @@ TEST(transfer_test, asks_for_the_next_file_while_the_last_one_is_being_taken_in)
 			}
 
 			taken++;
-		});
+		}));
 
 	EXPECT_LT(1u, taken);
 	EXPECT_TRUE(overlapped);
@@ -414,11 +417,13 @@ TEST(transfer_test, a_walk_that_is_no_longer_running_asks_nothing_at_all)
 	serving_node node(router);
 	progress::patience waiting(30);
 	collector taken;
-	const std::atomic<bool> stopped(false);
+	std::stop_source stopping;
+
+	stopping.request_stop();
 
 	fill(store, 8);
 
-	transfer::outcome done = transfer::walk(node, share_of(4, 4096), stopped, waiting, std::ref(taken));
+	transfer::outcome done = transfer::walk(node, share_of(4, 4096), stopping.get_token(), waiting, std::ref(taken));
 
 	EXPECT_FALSE(done.whole);
 	EXPECT_FALSE(done.refused);

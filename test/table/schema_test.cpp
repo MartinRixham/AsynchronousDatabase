@@ -127,7 +127,7 @@ TEST(schema_test, a_later_table_over_one_it_holds_moves_the_document_and_nothing
 
 	EXPECT_TRUE(schema.merge(later).empty());
 	EXPECT_TRUE(schema.has("account"));
-	EXPECT_EQ(schema.read_entry("account")->stamp.term, 9u);
+	EXPECT_EQ(schema.read_entry("account")->stamp.term, 9);
 }
 
 // A name the other schema says nothing about is a node that is wrong about the schema rather than
@@ -151,12 +151,12 @@ TEST(schema_test, a_schema_is_read_back_from_the_document_it_writes)
 
 	EXPECT_TRUE(read.has("account"));
 	EXPECT_EQ(read.read("account").json, schema.read("account").json);
-	EXPECT_EQ(read.read_entry("account")->stamp.term, 3u);
+	EXPECT_EQ(read.read_entry("account")->stamp.term, 3);
 	EXPECT_EQ(read.read_entry("account")->stamp.count, 4u);
 
 	ASSERT_TRUE(read.read_entry("gone").has_value());
 	EXPECT_FALSE(read.read_entry("gone")->live);
-	EXPECT_EQ(read.read_entry("gone")->stamp.term, 5u);
+	EXPECT_EQ(read.read_entry("gone")->stamp.term, 5);
 }
 
 TEST(schema_test, a_document_that_is_not_a_schema_is_an_empty_one)

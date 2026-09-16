@@ -166,7 +166,7 @@ TEST(record_test, a_value_carries_the_version_it_was_written_with)
 	std::string stored = record::compose_value(record::version { 41, 7 }, "a value");
 
 	EXPECT_EQ(record::value_of(stored), "a value");
-	EXPECT_EQ(record::version_of(stored).term, 41u);
+	EXPECT_EQ(record::version_of(stored).term, 41);
 	EXPECT_EQ(record::version_of(stored).count, 7u);
 }
 

@@ -56,7 +56,7 @@ std::string server::data_directory()
 {
 	const char *configured = getenv("ASYNCDB_DATA");
 
-	return configured == NULL || *configured == '\0' ? "/var/lib/asyncdb" : configured;
+	return configured == nullptr || *configured == '\0' ? "/var/lib/asyncdb" : configured;
 }
 
 size_t server::memory_size()
@@ -64,7 +64,7 @@ size_t server::memory_size()
 	const char *configured = getenv("ASYNCDB_MEMORY");
 	size_t mebibytes = 0;
 
-	if (configured != NULL &&
+	if (configured != nullptr &&
 		boost::conversion::try_lexical_convert(std::string(configured), mebibytes) &&
 		mebibytes > 0)
 	{
@@ -79,7 +79,9 @@ int server::thread_pool_size()
 	const char *configured = getenv("ASYNCDB_THREADS");
 	int threads = 0;
 
-	if (configured != NULL && boost::conversion::try_lexical_convert(std::string(configured), threads) && threads > 0)
+	if (configured != nullptr &&
+		boost::conversion::try_lexical_convert(std::string(configured), threads) &&
+		threads > 0)
 	{
 		return threads;
 	}
@@ -100,7 +102,9 @@ std::chrono::seconds server::drain_interval()
 	const char *configured = getenv("ASYNCDB_DRAIN");
 	int seconds = 0;
 
-	if (configured != NULL && boost::conversion::try_lexical_convert(std::string(configured), seconds) && seconds > 0)
+	if (configured != nullptr &&
+		boost::conversion::try_lexical_convert(std::string(configured), seconds) &&
+		seconds > 0)
 	{
 		return std::chrono::seconds(seconds);
 	}
@@ -131,7 +135,7 @@ server::server::server(
 
 	if (error)
 	{
-		throw std::runtime_error(ERROR("Error binding to socket: " + error.message()));
+		throw std::runtime_error(located("Error binding to socket: " + error.message()));
 	}
 
 	// Listening is held back until serve() has filled the store: a bound socket that is not
@@ -150,7 +154,7 @@ void server::server::listen()
 
 	if (error)
 	{
-		throw std::runtime_error(ERROR("Error listening on socket: " + error.message()));
+		throw std::runtime_error(located("Error listening on socket: " + error.message()));
 	}
 
 	DEBUG("Server listening on port: " + std::to_string(port_number) + ".");
@@ -222,11 +226,10 @@ void server::server::serve()
 	{
 		std::lock_guard<std::mutex> lock(reconcile_mutex);
 
-		reconciling = true;
+		// A rebuild that came up short is a store that only a pass fills, and nothing else would run one.
+		reconciler = std::jthread(
+			[this, behind = returning || !whole](std::stop_token token) { reconcile(token, behind); });
 	}
-
-	// A rebuild that came up short is a store that only a pass fills, and nothing else would run one.
-	reconciler = std::thread([this, behind = returning || !whole]() { reconcile(behind); });
 
 	// The store is filled and the node has joined, so the port is opened to the connections that
 	// were refused while it was not ready to answer them.
@@ -234,7 +237,7 @@ void server::server::serve()
 
 	accept();
 
-	std::vector<std::thread> threads;
+	std::vector<std::jthread> threads;
 
 	threads.reserve(thread_count - 1);
 
@@ -243,14 +246,8 @@ void server::server::serve()
 		threads.emplace_back([this]() { io_context.run(); });
 	}
 
+	// Serving ends when the acceptor is closed, and the other threads are joined as their vector goes.
 	io_context.run();
-
-	// Serving ends when the acceptor is closed, and a thread that is still joinable when its
-	// vector goes would terminate the process, so the others are waited for here.
-	for (std::thread &thread : threads)
-	{
-		thread.join();
-	}
 }
 
 void server::server::on_accept(boost::beast::error_code error, boost::asio::ip::tcp::socket socket)
@@ -280,7 +277,7 @@ void server::server::on_accept(boost::beast::error_code error, boost::asio::ip::
 	accept();
 }
 
-boost::asio::ip::port_type server::server::port() const
+boost::asio::ip::port_type server::server::port() const noexcept
 {
 	return port_number;
 }
@@ -315,7 +312,7 @@ void server::server::accept()
 		boost::beast::bind_front_handler(&server::on_accept, shared_from_this()));
 }
 
-void server::server::reconcile(bool behind)
+void server::server::reconcile(const std::stop_token &token, bool behind)
 {
 	std::unique_lock<std::mutex> lock(reconcile_mutex);
 
@@ -335,7 +332,7 @@ void server::server::reconcile(bool behind)
 	// caught it up runs on an empty store alone, so what answers this is the first pass.
 	int attempts = behind ? reconcile_attempts : 0;
 
-	while (!reconcile_wake.wait_for(lock, reconcile_interval(), [this]() { return !reconciling; }))
+	while (!reconcile_wake.wait_for(lock, token, reconcile_interval(), [&token]() { return token.stop_requested(); }))
 	{
 		lock.unlock();
 
@@ -360,7 +357,7 @@ void server::server::reconcile(bool behind)
 			// is a pass that did some of it, and the attempts left are what runs the rest.
 			try
 			{
-				reconcile::outcome done = reconcile::reconcile(repository, nodes, reconciling);
+				reconcile::outcome done = reconcile::reconcile(repository, nodes, token);
 
 				nodes.vouch(done.filled, done.generation);
 
@@ -395,22 +392,18 @@ void server::server::reconcile(bool behind)
 
 void server::server::stop_reconciling()
 {
+	std::jthread finishing;
+
 	{
 		std::lock_guard<std::mutex> lock(reconcile_mutex);
 
-		if (!reconciling)
-		{
-			return;
-		}
-
-		reconciling = false;
+		finishing = std::move(reconciler);
 	}
 
-	reconcile_wake.notify_all();
-
-	if (reconciler.joinable())
+	if (finishing.joinable())
 	{
-		reconciler.join();
+		finishing.request_stop();
+		finishing.join();
 	}
 }
 
@@ -443,9 +436,9 @@ void server::server::close()
 			acceptor.close();
 		});
 
-	for (size_t i = 0; i < live.size(); i++)
+	for (const auto &held : live)
 	{
-		std::shared_ptr<session> connection = live[i].lock();
+		std::shared_ptr<session> connection = held.lock();
 
 		if (connection)
 		{

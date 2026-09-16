@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <iterator>
 #include <map>
 #include <set>
 #include <string>
@@ -46,9 +47,9 @@ namespace
 		std::set<std::string> keys;
 		std::vector<http::request> sent = http.sent_to("/v3/kv/txn");
 
-		for (size_t i = 0; i < sent.size(); i++)
+		for (const auto &call : sent)
 		{
-			boost::json::object body = boost::json::parse(sent[i].body).as_object();
+			boost::json::object body = boost::json::parse(call.body).as_object();
 
 			keys.insert(
 				base64::decode(std::string(body.at("compare").as_array()[0].as_object().at("key").as_string()))
@@ -65,9 +66,9 @@ namespace
 		std::set<std::string> keys;
 		std::vector<http::request> sent = http.sent_to("/v3/kv/txn");
 
-		for (size_t i = 0; i < sent.size(); i++)
+		for (const auto &sent_request : sent)
 		{
-			boost::json::object body = boost::json::parse(sent[i].body).as_object();
+			boost::json::object body = boost::json::parse(sent_request.body).as_object();
 
 			if (!body.at("success").as_array()[0].as_object().contains("requestDeleteRange"))
 			{
@@ -87,15 +88,15 @@ namespace
 	{
 		boost::json::array kvs;
 
-		for (size_t i = 0; i < nodes.size(); i++)
+		for (const auto &listed : nodes)
 		{
 			boost::json::object registration {
-				{ "node", nodes[i].node },
-				{ "zone", nodes[i].zone }
+				{ "node", listed.node },
+				{ "zone", listed.zone }
 			};
 
 			kvs.push_back(boost::json::object {
-				{ "key", base64::encode("/asyncdb/node/" + nodes[i].node) },
+				{ "key", base64::encode("/asyncdb/node/" + listed.node) },
 				{ "value", base64::encode(boost::json::serialize(registration)) }
 			});
 		}
@@ -107,10 +108,10 @@ namespace
 	{
 		std::vector<cluster::member> members;
 
-		for (size_t i = 0; i < nodes.size(); i++)
-		{
-			members.push_back(cluster::member { nodes[i], "" });
-		}
+		std::ranges::transform(
+			nodes,
+			std::back_inserter(members),
+			[](const std::string &name) { return cluster::member { name, "" }; });
 
 		return members;
 	}
@@ -127,10 +128,7 @@ namespace
 	{
 		std::vector<std::string> names;
 
-		for (size_t i = 0; i < members.size(); i++)
-		{
-			names.push_back(members[i].node);
-		}
+		std::ranges::transform(members, std::back_inserter(names), &cluster::member::node);
 
 		return names;
 	}
@@ -153,11 +151,11 @@ namespace
 	{
 		boost::json::array kvs;
 
-		for (std::map<size_t, std::string>::const_iterator it = held.begin(); it != held.end(); ++it)
+		for (const auto &[partition, node] : held)
 		{
 			kvs.push_back(boost::json::object {
-				{ "key", base64::encode("/asyncdb/leader/" + std::to_string(it->first)) },
-				{ "value", base64::encode(it->second) }
+				{ "key", base64::encode("/asyncdb/leader/" + std::to_string(partition)) },
+				{ "value", base64::encode(node) }
 			});
 		}
 
@@ -621,9 +619,9 @@ namespace
 
 	public:
 		environment():
-			previous_etcd(getenv("ASYNCDB_ETCD") == NULL ? "" : getenv("ASYNCDB_ETCD")),
-			previous_node(getenv("ASYNCDB_NODE") == NULL ? "" : getenv("ASYNCDB_NODE")),
-			previous_serve_unled(getenv("ASYNCDB_SERVE_UNLED") == NULL ? "" : getenv("ASYNCDB_SERVE_UNLED"))
+			previous_etcd(getenv("ASYNCDB_ETCD") == nullptr ? "" : getenv("ASYNCDB_ETCD")),
+			previous_node(getenv("ASYNCDB_NODE") == nullptr ? "" : getenv("ASYNCDB_NODE")),
+			previous_serve_unled(getenv("ASYNCDB_SERVE_UNLED") == nullptr ? "" : getenv("ASYNCDB_SERVE_UNLED"))
 		{
 		}
 

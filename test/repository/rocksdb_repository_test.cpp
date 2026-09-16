@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <thread>
 #include <set>
@@ -34,10 +35,10 @@ namespace
 	{
 		std::vector<std::string> sorts;
 
-		for (size_t i = 0; i < page.records.size(); i++)
-		{
-			sorts.push_back(std::string(record::sort_key(page.records[i].key)));
-		}
+		std::ranges::transform(
+			page.records,
+			std::back_inserter(sorts),
+			[](const record::record &paged) { return std::string(record::sort_key(paged.key)); });
 
 		return sorts;
 	}
@@ -57,10 +58,7 @@ namespace
 
 			scan::page page = store.scan_records(name, range);
 
-			for (size_t i = 0; i < page.records.size(); i++)
-			{
-				found.push_back(page.records[i].key);
-			}
+			std::ranges::transform(page.records, std::back_inserter(found), &record::record::key);
 		}
 
 		std::sort(found.begin(), found.end());
@@ -77,10 +75,7 @@ namespace
 	{
 		std::vector<std::string> keys;
 
-		for (size_t i = 0; i < page.records.size(); i++)
-		{
-			keys.push_back(page.records[i].key);
-		}
+		std::ranges::transform(page.records, std::back_inserter(keys), &record::record::key);
 
 		return keys;
 	}
@@ -519,7 +514,7 @@ namespace
 		return 0;
 	}
 
-	record::record versioned(const std::string &key, const std::string &value, uint64_t term, uint64_t count)
+	record::record versioned(const std::string &key, const std::string &value, int64_t term, uint64_t count)
 	{
 		record::record written = record::valid_record(key, value);
 

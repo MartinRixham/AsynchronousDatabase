@@ -13,9 +13,9 @@ namespace
 	{
 		std::string url = node;
 
-		for (size_t i = 0; i < request.path.size(); i++)
+		for (const auto &segment : request.path)
 		{
-			url += "/" + url::encode(request.path[i]);
+			url += "/" + url::encode(segment);
 		}
 
 		if (request.path.empty())
@@ -143,13 +143,13 @@ std::vector<router::response> cluster::forwarder::forward_each(const std::vector
 {
 	std::vector<http::request> forwarded;
 
-	for (size_t i = 0; i < enquiries.size(); i++)
+	for (const auto &enquiry : enquiries)
 	{
 		forwarded.push_back(http::request {
-			method_of(enquiries[i].request),
-			target(enquiries[i].node, enquiries[i].request),
-			enquiries[i].request.body,
-			headers_of(enquiries[i].request)
+			method_of(enquiry.request),
+			target(enquiry.node, enquiry.request),
+			enquiry.request.body,
+			headers_of(enquiry.request)
 		});
 
 		DEBUG("Forwarding " + forwarded.back().method + " " + forwarded.back().url + ".");
@@ -173,9 +173,9 @@ std::vector<router::response> cluster::forwarder::forward_all(
 	std::vector<std::string> headers = headers_of(request);
 	std::vector<http::request> forwarded;
 
-	for (size_t i = 0; i < nodes.size(); i++)
+	for (const auto &destination : nodes)
 	{
-		forwarded.push_back(http::request { method_of(request), target(nodes[i], request), request.body, headers });
+		forwarded.push_back(http::request { method_of(request), target(destination, request), request.body, headers });
 
 		DEBUG("Forwarding " + forwarded.back().method + " " + forwarded.back().url + ".");
 	}

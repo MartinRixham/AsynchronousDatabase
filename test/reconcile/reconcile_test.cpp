@@ -1,5 +1,5 @@
 #include <algorithm>
-#include <atomic>
+#include <stop_token>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -29,7 +29,7 @@ namespace
 	const std::string other = "http://four:8080";
 
 	// A pass that has not been told to stop, which is every pass but the one being shut down.
-	const std::atomic<bool> running(true);
+	const std::stop_token running;
 
 	// Two nodes in this node's zone, and one in each of two more.
 	std::vector<cluster::member> three_zones()
@@ -51,9 +51,9 @@ namespace
 
 		source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
-		for (size_t i = 0; i < keys.size(); i++)
+		for (const auto &written : keys)
 		{
-			source.write_record("account", record::valid_record(keys[i], "value of " + keys[i]));
+			source.write_record("account", record::valid_record(written, "value of " + written));
 		}
 
 		repository::share whole;
@@ -75,17 +75,17 @@ namespace
 	{
 		table::schema schema;
 
-		for (size_t i = 0; i < names.size(); i++)
+		for (const auto &table_name : names)
 		{
-			schema.create(table::valid_table(names[i], std::vector<std::string>()), stamp);
+			schema.create(table::valid_table(table_name, std::vector<std::string>()), stamp);
 		}
 
 		// A name the cluster dropped, at the version the delete was ordered in. It is what tells a
 		// node holding that table that it missed the delete rather than that its peer missed the
 		// create.
-		for (size_t i = 0; i < dropped.size(); i++)
+		for (const auto &gone : dropped)
 		{
-			schema.remove(dropped[i], stamp);
+			schema.remove(gone, stamp);
 		}
 
 		return router::json_response(boost::beast::http::status::ok, schema.json());
@@ -104,7 +104,7 @@ namespace
 		return file(keys, false, next);
 	}
 
-	record::record stamped(const std::string &key, const std::string &value, uint64_t term, uint64_t count)
+	record::record stamped(const std::string &key, const std::string &value, int64_t term, uint64_t count)
 	{
 		record::record written = record::valid_record(key, value);
 
@@ -119,16 +119,16 @@ namespace
 		const std::vector<std::string> &keys,
 		const std::string &value,
 		bool values,
-		uint64_t term,
+		int64_t term,
 		uint64_t count)
 	{
 		repository::fake_repository source;
 
 		source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
-		for (size_t i = 0; i < keys.size(); i++)
+		for (const auto &written : keys)
 		{
-			source.write_record("account", stamped(keys[i], value, term, count));
+			source.write_record("account", stamped(written, value, term, count));
 		}
 
 		repository::share whole;
@@ -147,9 +147,9 @@ namespace
 
 		repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
-		for (size_t i = 0; i < keys.size(); i++)
+		for (const auto &written : keys)
 		{
-			repository.write_record("account", record::valid_record(keys[i], "here already"));
+			repository.write_record("account", record::valid_record(written, "here already"));
 		}
 
 		return repository;
@@ -160,7 +160,7 @@ namespace
 	reconcile::outcome reconciled(
 		repository::repository &repository,
 		cluster::cluster &nodes,
-		const std::atomic<bool> &flag,
+		const std::stop_token &flag,
 		size_t page = reconcile::default_page,
 		long seconds = reconcile::default_seconds)
 	{
@@ -185,7 +185,7 @@ namespace
 	{
 		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
 
-		std::vector<std::pair<std::string, router::request>>::const_iterator asked = std::find_if(
+		auto asked = std::find_if(
 			sent.begin(),
 			sent.end(),
 			[&node](const std::pair<std::string, router::request> &request)
@@ -202,7 +202,7 @@ namespace
 	{
 		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
 
-		std::vector<std::pair<std::string, router::request>>::const_iterator asked = std::find_if(
+		auto asked = std::find_if(
 			sent.begin(),
 			sent.end(),
 			[&key](const std::pair<std::string, router::request> &request)
@@ -221,11 +221,11 @@ namespace
 		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
 		std::vector<std::string> queries;
 
-		for (size_t i = 0; i < sent.size(); i++)
+		for (const auto &[asked, request] : sent)
 		{
-			if (sent[i].first == node && is_file(sent[i].second, true))
+			if (asked == node && is_file(request, true))
 			{
-				queries.push_back(sent[i].second.query);
+				queries.push_back(request.query);
 			}
 		}
 
@@ -270,12 +270,14 @@ TEST(reconcile_test, a_pass_that_is_no_longer_running_asks_nobody_anything)
 {
 	repository::fake_repository repository = store({ "gone" });
 	cluster::fake_cluster nodes(self, three_zones());
-	const std::atomic<bool> stopped(false);
+	std::stop_source stopping;
+
+	stopping.request_stop();
 
 	nodes.copies("gone", { mate, peer, other });
 	nodes.answer(mate, holds({ "gone" }));
 
-	reconcile::outcome done = reconciled(repository, nodes, stopped);
+	reconcile::outcome done = reconciled(repository, nodes, stopping.get_token());
 
 	EXPECT_EQ(0u, done.cleared);
 	EXPECT_FALSE(done.settled());
@@ -929,11 +931,13 @@ TEST(reconcile_test, a_pass_that_is_no_longer_running_asks_for_no_tables)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, three_zones());
-	const std::atomic<bool> stopped(false);
+	std::stop_source stopping;
+
+	stopping.request_stop();
 
 	nodes.answer(mate, named({ "account" }));
 
-	reconciled(repository, nodes, stopped);
+	reconciled(repository, nodes, stopping.get_token());
 
 	EXPECT_FALSE(repository.has_table("account"));
 	EXPECT_TRUE(nodes.sent().empty());

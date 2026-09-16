@@ -10,6 +10,7 @@
 #include <mutex>
 #include <set>
 #include <shared_mutex>
+#include <stop_token>
 #include <thread>
 #include <vector>
 
@@ -130,13 +131,11 @@ namespace cluster
 		// raises the term of its own partition and no write waits on a write of another.
 		std::array<std::atomic<int64_t>, partition_count> terms = {};
 
-		std::thread thread;
+		std::jthread thread;
 
-		mutable std::mutex wait_mutex;
+		std::mutex wait_mutex;
 
-		std::condition_variable wake;
-
-		bool running = false;
+		std::condition_variable_any wake;
 
 	public:
 		etcd_cluster(const config &cluster_config, const http::client &http, const forwarder &forwarding);
@@ -149,7 +148,7 @@ namespace cluster
 
 		void start() override;
 
-		bool discover() override;
+		[[nodiscard]] bool discover() override;
 
 		void stop() override;
 
@@ -177,7 +176,7 @@ namespace cluster
 
 		std::vector<std::vector<std::string>> zones() const override;
 
-		std::optional<leadership> leader(const std::string &key) override;
+		[[nodiscard]] std::optional<leadership> leader(const std::string &key) override;
 
 		size_t leads() const override;
 
@@ -187,23 +186,23 @@ namespace cluster
 
 		etcd_registration registration() const override;
 
-		bool accept(const std::string &key, int64_t term) override;
+		[[nodiscard]] bool accept(const std::string &key, int64_t term) override;
 
 		void restore_terms(const partition_terms &applied) override;
 
-		router::response send(const std::string &node, const router::request &request) const override;
+		[[nodiscard]] router::response send(const std::string &node, const router::request &request) const override;
 
-		std::optional<router::response> send_all(
+		[[nodiscard]] std::optional<router::response> send_all(
 			const std::vector<std::string> &node_list,
 			const router::request &request) const override;
 
-		std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const override;
+		[[nodiscard]] std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const override;
 
 	private:
 		// What stop() does, and what the destructor calls: a destructor cannot reach an override.
 		void leave();
 
-		void run();
+		void run(const std::stop_token &token);
 
 		void refresh();
 

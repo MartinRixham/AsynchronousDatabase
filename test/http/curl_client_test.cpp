@@ -270,14 +270,14 @@ TEST_F(curl_client_test, keeps_a_connection_to_more_nodes_than_a_cluster_has)
 		nodes.push_back(asked);
 	}
 
-	for (size_t i = 0; i < nodes.size(); i++)
+	for (const auto &node : nodes)
 	{
-		EXPECT_FALSE(client.send(nodes[i], 30).reused) << nodes[i].url;
+		EXPECT_FALSE(client.send(node, 30).reused) << node.url;
 	}
 
 	// Every one of them again, and not one was dropped to make room for the others.
-	for (size_t i = 0; i < nodes.size(); i++)
+	for (const auto &target : nodes)
 	{
-		EXPECT_TRUE(client.send(nodes[i], 30).reused) << nodes[i].url;
+		EXPECT_TRUE(client.send(target, 30).reused) << target.url;
 	}
 }

@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -106,10 +107,10 @@ namespace
 	{
 		boost::json::array records;
 
-		for (size_t i = 0; i < page.records.size(); i++)
-		{
-			records.push_back(to_json(page.records[i], range.values));
-		}
+		std::ranges::transform(
+			page.records,
+			std::back_inserter(records),
+			[&range](const record::record &paged) { return to_json(paged, range.values); });
 
 		boost::json::object body { { "records", records } };
 
@@ -134,13 +135,13 @@ router::router::router(repository::repository &repo, cluster::cluster &cluster_n
 	std::set<std::string> names = schema.names();
 	int64_t &tables = applied[cluster::partition_of(cluster::table_key)];
 
-	for (std::set<std::string>::const_iterator it = names.begin(); it != names.end(); ++it)
+	for (const auto &table_name : names)
 	{
-		std::optional<table::entry> entry = schema.read_entry(*it);
+		std::optional<table::entry> entry = schema.read_entry(table_name);
 
-		if (entry && static_cast<int64_t>(entry->stamp.term) > tables)
+		if (entry && entry->stamp.term > tables)
 		{
-			tables = static_cast<int64_t>(entry->stamp.term);
+			tables = entry->stamp.term;
 		}
 	}
 
@@ -157,12 +158,12 @@ bool router::router::is_short_of(size_t partition) const
 	return nodes.holdings().test(partition) && !nodes.vouched().test(partition);
 }
 
-void router::router::is_draining(bool value)
+void router::router::is_draining(bool value) noexcept
 {
 	draining = value;
 }
 
-bool router::router::is_draining() const
+bool router::router::is_draining() const noexcept
 {
 	return draining;
 }
@@ -208,13 +209,13 @@ router::response router::router::route(const request &request)
 			boost::json::array names;
 			std::map<std::string, boost::json::array> zones;
 
-			for (size_t i = 0; i < members.size(); i++)
+			for (const auto &listed : members)
 			{
-				names.push_back(boost::json::string(members[i].node));
+				names.push_back(boost::json::string(listed.node));
 
-				if (!members[i].zone.empty())
+				if (!listed.zone.empty())
 				{
-					zones[members[i].zone].push_back(boost::json::string(members[i].node));
+					zones[listed.zone].push_back(boost::json::string(listed.node));
 				}
 			}
 
@@ -226,11 +227,9 @@ router::response router::router::route(const request &request)
 			{
 				boost::json::object named;
 
-				for (std::map<std::string, boost::json::array>::const_iterator it = zones.begin();
-					it != zones.end();
-					++it)
+				for (const auto &[zone, zone_nodes] : zones)
 				{
-					named[it->first] = it->second;
+					named[zone] = zone_nodes;
 				}
 
 				health["zones"] = named;
@@ -320,10 +319,7 @@ router::response router::router::route_tables(const request &request)
 	const std::set<table::table> tables = repository.list_tables();
 	boost::json::array tables_json;
 
-	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
-	{
-		tables_json.push_back(it->json);
-	}
+	std::ranges::transform(tables, std::back_inserter(tables_json), &table::table::json);
 
 	// Instances hold dozens of tables, so the list is not paged.
 	return json_response(boost::beast::http::status::ok, boost::json::object { { "tables", tables_json } });
@@ -465,10 +461,10 @@ router::response router::router::route_split(const request &request, const std::
 	boost::json::array keys;
 	std::vector<std::string> points = repository.split_points(name, std::min(ways, scan::max_limit));
 
-	for (size_t i = 0; i < points.size(); i++)
-	{
-		keys.push_back(boost::json::string(base64::encode(points[i])));
-	}
+	std::ranges::transform(
+		points,
+		std::back_inserter(keys),
+		[](const std::string &point) { return boost::json::string(base64::encode(point)); });
 
 	return json_response(boost::beast::http::status::ok, boost::json::object { { "keys", keys } });
 }
@@ -524,7 +520,7 @@ router::response router::router::route_record(
 
 			// The version the leader stamped, applied as it was given rather than made again here:
 			// the copies of one write are the same record and have to say so.
-			record.stamp = record::version { static_cast<uint64_t>(request.term), request.count };
+			record.stamp = record::version { request.term, request.count };
 
 			return write_record(request, name, record, where);
 		}
@@ -558,7 +554,7 @@ router::response router::router::route_record(
 
 		std::lock_guard<std::mutex> ordering(write_lock(record.key));
 
-		record.stamp = record::version { static_cast<uint64_t>(lead->term), repository.next_count() };
+		record.stamp = record::version { lead->term, repository.next_count() };
 
 		return write_record(
 			carried(request, lead->term, record.stamp.count),
@@ -629,9 +625,9 @@ router::response router::router::read_record(const request &request, const std::
 {
 	response answer = error_response("storage_error", "No node holding this key answered.");
 
-	for (size_t i = 0; i < replicas.size(); i++)
+	for (const auto &replica : replicas)
 	{
-		answer = nodes.send(replicas[i], request);
+		answer = nodes.send(replica, request);
 
 		if (answer.status < boost::beast::http::status::internal_server_error)
 		{
@@ -695,10 +691,10 @@ record::version router::router::schema_stamp(const request &request, const order
 {
 	if (order.carried)
 	{
-		return record::version { static_cast<uint64_t>(request.term), request.count };
+		return record::version { request.term, request.count };
 	}
 
-	return record::version { static_cast<uint64_t>(order.term), repository.next_count() };
+	return record::version { order.term, repository.next_count() };
 }
 
 router::response router::router::create_table(const request &request, const std::string &name)
@@ -862,9 +858,9 @@ std::set<std::string> router::router::table_names() const
 	const std::set<table::table> tables = repository.list_tables();
 	std::set<std::string> names;
 
-	for (std::set<table::table>::const_iterator it = tables.begin(); it != tables.end(); ++it)
+	for (const auto &declared : tables)
 	{
-		names.insert(it->name);
+		names.insert(declared.name);
 	}
 
 	return names;

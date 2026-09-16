@@ -35,7 +35,7 @@ namespace rebuild
 	// **It runs before the node registers in etcd**, which is what makes it free to take as long
 	// as it needs: a node that is not in the membership is nobody's copy, so no read is answered
 	// from it and no write waits on it.
-	outcome rebuild(
+	[[nodiscard]] outcome rebuild(
 		repository::repository &repository,
 		cluster::cluster &nodes,
 		long seconds = default_seconds,

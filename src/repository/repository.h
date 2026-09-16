@@ -103,7 +103,9 @@ namespace repository
 		// the records it fences do.
 		virtual cluster::partition_terms read_terms() const = 0;
 
-		virtual std::optional<std::string> read_record(const std::string &table_name, const std::string &key) const = 0;
+		[[nodiscard]] virtual std::optional<std::string> read_record(
+			const std::string &table_name,
+			const std::string &key) const = 0;
 
 		virtual scan::page scan_records(const std::string &table_name, const scan::range &range) const = 0;
 

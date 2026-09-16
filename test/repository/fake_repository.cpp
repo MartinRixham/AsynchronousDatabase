@@ -114,15 +114,15 @@ size_t repository::fake_repository::merge_schema(const table::schema &named)
 	std::lock_guard<std::mutex> lock(*mutex);
 	std::vector<table::schema::change> changed = tables.merge(named);
 
-	for (size_t i = 0; i < changed.size(); i++)
+	for (const auto &altered : changed)
 	{
-		if (changed[i].live)
+		if (altered.live)
 		{
-			records[changed[i].name];
+			records[altered.name];
 		}
 		else
 		{
-			records.erase(changed[i].name);
+			records.erase(altered.name);
 		}
 	}
 
@@ -142,9 +142,9 @@ void repository::fake_repository::write_record(const std::string &table_name, co
 
 	int64_t &term = terms[cluster::partition_of(record.key)];
 
-	if (static_cast<int64_t>(record.stamp.term) > term)
+	if (record.stamp.term > term)
 	{
-		term = static_cast<int64_t>(record.stamp.term);
+		term = record.stamp.term;
 	}
 }
 
@@ -183,13 +183,11 @@ scan::page repository::fake_repository::scan_records(const std::string &table_na
 	const std::map<std::string, std::string> &table_records = records.at(table_name);
 	std::vector<std::string> keys;
 
-	for (std::map<std::string, std::string>::const_iterator it = table_records.begin();
-		it != table_records.end();
-		++it)
+	for (const auto &[key, value] : table_records)
 	{
-		if (is_in_range(it->first, range))
+		if (is_in_range(key, range))
 		{
-			keys.push_back(it->first);
+			keys.push_back(key);
 		}
 	}
 
@@ -200,7 +198,7 @@ scan::page repository::fake_repository::scan_records(const std::string &table_na
 
 	size_t bytes = 0;
 
-	for (size_t i = 0; i < keys.size(); i++)
+	for (const auto &key : keys)
 	{
 		if (page.records.size() == range.limit)
 		{
@@ -210,7 +208,7 @@ scan::page repository::fake_repository::scan_records(const std::string &table_na
 
 		// The byte budget of scan::max_page_bytes, ended the same way the real store ends it, so
 		// that a test against this one sees the page a client would really be given.
-		size_t size = keys[i].size() + (range.values ? table_records.at(keys[i]).size() : 0);
+		size_t size = key.size() + (range.values ? table_records.at(key).size() : 0);
 
 		if (!page.records.empty() && bytes + size > scan::max_page_bytes)
 		{
@@ -220,9 +218,8 @@ scan::page repository::fake_repository::scan_records(const std::string &table_na
 
 		bytes += size;
 
-		const std::string &stored = table_records.at(keys[i]);
-		record::record read = record::valid_record(
-			keys[i], range.values ? std::string(record::value_of(stored)) : "");
+		const std::string &stored = table_records.at(key);
+		record::record read = record::valid_record(key, range.values ? std::string(record::value_of(stored)) : "");
 
 		read.stamp = range.values ? record::version_of(stored) : record::version();
 
@@ -366,7 +363,7 @@ size_t repository::fake_repository::import_records(const std::string &table_name
 		}
 
 		int64_t &term = terms[cluster::partition_of(*key)];
-		int64_t carried = static_cast<int64_t>(record::version_of(*value).term);
+		int64_t carried = record::version_of(*value).term;
 
 		if (carried > term)
 		{
@@ -375,7 +372,7 @@ size_t repository::fake_repository::import_records(const std::string &table_name
 
 		// A key this store holds at a later version is kept, which is what the real store does and
 		// what makes a fetch safe: the record here was written after the one the file carries.
-		std::map<std::string, std::string>::iterator held = table_records.find(*key);
+		auto held = table_records.find(*key);
 
 		if (held == table_records.end())
 		{
@@ -420,7 +417,7 @@ size_t repository::fake_repository::clear_records(const std::string &table_name,
 		// A key the file carries and this store has nothing for is a record this node never held,
 		// which is nothing to give up — and one it holds at a later version is a copy the owner
 		// has yet to catch up on.
-		std::map<std::string, std::string>::iterator held = table_records.find(*key);
+		auto held = table_records.find(*key);
 
 		if (held == table_records.end() || record::is_newer(held->second, *value))
 		{

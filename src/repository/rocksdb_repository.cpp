@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <filesystem>
+#include <iterator>
 #include <utility>
 #include <string>
 #include <vector>
@@ -170,10 +171,13 @@ namespace
 	{
 		std::vector<rocksdb::ColumnFamilyDescriptor> descriptors;
 
-		for (size_t i = 0; i < names.size(); i++)
-		{
-			descriptors.push_back(rocksdb::ColumnFamilyDescriptor(names[i], family_options));
-		}
+		std::ranges::transform(
+			names,
+			std::back_inserter(descriptors),
+			[&family_options](const std::string &family_name)
+			{
+				return rocksdb::ColumnFamilyDescriptor(family_name, family_options);
+			});
 
 		return descriptors;
 	}
@@ -243,7 +247,7 @@ repository::rocksdb_repository::rocksdb_repository(const std::string &directory,
 
 	if (!status.ok())
 	{
-		throw std::runtime_error(ERROR("Failed to open rocksdb with status: " + status.ToString()));
+		throw std::runtime_error(located("Failed to open rocksdb with status: " + status.ToString()));
 	}
 
 	for (size_t i = 0; i < names.size(); i++)
@@ -286,7 +290,7 @@ void repository::rocksdb_repository::check_format()
 		{
 			throw storage_error(
 				"storage_error",
-				ERROR("The store is format " + held + " and this build reads format " + format_version + "."));
+				located("The store is format " + held + " and this build reads format " + format_version + "."));
 		}
 
 		return;
@@ -349,9 +353,9 @@ repository::rocksdb_repository::~rocksdb_repository()
 // because it is destroyed with the members afterwards.
 void repository::rocksdb_repository::close_handles()
 {
-	for (std::map<std::string, rocksdb::ColumnFamilyHandle *>::iterator it = handles.begin(); it != handles.end(); ++it)
+	for (const auto &[table_name, handle] : handles)
 	{
-		database->DestroyColumnFamilyHandle(it->second);
+		database->DestroyColumnFamilyHandle(handle);
 	}
 
 	handles.clear();
@@ -420,15 +424,15 @@ size_t repository::rocksdb_repository::merge_schema(const table::schema &named)
 	std::unique_lock<std::shared_mutex> lock(handle_mutex);
 	std::vector<table::schema::change> changed = tables.merge(named);
 
-	for (size_t i = 0; i < changed.size(); i++)
+	for (const auto &altered : changed)
 	{
-		if (changed[i].live)
+		if (altered.live)
 		{
-			open_family(changed[i].name);
+			open_family(altered.name);
 		}
 		else
 		{
-			drop_family(changed[i].name);
+			drop_family(altered.name);
 		}
 	}
 
@@ -444,7 +448,7 @@ void repository::rocksdb_repository::open_family(const std::string &table_name)
 		return;
 	}
 
-	rocksdb::ColumnFamilyHandle *handle = NULL;
+	rocksdb::ColumnFamilyHandle *handle = nullptr;
 
 	written(database->CreateColumnFamily(family_options, table_name, &handle), "Creating table \"" + table_name + "\"");
 
@@ -453,7 +457,7 @@ void repository::rocksdb_repository::open_family(const std::string &table_name)
 
 void repository::rocksdb_repository::drop_family(const std::string &table_name)
 {
-	std::map<std::string, rocksdb::ColumnFamilyHandle *>::iterator handle = handles.find(table_name);
+	auto handle = handles.find(table_name);
 
 	if (handle == handles.end())
 	{
@@ -481,23 +485,22 @@ void repository::rocksdb_repository::read_tables()
 	std::set<std::string> named = tables.names();
 	std::vector<std::string> orphaned;
 
-	for (std::map<std::string, rocksdb::ColumnFamilyHandle *>::const_iterator it = handles.begin(); it != handles.end();
-		 ++it)
+	for (const auto &[table_name, handle] : handles)
 	{
-		if (it->first != rocksdb::kDefaultColumnFamilyName && named.find(it->first) == named.end())
+		if (table_name != rocksdb::kDefaultColumnFamilyName && named.find(table_name) == named.end())
 		{
-			orphaned.push_back(it->first);
+			orphaned.push_back(table_name);
 		}
 	}
 
-	for (size_t i = 0; i < orphaned.size(); i++)
+	for (const auto &orphan : orphaned)
 	{
-		drop_family(orphaned[i]);
+		drop_family(orphan);
 	}
 
-	for (std::set<std::string>::const_iterator it = named.begin(); it != named.end(); ++it)
+	for (const auto &one : named)
 	{
-		open_family(*it);
+		open_family(one);
 	}
 }
 
@@ -514,7 +517,7 @@ void repository::rocksdb_repository::write_record(const std::string &table_name,
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 	size_t partition = cluster::partition_of(record.key);
-	int64_t term = static_cast<int64_t>(record.stamp.term);
+	int64_t term = record.stamp.term;
 	std::string what = "Writing a record to \"" + table_name + "\"";
 	std::string value = record::compose_value(record.stamp, record.value);
 
@@ -705,9 +708,9 @@ std::vector<std::string> repository::rocksdb_repository::split_points(const std:
 	std::vector<std::pair<std::string, uint64_t>> files;
 	uint64_t held = 0;
 
-	for (size_t level = 0; level < metadata.levels.size(); level++)
+	for (const auto &level : metadata.levels)
 	{
-		const std::vector<rocksdb::SstFileMetaData> &at = metadata.levels[level].files;
+		const std::vector<rocksdb::SstFileMetaData> &at = level.files;
 
 		for (size_t i = 0; i < at.size(); i++)
 		{
@@ -900,7 +903,7 @@ size_t repository::rocksdb_repository::import_records(const std::string &table_n
 		for (it->SeekToFirst(); it->Valid(); it->Next())
 		{
 			size_t partition = partition_held(it->key());
-			int64_t term = static_cast<int64_t>(record::version_of(it->value().ToStringView()).term);
+			int64_t term = record::version_of(it->value().ToStringView()).term;
 
 			if (partition < cluster::partition_count && term > carried[partition])
 			{
@@ -1084,7 +1087,7 @@ std::string repository::rocksdb_repository::instance() const
 
 rocksdb::ColumnFamilyHandle *repository::rocksdb_repository::table_handle(const std::string &table_name) const
 {
-	std::map<std::string, rocksdb::ColumnFamilyHandle *>::const_iterator handle = handles.find(table_name);
+	auto handle = handles.find(table_name);
 
 	if (handle == handles.end())
 	{

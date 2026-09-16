@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <map>
 #include <string_view>
 
@@ -28,9 +30,9 @@ namespace
 	{
 		uint64_t hashed = seed;
 
-		for (size_t i = 0; i < text.size(); i++)
+		for (char byte : text)
 		{
-			hashed ^= static_cast<unsigned char>(text[i]);
+			hashed ^= static_cast<unsigned char>(byte);
 			hashed *= fnv_prime;
 		}
 
@@ -49,7 +51,7 @@ namespace
 	}
 }
 
-size_t cluster::partition_of(const std::string &key)
+size_t cluster::partition_of(const std::string &key) noexcept
 {
 	return mix(hash(record::partition_key(key), fnv_offset)) % partition_count;
 }
@@ -142,16 +144,16 @@ std::vector<cluster::member> cluster::owners_of(const std::string &key, const st
 {
 	std::map<std::string, std::vector<std::string>> zones;
 
-	for (size_t i = 0; i < members.size(); i++)
+	for (const auto &listed : members)
 	{
-		zones[members[i].zone].push_back(members[i].node);
+		zones[listed.zone].push_back(listed.node);
 	}
 
 	std::vector<member> owners;
 
-	for (std::map<std::string, std::vector<std::string>>::const_iterator it = zones.begin(); it != zones.end(); ++it)
+	for (const auto &[zone, nodes] : zones)
 	{
-		owners.push_back(member { owner_of(key, it->second), it->first });
+		owners.push_back(member { owner_of(key, nodes), zone });
 	}
 
 	return owners;
@@ -161,10 +163,7 @@ std::string cluster::leader_of(const std::string &key, const std::vector<member>
 {
 	std::vector<std::string> nodes;
 
-	for (size_t i = 0; i < members.size(); i++)
-	{
-		nodes.push_back(members[i].node);
-	}
+	std::ranges::transform(members, std::back_inserter(nodes), &member::node);
 
 	return owner_of(key, nodes);
 }
@@ -178,11 +177,11 @@ std::vector<std::vector<std::string>> cluster::zones_of(
 
 	grouped[zone];
 
-	for (size_t i = 0; i < members.size(); i++)
+	for (const member &listed : members)
 	{
-		if (members[i].node != node)
+		if (listed.node != node)
 		{
-			grouped[members[i].zone].push_back(members[i].node);
+			grouped[listed.zone].push_back(listed.node);
 		}
 	}
 
@@ -190,13 +189,11 @@ std::vector<std::vector<std::string>> cluster::zones_of(
 
 	zones.push_back(grouped[zone]);
 
-	for (std::map<std::string, std::vector<std::string>>::const_iterator it = grouped.begin();
-		it != grouped.end();
-		++it)
+	for (const auto &[name, nodes] : grouped)
 	{
-		if (it->first != zone)
+		if (name != zone)
 		{
-			zones.push_back(it->second);
+			zones.push_back(nodes);
 		}
 	}
 
@@ -240,15 +237,13 @@ std::map<std::string, cluster::partition_set> cluster::holders_of(
 	std::vector<std::vector<std::string>> grouped = zones_of(members, node, zone);
 	std::map<std::string, partition_set> holders;
 
-	for (size_t group = 0; group < grouped.size(); group++)
+	for (const auto &in_zone : grouped)
 	{
-		std::map<std::string, partition_set> holding = holders_in(partitions, grouped[group]);
+		std::map<std::string, partition_set> holding = holders_in(partitions, in_zone);
 
-		for (std::map<std::string, partition_set>::const_iterator it = holding.begin();
-			it != holding.end();
-			++it)
+		for (const auto &[holder, held] : holding)
 		{
-			holders[it->first] |= it->second;
+			holders[holder] |= held;
 		}
 	}
 

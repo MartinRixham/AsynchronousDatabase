@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <iterator>
+
 #include "fake_http_client.h"
 
 void http::fake_client::answer(const std::string &url, const response &response)
@@ -27,13 +30,17 @@ http::response http::fake_client::send(const request &request, long timeout_seco
 
 	requests.push_back(request);
 
-	for (size_t i = 0; i < answers.size(); i++)
-	{
-		if (request.url.find(answers[i].url) != std::string::npos &&
-			(answers[i].body.empty() || request.body.find(answers[i].body) != std::string::npos))
+	auto canned = std::ranges::find_if(
+		answers,
+		[&request](const reply &told)
 		{
-			return answers[i].answer;
-		}
+			return request.url.find(told.url) != std::string::npos &&
+				(told.body.empty() || request.body.find(told.body) != std::string::npos);
+		});
+
+	if (canned != answers.end())
+	{
+		return canned->answer;
 	}
 
 	// Nothing was said about this URL, so it is a node that is not there.
@@ -50,10 +57,10 @@ std::vector<http::response> http::fake_client::send_all(const std::vector<reques
 {
 	std::vector<response> responses;
 
-	for (size_t i = 0; i < request_list.size(); i++)
-	{
-		responses.push_back(send(request_list[i], timeout_seconds));
-	}
+	std::ranges::transform(
+		request_list,
+		std::back_inserter(responses),
+		[this, timeout_seconds](const request &each) { return send(each, timeout_seconds); });
 
 	return responses;
 }
@@ -70,13 +77,10 @@ std::vector<http::request> http::fake_client::sent_to(const std::string &url) co
 	std::vector<request> all = sent();
 	std::vector<request> matching;
 
-	for (size_t i = 0; i < all.size(); i++)
-	{
-		if (all[i].url.find(url) != std::string::npos)
-		{
-			matching.push_back(all[i]);
-		}
-	}
+	std::ranges::copy_if(
+		all,
+		std::back_inserter(matching),
+		[&url](const request &call) { return call.url.find(url) != std::string::npos; });
 
 	return matching;
 }

@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <iterator>
+
 #include "table.h"
 
 bool table::operator<(const table &lhs, const table &rhs)
@@ -40,14 +43,14 @@ table::table table::parse_table(
 	const boost::json::array dependency_array = json.at("dependencies").as_array();
 	std::vector<std::string> dependencies;
 
-	for (size_t i = 0; i < dependency_array.size(); i++)
+	for (const auto &element : dependency_array)
 	{
-		if (!dependency_array[i].is_string())
+		if (!element.is_string())
 		{
 			return invalid_table("dependency_not_found", "A dependency is not the name of a table.");
 		}
 
-		std::string dependency = std::string(dependency_array[i].as_string());
+		std::string dependency = std::string(element.as_string());
 
 		if (tables.find(dependency) == tables.end())
 		{
@@ -64,10 +67,10 @@ table::table table::valid_table(const std::string &name, const std::vector<std::
 {
 	boost::json::array dependency_array;
 
-	for (size_t i = 0; i < dependencies.size(); i++)
-	{
-		dependency_array.push_back(boost::json::string(dependencies[i]));
-	}
+	std::ranges::transform(
+		dependencies,
+		std::back_inserter(dependency_array),
+		[](const std::string &dependency) { return boost::json::string(dependency); });
 
 	boost::json::object json { { "name", boost::json::string(name) }, { "dependencies", dependency_array } };
 
@@ -97,20 +100,15 @@ bool table::is_valid_name(const std::string &name)
 		return false;
 	}
 
-	for (size_t i = 0; i < name.size(); i++)
-	{
-		char character = name[i];
-
-		if (!(character >= 'a' && character <= 'z') &&
-			!(character >= 'A' && character <= 'Z') &&
-			!(character >= '0' && character <= '9') &&
-			character != ' ' &&
-			character != '_' &&
-			character != '-')
+	return std::ranges::all_of(
+		name,
+		[](char character)
 		{
-			return false;
-		}
-	}
-
-	return true;
+			return (character >= 'a' && character <= 'z') ||
+				(character >= 'A' && character <= 'Z') ||
+				(character >= '0' && character <= '9') ||
+				character == ' ' ||
+				character == '_' ||
+				character == '-';
+		});
 }

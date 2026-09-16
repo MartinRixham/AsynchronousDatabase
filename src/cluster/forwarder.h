@@ -21,16 +21,17 @@ namespace cluster
 	public:
 		explicit forwarder(const http::client &http, long timeout_seconds = 30);
 
-		router::response forward(const std::string &node, const router::request &request) const;
+		[[nodiscard]] router::response forward(const std::string &node, const router::request &request) const;
 
 		// The same request to every node named, all of them at once, answered one for one and in the
 		// order the nodes were named rather than the order they answered in. A node that did not
 		// answer is an answer of its own, the way it is when it is asked on its own.
-		std::vector<router::response> forward_all(const std::vector<std::string> &nodes, const router::request &request)
-			const;
+		[[nodiscard]] std::vector<router::response> forward_all(
+			const std::vector<std::string> &nodes,
+			const router::request &request) const;
 
 		// The same fan out for a caller asking each node something different, which is what a walk
 		// of a share in several pieces at once is.
-		std::vector<router::response> forward_each(const std::vector<enquiry> &enquiries) const;
+		[[nodiscard]] std::vector<router::response> forward_each(const std::vector<enquiry> &enquiries) const;
 	};
 }

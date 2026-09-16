@@ -9,12 +9,12 @@ std::string record::compose_key(const std::string &partition, const std::string 
 	return sort.empty() ? partition : partition + sort_separator + sort;
 }
 
-std::string_view record::partition_key(const std::string &key)
+std::string_view record::partition_key(const std::string &key) noexcept
 {
 	return std::string_view(key).substr(0, key.find(sort_separator));
 }
 
-std::string_view record::sort_key(const std::string &key)
+std::string_view record::sort_key(const std::string &key) noexcept
 {
 	size_t separator = key.find(sort_separator);
 
@@ -49,28 +49,28 @@ std::string record::compose_value(const version &stamp, const std::string &value
 
 	stored.reserve(version_size + value.size());
 
-	append_big_endian(&stored, stamp.term);
+	append_big_endian(&stored, static_cast<uint64_t>(stamp.term));
 	append_big_endian(&stored, stamp.count);
 
 	return stored + value;
 }
 
-record::version record::version_of(std::string_view stored)
+record::version record::version_of(std::string_view stored) noexcept
 {
 	if (stored.size() < version_size)
 	{
 		return version();
 	}
 
-	return version { read_big_endian(stored), read_big_endian(stored.substr(8)) };
+	return version { static_cast<int64_t>(read_big_endian(stored)), read_big_endian(stored.substr(8)) };
 }
 
-std::string_view record::value_of(std::string_view stored)
+std::string_view record::value_of(std::string_view stored) noexcept
 {
 	return stored.size() < version_size ? std::string_view() : stored.substr(version_size);
 }
 
-bool record::is_newer(std::string_view stored, std::string_view than)
+bool record::is_newer(std::string_view stored, std::string_view than) noexcept
 {
 	if (stored.size() < version_size)
 	{
@@ -129,7 +129,7 @@ record::record record::invalid_record(const std::string &code, const std::string
 
 bool record::is_valid_utf8(const std::string &text)
 {
-	std::string::const_iterator character = text.begin();
+	auto character = text.begin();
 
 	while (character != text.end())
 	{

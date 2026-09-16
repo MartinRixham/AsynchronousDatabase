@@ -7,5 +7,5 @@ namespace base64
 {
 	std::string encode(const std::string &text);
 
-	std::optional<std::string> decode(const std::string &encoded);
+	[[nodiscard]] std::optional<std::string> decode(const std::string &encoded);
 }

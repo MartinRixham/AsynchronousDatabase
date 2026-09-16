@@ -37,9 +37,9 @@ namespace
 	{
 		table::schema named;
 
-		for (size_t i = 0; i < names.size(); i++)
+		for (const auto &name : names)
 		{
-			named.create(table::valid_table(names[i], std::vector<std::string>()), record::version { 1, 1 });
+			named.create(table::valid_table(name, std::vector<std::string>()), record::version { 1, 1 });
 		}
 
 		return router::json_response(boost::beast::http::status::ok, named.json());
@@ -54,9 +54,9 @@ namespace
 
 		source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
-		for (size_t i = 0; i < keys.size(); i++)
+		for (const auto &key : keys)
 		{
-			source.write_record("account", record::valid_record(keys[i], "value of " + keys[i]));
+			source.write_record("account", record::valid_record(key, "value of " + key));
 		}
 
 		repository::share whole;

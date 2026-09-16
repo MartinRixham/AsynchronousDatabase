@@ -49,10 +49,12 @@ namespace http
 	class client
 	{
 	public:
-		virtual response send(const request &request, long timeout_seconds) const = 0;
+		[[nodiscard]] virtual response send(const request &request, long timeout_seconds) const = 0;
 
 		// The fan out: the caller waits for the slowest of the requests rather than for the sum
 		// of them, so a client that can run them at once runs them at once.
-		virtual std::vector<response> send_all(const std::vector<request> &requests, long timeout_seconds) const = 0;
+		[[nodiscard]] virtual std::vector<response> send_all(
+			const std::vector<request> &requests,
+			long timeout_seconds) const = 0;
 	};
 }
