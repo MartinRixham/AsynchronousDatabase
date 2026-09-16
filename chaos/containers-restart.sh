@@ -47,32 +47,53 @@ before=before-$stamp
 
 container=$chaos_container
 
-# A table and a key of the probe's own, so that the terms it drives up on one node never reach a
-# write the load or the seed made: a copy that has seen a high term refuses everything older for
-# that partition, which a real write ordered in a smaller term is. It is created through the load
-# balancer like any table and dropped at the end, so it perturbs no assertion here and is gone
-# before the later experiments walk the seeded table.
+# A table of the probe's own keeps its record out of every walk of the seeded table, and never its
+# term out of the seed's partitions. README.md#the-term-outlives-the-process is why it is armed on
+# every node and left standing.
 probe_table=$table-term-probe
 probe_key=probe
 
 # The two terms are far above any etcd revision a short run reaches, and the low one is what a
-# leader superseded by the high one would carry. The probe is armed on the first of the six, and
-# checked on whichever nodes hold the key once the restart has settled.
+# leader superseded by the high one would carry.
 probe_high=2000000000
 probe_low=1000000000
-probe_node=$(echo "$ids" | head -1)
 
-# term_write <node> <term> <value> — the status a forwarded write carrying that term gets from the
-# node's own curl. This is exactly the request a copy receives from the leader that ordered a
-# write: X-Asyncdb-Forwarded so it is served where it lands, and X-Asyncdb-Term so it is gated by
-# cluster::etcd_cluster::accept rather than ordered afresh. Sent over Run Command because the API
-# port is not the load balancer's, so only the instance itself can reach it.
+# term_write <term> <value> — the status a forwarded write carrying that term gets from each node's
+# own curl, in $work/answer.<instance>. This is exactly the request a copy receives from the leader
+# that ordered a write: X-Asyncdb-Forwarded so it is served where it lands, and X-Asyncdb-Term so it
+# is gated by cluster::etcd_cluster::accept rather than ordered afresh. Sent over Run Command because
+# the API port is not the load balancer's, so only the instance itself can reach it.
 term_write()
 {
-	ssm_run "$1" "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X PUT \
-		-H '$forwarded_header: true' -H '$term_header: $2' \
-		-H 'Content-Type: application/octet-stream' --data '$3' \
-		'http://localhost:8080/table/$probe_table/key/$probe_key'"
+	# shellcheck disable=SC2086
+	ssm_all "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X PUT \
+		-H '$forwarded_header: true' -H '$term_header: $1' \
+		-H 'Content-Type: application/octet-stream' --data '$2' \
+		'http://localhost:8080/table/$probe_table/key/$probe_key'" $ids
+}
+
+# term_answered <status> — the nodes that did not answer the last term_write with that status.
+term_answered()
+{
+	local id
+
+	for id in $ids; do
+		[ "$(cat "$work/answer.$id" 2> /dev/null)" = "$1" ] || echo "$id"
+	done
+}
+
+# term_expect <status> <description> — every node answered the last term_write with that status.
+term_expect()
+{
+	local wrong
+
+	wrong=$(term_answered "$1")
+
+	if [ -z "$wrong" ]; then
+		result 0 "$2"
+	else
+		result 1 "$2 — not on $(echo $wrong)"
+	fi
 }
 
 # term_read <node> — what that node holds for the probe key in its own store, forwarded so it
@@ -83,12 +104,12 @@ term_read()
 		'http://localhost:8080/table/$probe_table/key/$probe_key'"
 }
 
-# term_probe_arm — before the kills, establish a term on one node and prove the guard is live:
-# a write carrying a term older than the newest that node has applied is refused (stale_leader,
-# 409). The high term goes into that node's own store as the probe value.
+# term_probe_arm — before the kills, establish a term on every node and prove the guard is live:
+# a write carrying a term older than the newest a node has applied is refused (stale_leader, 409).
+# The high term goes into each node's own store as the probe value.
 term_probe_arm()
 {
-	local created armed rejected
+	local created
 
 	created=$(status --request PUT --header 'Content-Type: application/json' \
 		--data '{}' "$base/table/$probe_table")
@@ -98,11 +119,11 @@ term_probe_arm()
 		*) die "Could not create $probe_table: $created." ;;
 	esac
 
-	armed=$(term_write "$probe_node" "$probe_high" high)
-	expect "$armed" 204 "a forwarded write in a high term is applied on $probe_node"
+	term_write "$probe_high" high
+	term_expect 204 "a forwarded write in a high term is applied on every node"
 
-	rejected=$(term_write "$probe_node" "$probe_low" stale-before)
-	expect "$rejected" 409 "and one in an older term is refused before the restart"
+	term_write "$probe_low" stale-before
+	term_expect 409 "and one in an older term is refused before the restart"
 }
 
 # term_holders — the nodes whose own store holds the higher-term value of the probe key.
@@ -121,11 +142,15 @@ term_holders()
 	done < <(instances asyncdb)
 }
 
-# term_probe_check — after the restart, the same older-term write, sent to every node holding the
-# higher-term value by then. README.md#the-term-outlives-the-process is why.
+# term_probe_check — after the restart, the same older-term write, which every node refuses because
+# the term it applied is in its store, and which none of the nodes holding the higher-term value by
+# then has let overwrite it. README.md#the-term-outlives-the-process is why.
 term_probe_check()
 {
-	local holders id accepted held
+	local holders id held
+
+	term_write "$probe_low" stale-after
+	term_expect 409 "the older-term write is still refused after the restart"
 
 	holders=$(term_holders)
 
@@ -135,12 +160,9 @@ term_probe_check()
 		return
 	fi
 
-	printf '  ---- the higher-term value was written on %s and is held on %s\n' "$probe_node" "$(echo $holders)"
+	printf '  ---- the higher-term value is held on %s\n' "$(echo $holders)"
 
 	for id in $holders; do
-		accepted=$(term_write "$id" "$probe_low" stale-after)
-		expect "$accepted" 409 "the older-term write is still refused after the restart by $id"
-
 		held=$(term_read "$id")
 
 		if [ "$held" = high ]; then
@@ -246,7 +268,17 @@ await_cluster()
 
 inject()
 {
-	local round id
+	local round id failed
+
+	# Here and not above fault_start, which a preflight runs. Written before the kills and never again, so that a record read afterwards is either this
+	# value or a fault.
+	failed=$(write_seed "$before")
+
+	expect "$failed" 0 "every seeded record was written before the first kill"
+
+	# Raised just before the kills, so that what the restart is asked to keep is what was applied
+	# last.
+	term_probe_arm
 
 	: > "$work/rounds"
 
@@ -291,17 +323,6 @@ preflight()
 
 	expect "${answered:-0}" 1 "one container of the asyncdb image is running on the first node"
 }
-
-# Written before the kills and never again, so that a record read afterwards is either this value
-# or a fault.
-failed=$(write_seed "$before")
-
-expect "$failed" 0 "every seeded record was written before the first kill"
-
-# Raised on one node just before the kills, so the window in which its heightened term could refuse
-# a load write to the same partition is a round trip and no more — and a write so refused is one the
-# cluster never acknowledged, which no assertion here rests on.
-term_probe_arm
 
 started=$SECONDS
 
@@ -362,7 +383,5 @@ expect_load_kept "once every container had come back"
 # The node is back on its own store, so the term it applied before the kills is the thing the
 # restart is asked to have kept.
 term_probe_check
-
-status --request DELETE "$base/table/$probe_table" > /dev/null
 
 verdict

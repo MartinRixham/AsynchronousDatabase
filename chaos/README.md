@@ -425,19 +425,24 @@ with an older one.
 
 That is only reachable when a node restarts **onto a store it kept**, because it needs the record
 the term protects to still be there — and this is the one experiment where that happens. So it is
-tested here: before the kills, one node is sent a forwarded write in a high term and then one in a
+tested here: before the kills, every node is sent a forwarded write in a high term and then one in a
 lower term, and the lower one is refused, which proves the guard is live. The kills land, the nodes
-come back on their own volumes, and the same lower-term write is sent again — **to every node that
-holds the higher-term value by then**, and not only to the one it was written on. A forwarded write
-is stored where it lands, and the first of the six is not necessarily the key's owner in its zone:
-the reconcile pass a restart sets off hands the record to the owner and clears it off the node it
-was written on. A record handed over carries its term with it, so every holder has to refuse the
-write and still hold the higher-term value.
+come back on their own volumes, and the same lower-term write is sent again. Every node has to
+refuse it, and **every node that holds the higher-term value by then** has to still hold it. A
+forwarded write is stored where it lands, and not every node is the key's owner in its zone: the
+reconcile pass a restart sets off clears the record off the nodes that do not own it, and the ones
+that do keep it.
 
-The probe writes into a table of its own, created through the load balancer and dropped at the end,
-and drives its terms up on a single node just before the kills — so a heightened term never reaches a
-write the load or the seed made for long enough to matter, and a write it did refuse is one the
-cluster never acknowledged and no other assertion rests on.
+**The high term goes to every node, and never to one.** A term is per partition, and a partition is
+the key's alone, so a table of the probe's own is no shelter: the seed and the load write into the
+probe's partition too. A term that high is one no etcd revision reaches, so it can never be taken
+back — and a leader orders a write in the newest term its own node has applied. A copy holding a
+term its leader has not is a copy refusing that partition's writes for as long as the stack stands.
+Armed everywhere, every leader of the partition orders in the high term, and the probe table is left
+standing, because its record is what carries the term to a node rebuilt later.
+
+**The probe is armed in `inject` and not above `fault_start`**, because `chaos/validate.sh` runs
+everything above `fault_start` and has to apply nothing.
 
 ### The one that applies faults on top of each other
 
