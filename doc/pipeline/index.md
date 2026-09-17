@@ -266,7 +266,7 @@ harness as `STACK` and `CHAOS_STACK`:
 | Validate the experiments | `chaos/validate.sh` — this share's preflights, nothing applied |
 | Run the chaos suite | `chaos/run.sh` — this share's experiments, in the order the matrix names them, over a seed of a thousand records of a quarter of a megabyte each. That is about 125 MiB of the seeded table on each node, so a rebuild or a reconcile of a node's share takes more than one 64 MiB file and a single file never carries all of it; a thousand keys also leave hardly any of the 256 partitions empty |
 | Stack events | `make describe-stack`, `if: failure()` |
-| What the nodes say for themselves | `if: failure()` — `docker logs` over SSM Run Command and `get-console-output`, per instance, every command best effort so that a diagnosis cannot fail the run. It reaches the instances still running; the ones already terminated are in [the log group](#keeping-the-logs) |
+| What the nodes say for themselves | `if: failure()` — `docker logs` over SSM Run Command and `get-console-output`, per instance, beside what says why a container died: its restart count, the daemon's `die` and `oom` events, and the kernel's out of memory lines, because `docker inspect` describes a container only since it last started. Every command is best effort, so that a diagnosis cannot fail the run. It reaches the instances still running; the ones already terminated are in [the log group](#keeping-the-logs) |
 | Tear down the stack | `make delete-stack`, `if: always()` — but only if this share created it |
 
 Then `release`, which `needs: verify` and so runs only when **every** share went

@@ -346,6 +346,28 @@ jobs:
         echo "The instances the stack is running:"
         cat instances.txt
 
+        # docker inspect describes the container since it last started, so what killed it before a
+        # restart is in the daemon's events and the kernel's log instead.
+        cat > diagnose.sh <<'DIAGNOSE'
+        container=$(docker ps -a --format '{{.ID}} {{.Image}}' | awk '/asyncdb/{print $1; exit}')
+        docker ps -a
+        if [ -n "$container" ]; then
+          echo "--- inspect ---"
+          docker inspect --format 'restarts={{.RestartCount}} oom_killed={{.State.OOMKilled}} exit={{.State.ExitCode}} started={{.State.StartedAt}}' "$container"
+          echo "--- deaths ---"
+          docker events --since 2h --until 0s --filter "container=$container" --filter event=die --filter event=oom
+        fi
+        echo "--- kernel ---"
+        dmesg -T | grep -iE 'out of memory|oom-kill|killed process' | tail -n 20
+        free -m
+        if [ -n "$container" ]; then
+          echo "--- logs ---"
+          docker logs --tail 200 "$container" 2>&1
+        fi
+        DIAGNOSE
+
+        jq -Rs '{ commands: [ . ] }' diagnose.sh > diagnose.json
+
         while read -r id ip zone; do
           [ -n "$id" ] || continue
 
@@ -354,7 +376,7 @@ jobs:
           command=$(aws ssm send-command \
             --instance-ids "$id" \
             --document-name AWS-RunShellScript \
-            --parameters 'commands=["docker ps -a","docker logs --tail 200 $(docker ps --format \"{{.ID}} {{.Image}}\" | awk \"/asyncdb/{print \\$1; exit}\") 2>&1"]' \
+            --parameters file://diagnose.json \
             --query 'Command.CommandId' --output text)
 
           if [ -n "$command" ]; then

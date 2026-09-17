@@ -29,6 +29,14 @@ lease=10
 
 work=$(mktemp -d)
 remove_script=/tmp/asyncdb-chaos-remove
+
+# The fault an instance holds now, by a name each fault script gives itself. The timer a fault arms
+# outlives the fault, so one that fires under a later fault on the same instance would take that
+# fault away: every removal a script arms is of its own fault, and does nothing once another holds
+# the instance. An instance holds one fault of these at a time.
+fault_owner=/tmp/asyncdb-chaos-owner
+remove_owned=/tmp/asyncdb-chaos-remove-owned
+
 checks=0
 failures=0
 standing=0
@@ -1386,16 +1394,24 @@ fault_script()
 	$remove
 	REMOVE
 
-	setsid nohup bash -c "sleep $((seconds + 120)); bash $remove_script" > /dev/null 2>&1 &
+	cat > $remove_owned <<'OWNED'
+	[ "\$(cat $fault_owner 2> /dev/null)" = "\$1" ] || exit 0
+	bash $remove_script
+	OWNED
 
-	trap 'bash $remove_script; exit 0' INT TERM
+	owner=\$(cat /proc/sys/kernel/random/uuid)
+	echo "\$owner" > $fault_owner
+
+	setsid nohup bash -c "sleep $((seconds + 120)); bash $remove_owned \$owner" > /dev/null 2>&1 &
+
+	trap 'bash $remove_owned \$owner; exit 0' INT TERM
 
 	$install
 	echo injected
 
 	sleep $seconds
 
-	bash $remove_script
+	bash $remove_owned "\$owner"
 	echo removed
 	SCRIPT
 }

@@ -325,6 +325,12 @@ The timer is detached with `setsid` rather than left to a trap, because there is
 a Run Command that is cancelled runs no trap in the script it cancelled, and an instance that stops
 being asked anything is an instance still holding whatever was installed on it.
 
+**A timer only removes the fault that armed it.** It outlives that fault by minutes, and an
+instance is faulted again well inside them: `write-storm` takes etcd from the same node in round
+one and again in round three, and a round one timer firing under round three is the same rule
+deleted a minute early, mid-assertion. So each script writes a name of its own to the instance, and
+its sleep, its trap and its timer remove nothing once a later fault has written another.
+
 ### The deaf node is a rule of our own
 
 `nodes-go-deaf` and `etcd-unreachable` install a rule in `DOCKER-USER`, and it has to be that
