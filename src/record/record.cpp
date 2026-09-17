@@ -89,12 +89,12 @@ record::record record::parse_key(const std::string &key)
 {
 	if (!is_valid_utf8(key))
 	{
-		return invalid_record("invalid_key_encoding", "Key does not percent decode to valid UTF-8.");
+		return invalid_record(error::code::invalid_key_encoding, "Key does not percent decode to valid UTF-8.");
 	}
 
 	if (key.size() > max_key_size)
 	{
-		return invalid_record("key_too_large", "Key is longer than " + std::to_string(max_key_size) + " bytes.");
+		return invalid_record(error::code::key_too_large, "Key is longer than " + std::to_string(max_key_size) + " bytes.");
 	}
 
 	return valid_record(key, "");
@@ -111,7 +111,7 @@ record::record record::parse_record(const std::string &key, const std::string &v
 
 	if (value.size() > max_value_size)
 	{
-		return invalid_record("value_too_large", "Value is longer than " + std::to_string(max_value_size) + " bytes.");
+		return invalid_record(error::code::value_too_large, "Value is longer than " + std::to_string(max_value_size) + " bytes.");
 	}
 
 	return valid_record(key, value);
@@ -119,10 +119,10 @@ record::record record::parse_record(const std::string &key, const std::string &v
 
 record::record record::valid_record(const std::string &key, const std::string &value)
 {
-	return { true, key, value, "", "", version() };
+	return { true, key, value, {}, "", version() };
 }
 
-record::record record::invalid_record(const std::string &code, const std::string &message)
+record::record record::invalid_record(error::code code, const std::string &message)
 {
 	return { false, "", "", code, message, version() };
 }

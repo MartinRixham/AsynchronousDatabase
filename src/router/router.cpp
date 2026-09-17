@@ -24,12 +24,12 @@ namespace
 {
 	router::response not_found(const std::string &what)
 	{
-		return router::error_response("not_found", "No " + what + ".");
+		return router::error_response(error::code::not_found, "No " + what + ".");
 	}
 
 	router::response table_not_found(const std::string &name)
 	{
-		return router::error_response("table_not_found", "No table named \"" + name + "\".");
+		return router::error_response(error::code::table_not_found, "No table named \"" + name + "\".");
 	}
 
 	// The request as the node that ordered it sends it on, which is the version it ordered it in
@@ -47,19 +47,19 @@ namespace
 	router::response node_incomplete()
 	{
 		return router::error_response(
-			"node_incomplete", "This node holds less than it owns, so it cannot say a key is missing.");
+			error::code::node_incomplete, "This node holds less than it owns, so it cannot say a key is missing.");
 	}
 
 	router::response node_alone()
 	{
 		return router::error_response(
-			"node_alone", "This node has no membership but itself, so it cannot say which node holds a key.");
+			error::code::node_alone, "This node has no membership but itself, so it cannot say which node holds a key.");
 	}
 
 	router::response method_not_allowed(const boost::beast::http::verb &method)
 	{
 		return router::error_response(
-			"method_not_allowed", std::string(boost::beast::http::to_string(method)) + " is not allowed here.");
+			error::code::method_not_allowed, std::string(boost::beast::http::to_string(method)) + " is not allowed here.");
 	}
 
 	std::optional<boost::json::object> parse_body(const std::string &body)
@@ -380,7 +380,7 @@ router::response router::router::route_file(const request &request, const std::s
 	if (!partitions)
 	{
 		return error_response(
-			"invalid_partitions", "The partitions asked for are not a set of the partitions this cluster has.");
+			error::code::invalid_partitions, "The partitions asked for are not a set of the partitions this cluster has.");
 	}
 
 	repository::share wanted;
@@ -399,7 +399,7 @@ router::response router::router::route_file(const request &request, const std::s
 
 		if (!resumed)
 		{
-			return error_response("invalid_cursor", "The key to resume the file at is not base64.");
+			return error_response(error::code::invalid_cursor, "The key to resume the file at is not base64.");
 		}
 
 		wanted.from = *resumed;
@@ -414,7 +414,7 @@ router::response router::router::route_file(const request &request, const std::s
 
 		if (!last)
 		{
-			return error_response("invalid_cursor", "The key to end the file at is not base64.");
+			return error_response(error::code::invalid_cursor, "The key to end the file at is not base64.");
 		}
 
 		wanted.to = *last;
@@ -455,7 +455,7 @@ router::response router::router::route_split(const request &request, const std::
 
 	if (!boost::conversion::try_lexical_convert(url::read_parameter(request.query, "ways"), ways) || ways < 1)
 	{
-		return error_response("invalid_range", "The number of ways to cut a table up is not a number.");
+		return error_response(error::code::invalid_range, "The number of ways to cut a table up is not a number.");
 	}
 
 	boost::json::array keys;
@@ -515,7 +515,7 @@ router::response router::router::route_record(
 			if (!nodes.accept(record.key, request.term))
 			{
 				return error_response(
-					"stale_leader", "This key is led in a later term than the one that ordered this write.");
+					error::code::stale_leader, "This key is led in a later term than the one that ordered this write.");
 			}
 
 			// The version the leader stamped, applied as it was given rather than made again here:
@@ -539,14 +539,14 @@ router::response router::router::route_record(
 
 		if (!lead->known)
 		{
-			return error_response("no_leader", "No node is leading this key's partition yet.");
+			return error_response(error::code::no_leader, "No node is leading this key's partition yet.");
 		}
 
 		if (!lead->local)
 		{
 			if (request.forwarded)
 			{
-				return error_response("no_leader", "This node does not lead this key's partition.");
+				return error_response(error::code::no_leader, "This node does not lead this key's partition.");
 			}
 
 			return nodes.send(lead->node, request);
@@ -623,7 +623,7 @@ router::response router::router::write_record(
 
 router::response router::router::read_record(const request &request, const std::vector<std::string> &replicas)
 {
-	response answer = error_response("storage_error", "No node holding this key answered.");
+	response answer = error_response(error::code::storage_error, "No node holding this key answered.");
 
 	for (const auto &replica : replicas)
 	{
@@ -647,7 +647,7 @@ router::router::ordering router::router::order_schema(const request &request)
 		if (!nodes.accept(cluster::table_key, request.term))
 		{
 			return ordering {
-				error_response("stale_leader", "The tables are led in a later term than the one that ordered this."),
+				error_response(error::code::stale_leader, "The tables are led in a later term than the one that ordered this."),
 				{},
 				0
 			};
@@ -668,14 +668,14 @@ router::router::ordering router::router::order_schema(const request &request)
 
 	if (!lead->known)
 	{
-		return ordering { error_response("no_leader", "No node is leading the tables yet."), {}, 0 };
+		return ordering { error_response(error::code::no_leader, "No node is leading the tables yet."), {}, 0 };
 	}
 
 	if (!lead->local)
 	{
 		if (request.forwarded)
 		{
-			return ordering { error_response("no_leader", "This node does not lead the tables."), {}, 0 };
+			return ordering { error_response(error::code::no_leader, "This node does not lead the tables."), {}, 0 };
 		}
 
 		return ordering { nodes.send(lead->node, request), {}, 0 };
@@ -703,7 +703,7 @@ router::response router::router::create_table(const request &request, const std:
 
 	if (!body)
 	{
-		return error_response("invalid_body", "The body of a table is a JSON object.");
+		return error_response(error::code::invalid_body, "The body of a table is a JSON object.");
 	}
 
 	ordering order = order_schema(request);
@@ -733,7 +733,7 @@ router::response router::router::create_table(const request &request, const std:
 	{
 		if (!(existing == table))
 		{
-			return error_response("table_exists", "A table named \"" + name + "\" exists with different options.");
+			return error_response(error::code::table_exists, "A table named \"" + name + "\" exists with different options.");
 		}
 
 		created = json_response(boost::beast::http::status::ok, table.json);

@@ -135,7 +135,7 @@ void repository::fake_repository::write_record(const std::string &table_name, co
 
 	if (!holds(table_name))
 	{
-		throw storage_error("table_not_found", "No table named \"" + table_name + "\".");
+		throw storage_error(error::code::table_not_found, "No table named \"" + table_name + "\".");
 	}
 
 	records[table_name][record.key] = record::compose_value(record.stamp, record.value);

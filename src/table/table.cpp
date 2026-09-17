@@ -21,7 +21,7 @@ table::table table::parse_table(
 	if (!is_valid_name(name))
 	{
 		return invalid_table(
-			"invalid_table_name",
+			error::code::invalid_table_name,
 			"Table name \"" +
 				name +
 				"\" is not 1 to " +
@@ -37,7 +37,7 @@ table::table table::parse_table(
 
 	if (!json.at("dependencies").is_array())
 	{
-		return invalid_table("dependency_not_found", "Dependencies are not a list of table names.");
+		return invalid_table(error::code::dependency_not_found, "Dependencies are not a list of table names.");
 	}
 
 	const boost::json::array dependency_array = json.at("dependencies").as_array();
@@ -47,14 +47,14 @@ table::table table::parse_table(
 	{
 		if (!element.is_string())
 		{
-			return invalid_table("dependency_not_found", "A dependency is not the name of a table.");
+			return invalid_table(error::code::dependency_not_found, "A dependency is not the name of a table.");
 		}
 
 		std::string dependency = std::string(element.as_string());
 
 		if (tables.find(dependency) == tables.end())
 		{
-			return invalid_table("dependency_not_found", "Dependency \"" + dependency + "\" is not a table.");
+			return invalid_table(error::code::dependency_not_found, "Dependency \"" + dependency + "\" is not a table.");
 		}
 
 		dependencies.push_back(dependency);
@@ -74,12 +74,12 @@ table::table table::valid_table(const std::string &name, const std::vector<std::
 
 	boost::json::object json { { "name", boost::json::string(name) }, { "dependencies", dependency_array } };
 
-	return { true, name, json, "", "" };
+	return { true, name, json, {}, "" };
 }
 
-table::table table::invalid_table(const std::string &code, const std::string &message)
+table::table table::invalid_table(error::code code, const std::string &message)
 {
-	boost::json::object error { { "code", code }, { "message", message } };
+	boost::json::object error { { "code", error::name(code) }, { "message", message } };
 	boost::json::object json { { "error", error } };
 
 	return { false, "", json, code, message };
@@ -90,7 +90,7 @@ table::table table::to_table(const std::string &json)
 	boost::json::object table_object = boost::json::parse(json).as_object();
 	std::string name = std::string(table_object["name"].as_string());
 
-	return { true, name, table_object, "", "" };
+	return { true, name, table_object, {}, "" };
 }
 
 bool table::is_valid_name(const std::string &name)

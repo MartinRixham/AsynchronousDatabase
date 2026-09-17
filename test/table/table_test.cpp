@@ -34,7 +34,7 @@ TEST(table_test, fail_to_deserialise_table_with_empty_name)
 	table::table table = table::parse_table("", boost::json::object(), std::set<std::string> {});
 
 	EXPECT_FALSE(table.is_valid);
-	EXPECT_EQ(table.code, "invalid_table_name");
+	EXPECT_EQ(table.code, error::code::invalid_table_name);
 	EXPECT_EQ(table.json.at("error").as_object().at("code"), "invalid_table_name");
 }
 
@@ -50,7 +50,7 @@ TEST(table_test, fail_to_deserialise_table_with_invalid_dependency)
 	table::table table = table::parse_table("a_table", json, std::set<std::string> { "dependency_one" });
 
 	EXPECT_FALSE(table.is_valid);
-	EXPECT_EQ(table.code, "dependency_not_found");
+	EXPECT_EQ(table.code, error::code::dependency_not_found);
 	EXPECT_EQ(table.message, "Dependency \"dependency_two\" is not a table.");
 }
 
@@ -65,7 +65,7 @@ TEST(table_test, fail_to_deserialise_table_with_a_dependency_that_is_not_a_name)
 	table::table table = table::parse_table("a_table", json, std::set<std::string> { "dependency_one" });
 
 	EXPECT_FALSE(table.is_valid);
-	EXPECT_EQ(table.code, "dependency_not_found");
+	EXPECT_EQ(table.code, error::code::dependency_not_found);
 }
 
 TEST(table_test, fail_to_deserialise_table_whose_dependencies_are_not_a_list)
@@ -75,7 +75,7 @@ TEST(table_test, fail_to_deserialise_table_whose_dependencies_are_not_a_list)
 	table::table table = table::parse_table("a_table", json, std::set<std::string> { "dependency_one" });
 
 	EXPECT_FALSE(table.is_valid);
-	EXPECT_EQ(table.code, "dependency_not_found");
+	EXPECT_EQ(table.code, error::code::dependency_not_found);
 }
 
 TEST(table_test, valid_names)

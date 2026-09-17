@@ -100,7 +100,7 @@ namespace
 		if (error || !value.is_object())
 		{
 			return router::error_response(
-				"storage_error",
+				error::code::storage_error,
 				"Node \"" + node + "\" answered with something that is not a document.");
 		}
 
@@ -112,7 +112,7 @@ namespace
 		if (!answer.is_valid)
 		{
 			return router::error_response(
-				"storage_error",
+				error::code::storage_error,
 				"Node \"" + node + "\" did not answer: " + answer.message + ".");
 		}
 

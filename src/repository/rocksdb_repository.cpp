@@ -159,10 +159,10 @@ namespace
 
 		if (status.IsIncomplete() || status.IsBusy() || status.IsTryAgain())
 		{
-			throw repository::storage_error("write_stalled", what + " was refused: " + status.ToString());
+			throw repository::storage_error(error::code::write_stalled, what + " was refused: " + status.ToString());
 		}
 
-		throw repository::storage_error("storage_error", what + " failed: " + status.ToString());
+		throw repository::storage_error(error::code::storage_error, what + " failed: " + status.ToString());
 	}
 
 	std::vector<rocksdb::ColumnFamilyDescriptor> describe(
@@ -289,7 +289,7 @@ void repository::rocksdb_repository::check_format()
 		if (held != format_version)
 		{
 			throw storage_error(
-				"storage_error",
+				error::code::storage_error,
 				located("The store is format " + held + " and this build reads format " + format_version + "."));
 		}
 
@@ -880,7 +880,7 @@ size_t repository::rocksdb_repository::import_records(const std::string &table_n
 
 	if (!given.write(file))
 	{
-		throw storage_error("storage_error", what + " failed: the file could not be written.");
+		throw storage_error(error::code::storage_error, what + " failed: the file could not be written.");
 	}
 
 	rocksdb::SstFileReader reader(file_options());
@@ -1003,7 +1003,7 @@ size_t repository::rocksdb_repository::clear_records(const std::string &table_na
 
 	if (!given.write(file))
 	{
-		throw storage_error("storage_error", what + " failed: the file could not be written.");
+		throw storage_error(error::code::storage_error, what + " failed: the file could not be written.");
 	}
 
 	rocksdb::SstFileReader reader(file_options());
@@ -1089,7 +1089,7 @@ rocksdb::ColumnFamilyHandle *repository::rocksdb_repository::table_handle(const 
 
 	if (handle == handles.end())
 	{
-		throw storage_error("table_not_found", "No table named \"" + table_name + "\".");
+		throw storage_error(error::code::table_not_found, "No table named \"" + table_name + "\".");
 	}
 
 	return handle->second;

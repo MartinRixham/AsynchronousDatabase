@@ -4,6 +4,8 @@
 #include <set>
 #include <vector>
 
+#include "error/error_code.h"
+
 #include <boost/json.hpp>
 
 namespace table
@@ -18,7 +20,7 @@ namespace table
 
 		boost::json::object json;
 
-		std::string code;
+		error::code code {};
 
 		std::string message;
 	};
@@ -34,7 +36,7 @@ namespace table
 
 	table valid_table(const std::string &name, const std::vector<std::string> &dependencies);
 
-	table invalid_table(const std::string &code, const std::string &message);
+	table invalid_table(error::code code, const std::string &message);
 
 	table to_table(const std::string &json);
 

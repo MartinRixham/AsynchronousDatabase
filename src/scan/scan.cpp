@@ -112,7 +112,7 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 	if (!partition)
 	{
 		return invalid_range(
-			"invalid_partition",
+			error::code::invalid_partition,
 			"A scan names the partition it reads, as \"partition\" or as a \"key\" that is in it.");
 	}
 
@@ -150,7 +150,7 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 
 	if (range.has_from && range.has_to && range.from >= range.to)
 	{
-		return invalid_range("invalid_range", "Range from \"" + range.from + "\" is not below to \"" + range.to + "\".");
+		return invalid_range(error::code::invalid_range, "Range from \"" + range.from + "\" is not below to \"" + range.to + "\".");
 	}
 
 	range.reverse = url::read_parameter(query, "reverse") == "true";
@@ -166,7 +166,7 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 
 		if (!key)
 		{
-			return invalid_range("invalid_cursor", "Cursor was not issued by this instance for this partition.");
+			return invalid_range(error::code::invalid_cursor, "Cursor was not issued by this instance for this partition.");
 		}
 
 		if (range.reverse)
@@ -184,7 +184,7 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 	return range;
 }
 
-scan::range scan::invalid_range(const std::string &code, const std::string &message)
+scan::range scan::invalid_range(error::code code, const std::string &message)
 {
 	range range;
 

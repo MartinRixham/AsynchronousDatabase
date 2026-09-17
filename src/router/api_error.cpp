@@ -1,49 +1,47 @@
-#include <map>
-
 #include "api_error.h"
 
-namespace
+router::response router::error_response(error::code code, const std::string &message)
 {
-	const std::map<std::string, boost::beast::http::status> statuses {
-		{ "table_not_found", boost::beast::http::status::not_found },
-		{ "table_exists", boost::beast::http::status::conflict },
-		{ "invalid_table_name", boost::beast::http::status::bad_request },
-		{ "invalid_body", boost::beast::http::status::bad_request },
-		{ "dependency_not_found", boost::beast::http::status::bad_request },
-		{ "invalid_key_encoding", boost::beast::http::status::bad_request },
-		{ "key_too_large", boost::beast::http::status::payload_too_large },
-		{ "value_too_large", boost::beast::http::status::payload_too_large },
-		{ "invalid_range", boost::beast::http::status::bad_request },
-		{ "invalid_cursor", boost::beast::http::status::bad_request },
-		{ "invalid_partition", boost::beast::http::status::bad_request },
-		{ "invalid_partitions", boost::beast::http::status::bad_request },
-		{ "write_stalled", boost::beast::http::status::service_unavailable },
-		{ "no_leader", boost::beast::http::status::service_unavailable },
-		{ "node_incomplete", boost::beast::http::status::service_unavailable },
-		{ "node_alone", boost::beast::http::status::service_unavailable },
-		{ "stale_leader", boost::beast::http::status::conflict },
-		{ "storage_error", boost::beast::http::status::internal_server_error },
-		{ "not_found", boost::beast::http::status::not_found },
-		{ "invalid_path", boost::beast::http::status::bad_request },
-		{ "method_not_allowed", boost::beast::http::status::method_not_allowed }
-	};
-}
-
-router::response router::error_response(const std::string &code, const std::string &message)
-{
-	boost::json::object error { { "code", code }, { "message", message } };
+	boost::json::object error { { "code", error::name(code) }, { "message", message } };
 
 	return json_response(error_status(code), boost::json::object { { "error", error } });
 }
 
-boost::beast::http::status router::error_status(const std::string &code)
+boost::beast::http::status router::error_status(error::code code)
 {
-	auto status = statuses.find(code);
+	using boost::beast::http::status;
 
-	if (status == statuses.end())
+	switch (code)
 	{
-		return boost::beast::http::status::internal_server_error;
+	case error::code::table_not_found:
+	case error::code::not_found:
+		return status::not_found;
+	case error::code::table_exists:
+	case error::code::stale_leader:
+		return status::conflict;
+	case error::code::invalid_table_name:
+	case error::code::invalid_body:
+	case error::code::dependency_not_found:
+	case error::code::invalid_key_encoding:
+	case error::code::invalid_range:
+	case error::code::invalid_cursor:
+	case error::code::invalid_partition:
+	case error::code::invalid_partitions:
+	case error::code::invalid_path:
+		return status::bad_request;
+	case error::code::key_too_large:
+	case error::code::value_too_large:
+		return status::payload_too_large;
+	case error::code::write_stalled:
+	case error::code::no_leader:
+	case error::code::node_incomplete:
+	case error::code::node_alone:
+		return status::service_unavailable;
+	case error::code::storage_error:
+		return status::internal_server_error;
+	case error::code::method_not_allowed:
+		return status::method_not_allowed;
 	}
 
-	return status->second;
+	return status::internal_server_error;
 }

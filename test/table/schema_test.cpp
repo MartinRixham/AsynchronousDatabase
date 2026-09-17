@@ -50,7 +50,7 @@ TEST(schema_test, a_dropped_table_leaves_a_name_that_is_not_live)
 
 TEST(schema_test, a_table_that_is_not_there_reads_as_table_not_found)
 {
-	EXPECT_EQ(table::schema().read("account").code, "table_not_found");
+	EXPECT_EQ(table::schema().read("account").code, error::code::table_not_found);
 }
 
 TEST(schema_test, takes_a_table_a_later_schema_has)

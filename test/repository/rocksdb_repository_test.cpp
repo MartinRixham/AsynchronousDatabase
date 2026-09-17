@@ -222,12 +222,12 @@ TEST_F(repository_test, fail_to_read_table_that_does_not_exist)
 
 	EXPECT_FALSE(table.is_valid);
 	EXPECT_EQ(table.name, "");
-	EXPECT_EQ(table.code, "table_not_found");
+	EXPECT_EQ(table.code, error::code::table_not_found);
 }
 
 TEST_F(repository_test, does_not_have_invalid_table)
 {
-	repository->create_table(table::invalid_table("invalid_table_name", "error"), record::version { 1, 1 });
+	repository->create_table(table::invalid_table(error::code::invalid_table_name, "error"), record::version { 1, 1 });
 
 	EXPECT_EQ(repository->list_tables().size(), 0);
 }

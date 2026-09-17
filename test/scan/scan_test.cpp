@@ -52,7 +52,7 @@ TEST(scan_test, fail_to_read_a_range_that_names_no_partition)
 	scan::range range = scan::parse_range("prefix=user", "an instance");
 
 	EXPECT_FALSE(range.is_valid);
-	EXPECT_EQ(range.code, "invalid_partition");
+	EXPECT_EQ(range.code, error::code::invalid_partition);
 }
 
 TEST(scan_test, fail_to_read_a_range_that_names_a_partition_two_ways)
@@ -60,15 +60,15 @@ TEST(scan_test, fail_to_read_a_range_that_names_a_partition_two_ways)
 	scan::range range = scan::parse_range("partition=7&key=user%3A7203", "an instance");
 
 	EXPECT_FALSE(range.is_valid);
-	EXPECT_EQ(range.code, "invalid_partition");
+	EXPECT_EQ(range.code, error::code::invalid_partition);
 }
 
 TEST(scan_test, fail_to_read_a_partition_that_is_not_one_of_them)
 {
-	EXPECT_EQ(scan::parse_range("partition=256", "an instance").code, "invalid_partition");
-	EXPECT_EQ(scan::parse_range("partition=-1", "an instance").code, "invalid_partition");
-	EXPECT_EQ(scan::parse_range("partition=wibble", "an instance").code, "invalid_partition");
-	EXPECT_EQ(scan::parse_range("partition=7wibble", "an instance").code, "invalid_partition");
+	EXPECT_EQ(scan::parse_range("partition=256", "an instance").code, error::code::invalid_partition);
+	EXPECT_EQ(scan::parse_range("partition=-1", "an instance").code, error::code::invalid_partition);
+	EXPECT_EQ(scan::parse_range("partition=wibble", "an instance").code, error::code::invalid_partition);
+	EXPECT_EQ(scan::parse_range("partition=7wibble", "an instance").code, error::code::invalid_partition);
 	EXPECT_TRUE(scan::parse_range("partition=255", "an instance").is_valid);
 	EXPECT_TRUE(scan::parse_range("partition=0", "an instance").is_valid);
 }
@@ -115,7 +115,7 @@ TEST(scan_test, fail_to_read_a_range_that_is_not_below_its_end)
 	scan::range range = parsed("from=b&to=a");
 
 	EXPECT_FALSE(range.is_valid);
-	EXPECT_EQ(range.code, "invalid_range");
+	EXPECT_EQ(range.code, error::code::invalid_range);
 }
 
 TEST(scan_test, fail_to_read_an_empty_range)
@@ -123,7 +123,7 @@ TEST(scan_test, fail_to_read_an_empty_range)
 	scan::range range = parsed("from=a&to=a");
 
 	EXPECT_FALSE(range.is_valid);
-	EXPECT_EQ(range.code, "invalid_range");
+	EXPECT_EQ(range.code, error::code::invalid_range);
 }
 
 TEST(scan_test, the_bounds_keep_their_meaning_when_the_scan_is_reversed)
@@ -184,7 +184,7 @@ TEST(scan_test, fail_to_read_a_cursor_from_another_instance)
 	scan::range range = parsed("cursor=" + cursor_of("user:7203", "another instance"));
 
 	EXPECT_FALSE(range.is_valid);
-	EXPECT_EQ(range.code, "invalid_cursor");
+	EXPECT_EQ(range.code, error::code::invalid_cursor);
 }
 
 // A cursor is a position in one partition, and the partition it was issued for is not the one this
@@ -195,13 +195,13 @@ TEST(scan_test, fail_to_read_a_cursor_issued_for_another_partition)
 		"partition=8&cursor=" + scan::encode_cursor("user:7203", "an instance", 7), "an instance");
 
 	EXPECT_FALSE(range.is_valid);
-	EXPECT_EQ(range.code, "invalid_cursor");
+	EXPECT_EQ(range.code, error::code::invalid_cursor);
 }
 
 TEST(scan_test, fail_to_read_a_cursor_that_is_not_a_cursor)
 {
-	EXPECT_EQ(parsed("cursor=not+a+cursor").code, "invalid_cursor");
-	EXPECT_EQ(parsed("cursor=%7B%22k%22%3A%22a%22%7D").code, "invalid_cursor");
+	EXPECT_EQ(parsed("cursor=not+a+cursor").code, error::code::invalid_cursor);
+	EXPECT_EQ(parsed("cursor=%7B%22k%22%3A%22a%22%7D").code, error::code::invalid_cursor);
 }
 
 TEST(scan_test, a_cursor_is_opaque_and_encodes_the_key_it_resumes_after)

@@ -1090,7 +1090,7 @@ TEST(router_cluster_test, fail_to_write_a_record_a_copy_refuses)
 	create_table(router, "account");
 	nodes.forget();
 	nodes.copies("4821", { here, there, elsewhere });
-	nodes.answer(there, router::error_response("write_stalled", "Writes are stalled."));
+	nodes.answer(there, router::error_response(error::code::write_stalled, "Writes are stalled."));
 
 	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "a value"))), "write_stalled");
 
@@ -1112,8 +1112,8 @@ TEST(router_cluster_test, report_the_first_copy_to_refuse_a_write)
 	create_table(router, "account");
 	nodes.forget();
 	nodes.copies("4821", { here, there, elsewhere });
-	nodes.answer(there, router::error_response("write_stalled", "Writes are stalled."));
-	nodes.answer(elsewhere, router::error_response("storage_error", "The store failed."));
+	nodes.answer(there, router::error_response(error::code::write_stalled, "Writes are stalled."));
+	nodes.answer(elsewhere, router::error_response(error::code::storage_error, "The store failed."));
 
 	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "a value"))), "write_stalled");
 	EXPECT_EQ(nodes.sent().size(), 2u);
@@ -1129,7 +1129,7 @@ TEST(router_cluster_test, read_a_record_from_the_next_copy_when_a_node_does_not_
 	create_table(router, "account");
 	nodes.forget();
 	nodes.copies("4821", { there, elsewhere });
-	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
+	nodes.answer(there, router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
 	nodes.answer(elsewhere, router::text_response(boost::beast::http::status::ok, "a value"));
 
 	router::response response = router.route(get("/table/account/key/4821"));
@@ -1274,7 +1274,7 @@ TEST(router_cluster_test, read_a_key_from_the_next_copy_when_the_first_cannot_sa
 	create_table(router, "account");
 	nodes.forget();
 	nodes.copies("4821", { there, elsewhere });
-	nodes.answer(there, router::error_response("node_incomplete", "Not filled yet."));
+	nodes.answer(there, router::error_response(error::code::node_incomplete, "Not filled yet."));
 	nodes.answer(elsewhere, router::text_response(boost::beast::http::status::ok, "Robert"));
 
 	router::response response = router.route(get("/table/account/key/4821"));
@@ -1329,8 +1329,8 @@ TEST(router_cluster_test, fail_to_read_a_record_no_copy_of_which_answers)
 	create_table(router, "account");
 	nodes.forget();
 	nodes.copies("4821", { there, elsewhere });
-	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
-	nodes.answer(elsewhere, router::error_response("storage_error", "Node \"" + elsewhere + "\" did not answer."));
+	nodes.answer(there, router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
+	nodes.answer(elsewhere, router::error_response(error::code::storage_error, "Node \"" + elsewhere + "\" did not answer."));
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/key/4821"))), "storage_error");
 	EXPECT_EQ(nodes.sent().size(), 2u);
@@ -1765,7 +1765,7 @@ TEST(router_cluster_test, fail_to_create_a_table_a_node_refuses)
 	cluster::fake_cluster nodes = two_nodes();
 	router::router router(repository, nodes);
 
-	nodes.answer(there, router::error_response("table_exists", "A table named \"account\" exists."));
+	nodes.answer(there, router::error_response(error::code::table_exists, "A table named \"account\" exists."));
 
 	router::response response = router.route(put("/table/account", "{}"));
 
@@ -1976,7 +1976,7 @@ TEST(router_cluster_test, report_a_node_that_refuses_a_delete_of_a_table_that_is
 	router::router router(repository, nodes);
 
 	nodes.led_by(cluster::table_key, here, 41);
-	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
+	nodes.answer(there, router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
 
 	EXPECT_EQ(error_code(router.route(del("/table/account"))), "storage_error");
 }
@@ -2281,7 +2281,7 @@ TEST(router_cluster_test, scan_the_next_copy_when_the_nearest_does_not_answer)
 	create_table(router, "account");
 	nodes.forget();
 	nodes.copies("b", { there, elsewhere });
-	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
+	nodes.answer(there, router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
 	nodes.answer(elsewhere, page(boost::json::array { record_json("b", "2") }, false));
 
 	EXPECT_EQ(keys(router.route(get("/table/account/key?key=b"))), (std::vector<std::string> { "b" }));
@@ -2297,8 +2297,8 @@ TEST(router_cluster_test, fail_to_scan_when_no_copy_answers)
 
 	create_table(router, "account");
 	nodes.copies("b", { there, elsewhere });
-	nodes.answer(there, router::error_response("storage_error", "Node \"" + there + "\" did not answer."));
-	nodes.answer(elsewhere, router::error_response("storage_error", "Nor did this one."));
+	nodes.answer(there, router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
+	nodes.answer(elsewhere, router::error_response(error::code::storage_error, "Nor did this one."));
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/key?key=b"))), "storage_error");
 }
@@ -2314,7 +2314,7 @@ TEST(router_cluster_test, take_a_refusal_of_a_scan_from_the_copy_that_gave_it)
 	create_table(router, "account");
 	nodes.forget();
 	nodes.copies("b", { there, elsewhere });
-	nodes.answer(there, router::error_response("invalid_cursor", "Not this instance's cursor."));
+	nodes.answer(there, router::error_response(error::code::invalid_cursor, "Not this instance's cursor."));
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/key?key=b"))), "invalid_cursor");
 	EXPECT_EQ(nodes.sent().size(), 1u);

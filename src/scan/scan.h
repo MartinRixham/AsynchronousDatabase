@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "error/error_code.h"
+
 #include "record/record.h"
 
 namespace scan
@@ -20,7 +22,7 @@ namespace scan
 	{
 		bool is_valid = false;
 
-		std::string code;
+		error::code code {};
 
 		std::string message;
 
@@ -64,7 +66,7 @@ namespace scan
 	// is `invalid_partition` here.
 	[[nodiscard]] range parse_range(const std::string &query, const std::string &instance);
 
-	range invalid_range(const std::string &code, const std::string &message);
+	range invalid_range(error::code code, const std::string &message);
 
 	// The cursor carries the partition beside the key, so a cursor resumed against a different
 	// partition is refused rather than answered with the nothing that key holds there.

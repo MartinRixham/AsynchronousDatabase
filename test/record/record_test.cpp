@@ -32,7 +32,7 @@ TEST(record_test, fail_to_read_a_key_that_is_not_utf8)
 	record::record record = record::parse_key("\xc3\x28");
 
 	EXPECT_FALSE(record.is_valid);
-	EXPECT_EQ(record.code, "invalid_key_encoding");
+	EXPECT_EQ(record.code, error::code::invalid_key_encoding);
 }
 
 TEST(record_test, fail_to_read_a_key_that_is_too_large)
@@ -40,7 +40,7 @@ TEST(record_test, fail_to_read_a_key_that_is_too_large)
 	record::record record = record::parse_key(std::string(record::max_key_size + 1, 'k'));
 
 	EXPECT_FALSE(record.is_valid);
-	EXPECT_EQ(record.code, "key_too_large");
+	EXPECT_EQ(record.code, error::code::key_too_large);
 }
 
 TEST(record_test, a_key_of_exactly_the_limit_is_a_key)
@@ -59,7 +59,7 @@ TEST(record_test, a_key_is_counted_in_the_bytes_of_its_encoding)
 	}
 
 	EXPECT_TRUE(record::parse_key(key).is_valid);
-	EXPECT_EQ(record::parse_key(key + "\xc3\xa9").code, "key_too_large");
+	EXPECT_EQ(record::parse_key(key + "\xc3\xa9").code, error::code::key_too_large);
 }
 
 TEST(record_test, fail_to_read_a_value_that_is_too_large)
@@ -67,7 +67,7 @@ TEST(record_test, fail_to_read_a_value_that_is_too_large)
 	record::record record = record::parse_record("a key", std::string(record::max_value_size + 1, 'v'));
 
 	EXPECT_FALSE(record.is_valid);
-	EXPECT_EQ(record.code, "value_too_large");
+	EXPECT_EQ(record.code, error::code::value_too_large);
 }
 
 TEST(record_test, a_value_is_not_read_as_utf8)
@@ -158,7 +158,7 @@ TEST(record_test, a_key_of_two_parts_is_counted_in_the_bytes_of_both)
 	std::string half(record::max_key_size / 2, 'k');
 
 	EXPECT_TRUE(record::parse_key(record::compose_key(half, half.substr(1))).is_valid);
-	EXPECT_EQ(record::parse_key(record::compose_key(half, half)).code, "key_too_large");
+	EXPECT_EQ(record::parse_key(record::compose_key(half, half)).code, error::code::key_too_large);
 }
 
 TEST(record_test, a_value_carries_the_version_it_was_written_with)

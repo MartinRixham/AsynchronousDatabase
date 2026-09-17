@@ -268,7 +268,7 @@ TEST(rebuild_test, gives_up_on_a_zone_whose_node_does_not_answer)
 
 	nodes.answer_in_turn(peer, {
 		tables({ "account" }),
-		router::error_response("storage_error", "Node did not answer.")
+		router::error_response(error::code::storage_error, "Node did not answer.")
 	});
 
 	// Short of its share: the count alone says nothing, because a node that needed nothing takes
@@ -289,7 +289,7 @@ TEST(rebuild_test, asks_the_next_zone_when_one_of_them_does_not_answer)
 		cluster::member { other, "three" }
 	});
 
-	nodes.answer_in_turn(peer, { router::error_response("storage_error", "Node did not answer.") });
+	nodes.answer_in_turn(peer, { router::error_response(error::code::storage_error, "Node did not answer.") });
 	nodes.answer_in_turn(other, { tables({ "account" }), file({ "a" }) });
 
 	rebuild::outcome taken = rebuilt(repository, nodes);

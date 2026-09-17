@@ -211,11 +211,11 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 	if (!is_routable_method(request.method()))
 	{
 		response = router::error_response(
-			"method_not_allowed", std::string(request.method_string()) + " is not a method of this API.");
+			error::code::method_not_allowed, std::string(request.method_string()) + " is not a method of this API.");
 	}
 	else if (target.empty() || target[0] != '/' || has_traversal(target))
 	{
-		response = router::error_response("invalid_path", "Invalid request path.");
+		response = router::error_response(error::code::invalid_path, "Invalid request path.");
 	}
 	else
 	{
@@ -240,7 +240,7 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 		catch (const std::exception &error)
 		{
 			response = router::error_response(
-				"storage_error", "Failed to respond due to error: " + std::string(error.what()) + ".");
+				error::code::storage_error, "Failed to respond due to error: " + std::string(error.what()) + ".");
 		}
 	}
 

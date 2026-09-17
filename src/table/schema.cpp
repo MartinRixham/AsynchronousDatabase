@@ -33,7 +33,7 @@ std::set<table::table> table::schema::tables() const
 	{
 		if (held.live)
 		{
-			live.insert(table { true, name, held.json, "", "" });
+			live.insert(table { true, name, held.json, {}, "" });
 		}
 	}
 
@@ -68,10 +68,10 @@ table::table table::schema::read(const std::string &name) const
 
 	if (held == entries.end() || !held->second.live)
 	{
-		return invalid_table("table_not_found", "No table named \"" + name + "\".");
+		return invalid_table(error::code::table_not_found, "No table named \"" + name + "\".");
 	}
 
-	return table { true, name, held->second.json, "", "" };
+	return table { true, name, held->second.json, {}, "" };
 }
 
 std::optional<table::entry> table::schema::read_entry(const std::string &name) const
@@ -184,7 +184,7 @@ table::schema table::to_schema(const std::string &json)
 		if (one.contains("live") && one.at("live").is_bool() && one.at("live").as_bool()
 			&& one.contains("table") && one.at("table").is_object())
 		{
-			read.create(table { true, name, one.at("table").as_object(), "", "" }, stamp);
+			read.create(table { true, name, one.at("table").as_object(), {}, "" }, stamp);
 		}
 		else
 		{

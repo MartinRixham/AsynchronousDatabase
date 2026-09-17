@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include "error/error_code.h"
+
 namespace record
 {
 	// Keys live in indexes and bloom filters, which are held in memory, and a value is read whole
@@ -70,7 +72,7 @@ namespace record
 
 		std::string value;
 
-		std::string code;
+		error::code code {};
 
 		std::string message;
 
@@ -86,7 +88,7 @@ namespace record
 
 	record valid_record(const std::string &key, const std::string &value);
 
-	record invalid_record(const std::string &code, const std::string &message);
+	record invalid_record(error::code code, const std::string &message);
 
 	bool is_valid_utf8(const std::string &text);
 }
