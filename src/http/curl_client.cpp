@@ -1,5 +1,6 @@
 #include <cctype>
 #include <cstring>
+#include <memory>
 #include <strings.h>
 
 #include <curl/curl.h>
@@ -8,6 +9,7 @@
 #include "bound_unacknowledged.h"
 #include "group.h"
 #include "handle.h"
+#include "header_list.h"
 #include "curl_client.h"
 
 namespace
@@ -98,9 +100,9 @@ namespace
 		return group;
 	}
 
-	// The options of a request, the same whether it runs on its own or beside others. The list of
-	// headers belongs to the caller, and the handle has to be told to forget it before it goes.
-	struct curl_slist *apply(
+	// The options of a request, the same whether it runs on its own or beside others. The headers
+	// belong to the caller, and have to last until the transfer has ended.
+	std::unique_ptr<http::header_list> apply(
 		CURL *curl,
 		const http::request &request,
 		http::response *response,
@@ -108,20 +110,10 @@ namespace
 		long connect_timeout,
 		const long *unacknowledged_timeout)
 	{
-		struct curl_slist *headers = nullptr;
-
-		for (const auto &line : request.headers)
-		{
-			headers = curl_slist_append(headers, line.c_str());
-		}
-
-		// A body large enough to be worth a handshake would otherwise wait for a 100 Continue that
-		// this API never sends.
-		headers = curl_slist_append(headers, "Expect:");
+		auto headers = std::make_unique<http::header_list>(curl, request.headers);
 
 		curl_easy_setopt(curl, CURLOPT_URL, request.url.c_str());
 		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request.method.c_str());
-		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_body);
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response->body);
 		curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, read_header);
@@ -257,7 +249,7 @@ http::response http::curl_client::send(const request &request, long timeout_seco
 		return response;
 	}
 
-	struct curl_slist *headers = apply(
+	auto headers = apply(
 		curl,
 		request,
 		&response,
@@ -266,10 +258,6 @@ http::response http::curl_client::send(const request &request, long timeout_seco
 		&unacknowledged_timeout_seconds);
 
 	complete(curl, curl_easy_perform(curl), request.url, &response);
-
-	// The handle outlives this list, so it is told to forget the list before the list goes.
-	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, nullptr);
-	curl_slist_free_all(headers);
 
 	return response;
 }
@@ -306,7 +294,7 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 	}
 
 	std::vector<CURL *> handles(requests.size(), nullptr);
-	std::vector<struct curl_slist *> lists(requests.size(), nullptr);
+	std::vector<std::unique_ptr<header_list>> lists(requests.size());
 
 	for (size_t i = 0; i < requests.size(); i++)
 	{
@@ -341,12 +329,6 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 		else
 		{
 			responses[i].message = "Failed to add a curl handle to the fan out.";
-
-			// The handle is not going to be run, so it is told to forget the list all the same.
-			curl_easy_setopt(easy, CURLOPT_HTTPHEADER, nullptr);
-			curl_slist_free_all(lists[i]);
-
-			lists[i] = nullptr;
 		}
 	}
 
@@ -357,12 +339,7 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 		if (handles[i] != nullptr)
 		{
 			curl_multi_remove_handle(multi, handles[i]);
-
-			// The handle outlives this list, so it is told to forget the list before the list goes.
-			curl_easy_setopt(handles[i], CURLOPT_HTTPHEADER, nullptr);
 		}
-
-		curl_slist_free_all(lists[i]);
 	}
 
 	return responses;
