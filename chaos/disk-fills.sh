@@ -41,8 +41,8 @@ inject()
 
 # Taking the file away needs the agent on a node whose disk is full, which is the one thing this
 # fault makes unreliable. It is not the only way out: the script holding the fault removes the
-# file itself when its own sleep ends, and its timer removes it if the script is gone. The
-# recovery assertion below is what says which of the three got there.
+# file itself when its own sleep ends, and its timer removes it if the script is gone, which is
+# what fill_clear waits for when the agent cannot be asked.
 heal()
 {
 	fill_clear "$full"
@@ -136,7 +136,12 @@ expect_reads 40 "every read is answered while one node cannot write"
 
 load_report "while the disk was full"
 
-fault_stop
+# A node that stopped stalling says nothing about the fill: the store never stalled while it stood.
+if fault_stop; then
+	result 0 "the fill is gone from $full"
+else
+	result 1 "the fill is gone from $full — it was still there when it should have removed itself"
+fi
 
 # A store that stopped for want of space does not notice the space coming back by itself: the
 # background error is sticky, and repository::rocksdb_repository::written is what resumes it, on

@@ -1586,6 +1586,10 @@ latency_clear()
 # short of a full volume is not this failure at all.
 fill_file=/var/asyncdb-chaos.fill
 
+# When the fill has removed itself at the latest: the timer fault_script arms, and a minute for the
+# agent to answer again once there is room for it to write a command down.
+fill_until=0
+
 fill_remove()
 {
 	printf 'rm -f %s %s.rest || true' "$fill_file" "$fill_file"
@@ -1614,25 +1618,46 @@ fill()
 	INSTALL
 	)
 
+	fill_until=$((SECONDS + seconds + 180))
+
 	command=$(fault_send "$seconds" "$install" "$(fill_remove)" "$instance") || return 1
 	fault_await "$command" "$instance"
 }
 
+# fill_clear <instance>... — non-zero when one of them still holds the fill. A full disk is an SSM
+# agent with nowhere to write the command it is sent, so an instance that cannot be asked is asked
+# again until the fill has had time to remove itself, rather than taken to be clear.
 fill_clear()
 {
-	local id answered check
+	local id answered check cleared=0 waiting
 
 	check="{ [ -e $fill_file ] || [ -e $fill_file.rest ]; }"
 	check="$check && echo present || echo cleared"
 
 	for id in "$@"; do
-		answered=$(ssm_run "$id" "$(fill_remove); $check")
+		waiting=0
 
-		[ "${answered:-}" = cleared ] \
-			|| echo "  $id is still holding the fill — ${answered:-it could not be asked}"
+		while :; do
+			answered=$(ssm_run "$id" "$(fill_remove); $check")
+
+			[ "${answered:-}" != cleared ] || break
+
+			if [ "$SECONDS" -ge "$fill_until" ]; then
+				echo "  $id is still holding the fill — ${answered:-it could not be asked}"
+				cleared=1
+				break
+			fi
+
+			if [ "$waiting" = 0 ]; then
+				echo "  $id could not be asked, so waiting up to $((fill_until - SECONDS))s for the fill to remove itself."
+				waiting=1
+			fi
+
+			sleep 10
+		done
 	done
 
-	return 0
+	return "$cleared"
 }
 
 # ---------------------------------------------------------------------------- a killed container

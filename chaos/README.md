@@ -315,6 +315,12 @@ Run Command as soon as the assertions are done, because waiting is every experim
 measuring this fault instead of its own. The sleep and the timer are for the run that died holding
 the fault, they are minutes long, and removing a fault that is already gone is nothing.
 
+**`disk-fills` is the exception**, because its fault takes away the agent `fault_stop` goes through:
+a full root volume is an agent with nowhere to write the command it is sent, which fails at once
+and says nothing. So `fill_clear` asks again until the node answers that the file is gone, for as
+long as the script's own sleep and timer take to remove it, and `the fill is gone` is the recovery
+assertion — `nothing is stalled` cannot be, because the store never stalled while the disk was full.
+
 The timer is detached with `setsid` rather than left to a trap, because there is no signal to trap:
 a Run Command that is cancelled runs no trap in the script it cancelled, and an instance that stops
 being asked anything is an instance still holding whatever was installed on it.
