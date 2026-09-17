@@ -27,7 +27,7 @@ namespace etcd
 	// etcd speaks gRPC, but every call it offers is also a POST of a JSON document to its gateway,
 	// where a key and a value travel base64 encoded — which is why there is no gRPC dependency
 	// here. The membership thread makes most of the calls, and a thread answering a request may make
-	// them too: the member being asked is atomic, and the curl handles are the thread's own.
+	// them too: the member being asked is atomic, and the connections are the thread's own.
 	class client
 	{
 		const http::client &http_client;

@@ -10,7 +10,7 @@
 #include "record/record.h"
 #include "cluster/etcd_cluster.h"
 #include "cluster/partition.h"
-#include "http/curl_client.h"
+#include "http/beast_client.h"
 #include "cluster/forwarder.h"
 #include "server/server.h"
 #include "listening.h"
@@ -515,7 +515,7 @@ TEST_F(server_test, a_file_of_records_says_what_it_carries_in_a_header)
 
 	every.set();
 
-	http::curl_client curl(2, 5);
+	http::beast_client sending(2, 5);
 	http::request asked {
 		"GET",
 		"http://localhost:" + std::to_string(port) + "/table/account/file?partitions=" +
@@ -524,7 +524,7 @@ TEST_F(server_test, a_file_of_records_says_what_it_carries_in_a_header)
 		std::vector<std::string>()
 	};
 
-	http::response answered = curl.send(asked, 5);
+	http::response answered = sending.send(asked, 5);
 
 	ASSERT_TRUE(answered.is_valid);
 	EXPECT_EQ(200, answered.status);

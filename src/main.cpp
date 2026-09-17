@@ -2,7 +2,6 @@
 #include <memory>
 #include <signal.h>
 
-#include <curl/curl.h>
 #include <boost/json/src.hpp>
 
 #include "server/server.h"
@@ -21,17 +20,13 @@ void handle_signal(int)
 
 int main(void)
 {
-	// libcurl is initialised once here rather than by the first handle to be created, because a
-	// node talks to etcd and to its neighbours from several threads at once.
-	curl_global_init(CURL_GLOBAL_DEFAULT);
-
 	drain_seconds = server::drain_interval();
 
 	int thread_pool_size = server::thread_pool_size();
 	std::string data_directory = server::data_directory();
 	cluster::config configuration = cluster::from_environment();
-	http::curl_client client =
-		http::curl_client(configuration.connect_timeout_seconds, configuration.unacknowledged_timeout_seconds);
+	http::beast_client client =
+		http::beast_client(configuration.connect_timeout_seconds, configuration.unacknowledged_timeout_seconds);
 	cluster::forwarder forwarder = cluster::forwarder(client);
 	cluster::etcd_cluster cluster = cluster::etcd_cluster(configuration, client, forwarder);
 

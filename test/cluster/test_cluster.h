@@ -12,7 +12,7 @@
 
 #include "cluster/cluster.h"
 #include "cluster/forwarder.h"
-#include "http/curl_client.h"
+#include "http/beast_client.h"
 
 namespace cluster
 {
@@ -45,7 +45,7 @@ namespace cluster
 
 		partition_set filled;
 
-		http::curl_client curl;
+		http::beast_client client;
 
 		forwarder request_forwarder;
 

@@ -10,7 +10,7 @@
 #include <boost/asio.hpp>
 #include <gtest/gtest.h>
 
-#include "http/curl_client.h"
+#include "http/beast_client.h"
 #include "server/listening.h"
 #include "cluster/etcd_cluster.h"
 #include "cluster/forwarder.h"
@@ -19,6 +19,28 @@
 
 namespace
 {
+	// An answer that says the connection is being kept and then closes it anyway, which is what a
+	// connection nobody has used for long enough is. It answers once for each time it is asked.
+	void answer_and_close(boost::asio::ip::tcp::acceptor *acceptor, int times)
+	{
+		for (int asked = 0; asked < times; asked++)
+		{
+			boost::asio::ip::tcp::socket socket = acceptor->accept();
+			boost::asio::streambuf request;
+			boost::system::error_code error;
+
+			boost::asio::read_until(socket, request, "\r\n\r\n", error);
+
+			boost::asio::write(
+				socket,
+				boost::asio::buffer(std::string("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")),
+				error);
+
+			socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
+			socket.close(error);
+		}
+	}
+
 	// An answer that sends one piece and then holds the connection open without ending, which is
 	// what a watch is. It returns once the client has gone.
 	void answer_without_ending(boost::asio::ip::tcp::acceptor *acceptor, const std::string &piece)
@@ -46,12 +68,12 @@ namespace
 	}
 }
 
-// A client with a real server to talk to, because what is worth testing here is what libcurl does
-// between one request and the next, and a fake would answer for neither.
-class curl_client_test : public ::testing::Test
+// A client with a real server to talk to, because what is worth testing here is what the client
+// does between one request and the next, and a fake would answer for neither.
+class beast_client_test : public ::testing::Test
 {
 protected:
-	http::curl_client client { http::curl_client(2, 5) };
+	http::beast_client client { http::beast_client(2, 5) };
 
 	cluster::forwarder forwarder = cluster::forwarder(client);
 
@@ -101,7 +123,7 @@ protected:
 	}
 };
 
-TEST_F(curl_client_test, answer_a_request)
+TEST_F(beast_client_test, answer_a_request)
 {
 	http::response response = client.send(get("/health"), 30);
 
@@ -111,18 +133,44 @@ TEST_F(curl_client_test, answer_a_request)
 	EXPECT_NE(response.body.find("\"status\":\"ok\""), std::string::npos);
 }
 
-// The point of holding a handle for the life of a thread: a node talks to the same neighbours over
-// and over, and the second request is not another three way handshake.
-TEST_F(curl_client_test, keep_the_connection_between_requests)
+// The point of holding the connections for the life of a thread: a node talks to the same
+// neighbours over and over, and the second request is not another three way handshake.
+TEST_F(beast_client_test, keep_the_connection_between_requests)
 {
 	EXPECT_FALSE(client.send(get("/health"), 30).reused);
 	EXPECT_TRUE(client.send(get("/health"), 30).reused);
 	EXPECT_TRUE(client.send(get("/health"), 30).reused);
 }
 
-// A handle that is used again is a handle that remembers what it was told last time, which is why
-// it is reset: the "no body" of a HEAD would otherwise be the answer to every GET after it.
-TEST_F(curl_client_test, forget_the_request_before)
+// A connection out of the pool may have been closed at the other end while nothing was going on
+// it, and what says so is the request that fails on it. That is a request to make again on a
+// connection of its own rather than a node that did not answer.
+TEST_F(beast_client_test, make_a_request_again_on_a_connection_the_node_closed)
+{
+	boost::asio::io_context context;
+	boost::asio::ip::tcp::acceptor acceptor(
+		context,
+		boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+	std::thread answering([&acceptor]() { answer_and_close(&acceptor, 2); });
+
+	http::request asked = get("/health");
+
+	asked.url = "http://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/health";
+
+	EXPECT_EQ(client.send(asked, 30).body, "ok");
+
+	http::response again = client.send(asked, 30);
+
+	answering.join();
+
+	EXPECT_TRUE(again.is_valid);
+	EXPECT_EQ(again.body, "ok");
+	EXPECT_FALSE(again.reused);
+}
+
+// A connection that is used again carries the request it was given and nothing of the one before
+// it: the "no body" of a HEAD is the answer to that HEAD alone.
+TEST_F(beast_client_test, forget_the_request_before)
 {
 	http::request head = get("/health");
 
@@ -138,7 +186,7 @@ TEST_F(curl_client_test, forget_the_request_before)
 
 // What makes a HEAD worth sending as a HEAD: the node answers how large the value is and sends
 // none of it, so asking whether a record exists costs its headers rather than its megabytes.
-TEST_F(curl_client_test, answer_the_length_of_a_body_a_head_left_out)
+TEST_F(beast_client_test, answer_the_length_of_a_body_a_head_left_out)
 {
 	http::request head = get("/health");
 
@@ -151,7 +199,7 @@ TEST_F(curl_client_test, answer_the_length_of_a_body_a_head_left_out)
 	EXPECT_GT(response.content_length, 0);
 }
 
-TEST_F(curl_client_test, answer_that_there_was_no_answer)
+TEST_F(beast_client_test, answer_that_there_was_no_answer)
 {
 	http::request request = get("/health");
 
@@ -166,7 +214,7 @@ TEST_F(curl_client_test, answer_that_there_was_no_answer)
 
 // The other side of keeping connections: a connection nobody is using still belongs to a server
 // that is trying to stop, and shutting down waits for connections rather than for their timeouts.
-TEST_F(curl_client_test, a_connection_that_is_kept_does_not_hold_the_server_open)
+TEST_F(beast_client_test, a_connection_that_is_kept_does_not_hold_the_server_open)
 {
 	EXPECT_TRUE(client.send(get("/health"), 30).is_valid);
 
@@ -182,7 +230,7 @@ TEST_F(curl_client_test, a_connection_that_is_kept_does_not_hold_the_server_open
 
 // The fan out that keeps a node's threads: every request is in flight at once, and each answer
 // belongs to the request it was asked for whatever order the transfers finished in.
-TEST_F(curl_client_test, answer_every_request_of_a_fan_out)
+TEST_F(beast_client_test, answer_every_request_of_a_fan_out)
 {
 	std::vector<http::response> responses =
 		client.send_all({ get("/health"), get("/table/nothing"), get("/table") }, 30);
@@ -199,9 +247,9 @@ TEST_F(curl_client_test, answer_every_request_of_a_fan_out)
 	EXPECT_NE(responses[2].body.find("\"tables\""), std::string::npos);
 }
 
-// The body of a request is not copied into the handle it runs on, so a fan out has to hold its
-// requests still until it has run. Two writes carrying different bodies are two records.
-TEST_F(curl_client_test, carry_the_body_of_every_request_of_a_fan_out)
+// The body of a request is not copied into the message it is sent as, so a fan out has to hold
+// its requests still until it has run. Two writes carrying different bodies are two records.
+TEST_F(beast_client_test, carry_the_body_of_every_request_of_a_fan_out)
 {
 	http::request table = get("/table/account");
 
@@ -230,7 +278,7 @@ TEST_F(curl_client_test, carry_the_body_of_every_request_of_a_fan_out)
 
 // A node of a fan out that is not there is answered against on its own, and the nodes that did
 // answer answer all the same — which is what lets a write say which copy refused it.
-TEST_F(curl_client_test, answer_that_a_node_of_a_fan_out_did_not_answer)
+TEST_F(beast_client_test, answer_that_a_node_of_a_fan_out_did_not_answer)
 {
 	http::request gone = get("/health");
 
@@ -248,9 +296,9 @@ TEST_F(curl_client_test, answer_that_a_node_of_a_fan_out_did_not_answer)
 	EXPECT_EQ(responses[1].status, 200);
 }
 
-// The multi handle holds the connections of every transfer run in it, for the reason the single
-// handle holds its own: a node writes to the same copies over and over.
-TEST_F(curl_client_test, keep_the_connections_of_a_fan_out_between_them)
+// A fan out is a connection for each request in it, and every one of them is kept for the reason
+// one request's is: a node writes to the same copies over and over.
+TEST_F(beast_client_test, keep_the_connections_of_a_fan_out_between_them)
 {
 	std::vector<http::request> requests { get("/health"), get("/table") };
 
@@ -267,9 +315,9 @@ TEST_F(curl_client_test, keep_the_connections_of_a_fan_out_between_them)
 	EXPECT_TRUE(second[1].reused);
 }
 
-// One request has nothing to overlap with, so it runs on the handle that already holds this
-// thread's connections rather than opening one of its own.
-TEST_F(curl_client_test, answer_a_fan_out_of_one_on_the_handle_of_the_thread)
+// One request has nothing to overlap with, and takes the connection this thread already holds
+// rather than opening one of its own.
+TEST_F(beast_client_test, answer_a_fan_out_of_one_on_a_connection_of_the_thread)
 {
 	EXPECT_EQ(client.send(get("/health"), 30).status, 200);
 
@@ -280,16 +328,16 @@ TEST_F(curl_client_test, answer_a_fan_out_of_one_on_the_handle_of_the_thread)
 	EXPECT_TRUE(responses[0].reused);
 }
 
-TEST_F(curl_client_test, answer_a_fan_out_of_nothing)
+TEST_F(beast_client_test, answer_a_fan_out_of_nothing)
 {
 	EXPECT_TRUE(client.send_all({}, 30).empty());
 }
 
-// A thread holds a connection to every node it forwards to, and libcurl's own default cache was
-// smaller than the neighbour count of a cluster of more than six nodes: the sixth destination a
-// thread used evicted the first, and every forward after that paid for a handshake again. Every
-// address in 127.0.0.0/8 is this machine, so eight of them are eight connections to one server.
-TEST_F(curl_client_test, keeps_a_connection_to_more_nodes_than_a_cluster_has)
+// A thread holds a connection to every node it forwards to, and a cache smaller than the
+// neighbour count of a cluster is the destination a thread used longest ago evicted, and a
+// handshake again on every forward to it. Every address in 127.0.0.0/8 is this machine, so eight
+// of them are eight connections to one server.
+TEST_F(beast_client_test, keeps_a_connection_to_more_nodes_than_a_cluster_has)
 {
 	std::vector<http::request> nodes;
 
@@ -316,7 +364,7 @@ TEST_F(curl_client_test, keeps_a_connection_to_more_nodes_than_a_cluster_has)
 }
 
 // A piece of a stream is handed on while the answer is still going, and stopping is what ends it.
-TEST_F(curl_client_test, hand_on_a_stream_as_it_arrives_until_it_is_stopped)
+TEST_F(beast_client_test, hand_on_a_stream_as_it_arrives_until_it_is_stopped)
 {
 	boost::asio::io_context context;
 	boost::asio::ip::tcp::acceptor acceptor(
@@ -349,7 +397,7 @@ TEST_F(curl_client_test, hand_on_a_stream_as_it_arrives_until_it_is_stopped)
 	EXPECT_FALSE(response.is_valid);
 }
 
-TEST_F(curl_client_test, end_a_stream_the_receiver_is_done_with)
+TEST_F(beast_client_test, end_a_stream_the_receiver_is_done_with)
 {
 	boost::asio::io_context context;
 	boost::asio::ip::tcp::acceptor acceptor(

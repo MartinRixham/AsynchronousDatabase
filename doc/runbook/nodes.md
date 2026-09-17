@@ -134,7 +134,7 @@ check included, which is what has an instance taken out of service.
 waiting on, which is usually a neighbour that is up but wrong — a neighbour that
 cannot be reached at all holds a thread for `connect_timeout_seconds` and not for
 the whole 30. Each thread keeps
-its own curl handles, so the pool is also how many connections this node holds to
+its own connections, so the pool is also how many connections this node holds to
 each neighbour — a very large number is more connections than a neighbour wants.
 
 ## A node answers no peer

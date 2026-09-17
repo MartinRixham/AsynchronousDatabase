@@ -48,7 +48,7 @@ namespace http
 	// regard to case, because what a name arrives as is the sender's choice and not this one's.
 	std::string header_of(const response &response, const std::string &name);
 
-	// The seam over libcurl, so that a cluster can be driven in a test without a network.
+	// The seam over the network, so that a cluster can be driven in a test without one.
 	class client
 	{
 	public:

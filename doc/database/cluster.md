@@ -57,8 +57,8 @@ it — nodes talk to each other directly, and they do not go through the `/async
 prefix the browser uses.
 
 etcd is spoken to over its JSON gateway rather than over gRPC, which is why
-there is no gRPC dependency here: a node registers with `POST /v3/kv/put` and
-libcurl, the same libcurl the API already uses.
+there is no gRPC dependency here: a node registers with `POST /v3/kv/put` over
+the same HTTP client a node forwards a request with.
 
 ## Membership
 

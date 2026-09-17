@@ -22,7 +22,7 @@ namespace
 	// hardware_concurrency() is allowed to answer nothing, and a pool of nothing serves nothing.
 	constexpr int fewest_threads = 16;
 
-	// Each thread keeps its own curl handles, so a very large pool is more connections to every
+	// Each thread keeps its own connections, so a very large pool is more connections to every
 	// neighbour than a neighbour wants. A node that needs more is told so with ASYNCDB_THREADS.
 	constexpr int most_threads = 128;
 

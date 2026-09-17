@@ -1,12 +1,15 @@
 #pragma once
 
+#include <functional>
+#include <stop_token>
+#include <string_view>
 #include <vector>
 
 #include "http_client.h"
 
 namespace http
 {
-	class curl_client final : public client
+	class beast_client final : public client
 	{
 		// Connecting is bounded apart from the transfer, because the two answer different
 		// questions. A node that is not there is told from a node that is slow: the first costs
@@ -20,7 +23,7 @@ namespace http
 		long unacknowledged_timeout_seconds;
 
 	public:
-		curl_client(long connect_timeout, long unacknowledged_timeout);
+		beast_client(long connect_timeout, long unacknowledged_timeout);
 
 		[[nodiscard]] response send(const request &request, long timeout_seconds) const override;
 

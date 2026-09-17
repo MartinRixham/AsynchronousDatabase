@@ -88,8 +88,8 @@ Notes:
 - Formatting is enforced by `.clang-format` (tabs, Allman braces, 120 columns, `SortIncludes: false`).
 - Naming is `snake_case` throughout, including class names, and each layer lives in its own namespace
   matching its directory.
-- **One class to a file**, and the file is named after it — `curl_client` in `src/http/curl_client.h`,
-  its definitions in `curl_client.cpp`. A helper only one `.cpp` reaches is still a file of its own.
+- **One class to a file**, and the file is named after it — `beast_client` in `src/http/beast_client.h`,
+  its definitions in `beast_client.cpp`. A helper only one `.cpp` reaches is still a file of its own.
   A class whose name would only repeat its namespace carries the namespace in the file name
   instead — `http::client` is `http/http_client.h`, `etcd::client` is `etcd/etcd_client.h`, and
   `http::fake_client` is `test/http/fake_http_client.h`.
@@ -102,7 +102,7 @@ Notes:
   `std::optional`, as `read_record` and `base64::decode` are. A pointer parameter the callee writes
   through puts half the answer in the return and half in the arguments, and leaves the caller holding
   an object that means nothing until the call has been made. What is not an out parameter is a sink
-  the caller already owns: libcurl writes a body into the `http::response` it carries, and `merge`
+  the caller already owns: the client writes a body into the `http::response` it carries, and `merge`
   sorts the records it is given.
 - **A field of an abstract type is handed in, never chosen inside the class.** A class holding a
   `cluster::cluster &`, an `http::client &` or a `repository::repository &` takes it as a parameter of
@@ -177,8 +177,8 @@ no part of `cmk`.
 `REQUESTS=5000` on sixteen threads; `build.yaml` loads the deployed stack with two megabyte values
 and thirty two requests a thread instead — values the proxy and the parser in front of the store
 refused outright until both were raised to the documented 16 MiB, and half a gigabyte in each
-direction either way. The write's curl config clears `Expect:` for the same reason `http::client`
-does: **only the nginx in front of the database answers a 100 Continue**, so a body over a kilobyte
+direction either way. The write's curl config clears `Expect:` for the same reason `http::client` sends
+none: **only the nginx in front of the database answers a 100 Continue**, so a body over a kilobyte
 otherwise spends a second of curl's own timeout per request wherever the proxy is not in the path —
 1150 ms a write against the binary alone, against 190 ms through nginx.
 
@@ -323,13 +323,13 @@ second one to either.
 
 | Library | Used for |
 | --- | --- |
-| Boost.Beast + Boost.Asio | The HTTP server, the verbs and the status codes, all the way into `router::response` |
+| Boost.Beast + Boost.Asio | The HTTP server and the HTTP client, the verbs and the status codes, all the way into `router::response` |
 | Boost.JSON | Every document the API reads or writes, and the table document in RocksDB |
 | Boost.Locale (`utf.hpp` only) | `record::is_valid_utf8` — the `utf_traits` decoder needs no linking, and rejects truncation, surrogates and overlongs |
 | Boost.Algorithm | Splitting a path and a query string in `url` |
 | Boost.LexicalCast | `try_lexical_convert` for the scan `limit`, instead of `stoul` in a `try` |
 | RocksDB | The store. A table is a column family |
-| libcurl | Percent-decoding in `url::encode`/`decode`, talking to etcd and to the other nodes, and driving the server in `server_test` |
+| libcurl | Percent-decoding in `url::encode`/`decode`, and driving the server in `server_test` |
 | etcd | Membership only, over its **JSON gateway** (`POST /v3/kv/put`, `/v3/lease/grant`, …), so there is no gRPC dependency |
 
 **Prefer a header-only Boost to writing it again** — that is what replaced a hand-rolled UTF-8 decoder
@@ -370,7 +370,8 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   another node for most of a forwarded request, so the pool is a count of requests that can be in
   flight rather than of cores, and two threads on a two core instance is a server that two waiting
   requests fill — health check included, which is what has the instance replaced. Each thread keeps
-  its own curl handles, so the pool is also how many connections a node holds to each neighbour.
+  its own connections and the `io_context` they run on, so the pool is how many connections a node
+  holds to each neighbour and three descriptors a thread besides.
   It also owns the single `rocksdb_repository` and `router`, which are shared
   by reference across all sessions — anything reached from the router must be safe for concurrent use.
   Constructing with port `0` picks a free port and exposes it via `port()`; tests rely on this.
@@ -408,25 +409,35 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   `router::response` (status, content type, and either a `boost::json::object` or the raw text of a
   value). `router/api_error.cpp`
   is the one place a documented error code is mapped to a status.
-- **`http::client`** is the seam over libcurl, and `curl_client` keeps **one handle per thread**,
-  reset before each request — `http::handle` is that one easy handle and `http::group` the multi
-  handle and the easy handles a fan out runs on, both `thread_local` in `curl_client.cpp`, and a
-  group keeps as many handles as the widest fan out that thread has run. The handle is what holds
-  open connections, and the cache is sized to more nodes than a cluster has, because libcurl's own
-  default is a handful — smaller than the neighbour count of anything past six nodes, which put a
-  handshake back on every forward past the fifth destination a thread had used. It is a ceiling and
-  not a reservation: a thread holds one connection to each node it has actually forwarded to. A fan
-  out runs in the multi handle, whose cache is sized from the transfers added to it, so it is the
-  single handle that needs telling — and `curl_easy_reset` is what keeps the last request's body, or
-  a HEAD's "no body", out of the next one. `send_all` is the same thing for a **fan out** — the copies of a record, or
-  every node of a table create — run in one `curl_multi` handle per thread, so the thread waits for
-  the slowest of them rather than for the sum of them, and the multi handle holds that fan out's
-  connections the way the single handle holds its own. **A fan out does not copy the bodies it is
-  given**, so the requests have to outlive the call, and a fan out of one runs on the single handle
-  instead. `send_all` on the cluster seam throws every answer away but a refusal, which is what a
-  write to the copies of a record wants; `send_each` is the same fan out for a caller asking each
-  node something *different* and reading what each of them said, which is what a walk reading a
-  share in several pieces at once is.
+- **`http::client`** is the seam over the network, and `beast_client` is Beast and Asio behind it.
+  Each thread keeps a `http::pool` of its own — `thread_local` in `beast_client.cpp` — which is the
+  `io_context` every transfer of that thread runs on and the connections it holds open, kept under
+  the node they go to and handed out one to a request. The cache is sized to more nodes than a
+  cluster has: a thread forwards to every neighbour it has a key on, so a cache smaller than the
+  neighbour count is a handshake again on every forward to the node it used longest ago. It is a
+  ceiling and not a reservation — a thread holds one connection to each node it has actually
+  forwarded to, and a fan out to one node holds one for each request in it. `http::exchange` is one
+  request and its answer as a chain of handlers rather than a call that blocks, which is what makes
+  `send_all` a **fan out**: the copies of a record, or every node of a table create, are all started
+  before any of them is waited for and run on the one `io_context`, so the thread waits for the
+  slowest of them rather than for the sum of them. **A fan out does not copy the bodies it is
+  given** — the message carries a span of the caller's own — so the requests have to outlive the
+  call. **A connection out of the pool may have been closed at the other end while nothing was going
+  on it**, and what says so is the request that fails on it: an exchange given a kept connection
+  makes its request again on a connection of its own, once, and only while nothing of the answer has
+  been read. `http::feed` is the other shape, an answer that does not end on its own — the body is
+  handed to the receiver as it arrives, on a connection this call alone holds, and stopping one is
+  posted to its `io_context` rather than done on the thread that asked for it, a socket closed under
+  the read on it being a race. Connecting is bounded apart from the transfer, and `TCP_USER_TIMEOUT`
+  bounds what was sent on a connection and never acknowledged, so a node that went from the network
+  costs neither the whole timeout nor for ever; a stream is bounded by keepalive probes instead,
+  having sent nothing to go unacknowledged. Nothing asks for a 100 Continue, which only the nginx in
+  front of a node answers. **Nothing bounds the body of an answer** either, what bounds one being
+  the budget the request carried, and the headers are bounded well above Beast's own 8 KiB because
+  an answer names the key a walk resumes at. `send_all` on the cluster seam throws every answer away
+  but a refusal, which is what a write to the copies of a record wants; `send_each` is the same fan
+  out for a caller asking each node something *different* and reading what each of them said, which
+  is what a walk reading a share in several pieces at once is.
 - **`cluster::cluster`** is the second pure-virtual seam the router routes against, over "which
   nodes hold this key" and "ask that node". `cluster::replicas` answers a `cluster::placement` —
   whether this node holds a copy, and the other nodes that do, this node's own zone first — and
@@ -564,8 +575,8 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   files it holds, so the pieces are roughly equal and deliberately approximate. `transfer::walk`
   then asks for every piece in one `send_each`, and hands each answer to a thread of its own that
   takes it into the store while the next round is already being asked for. **Every request a walk
-  makes is made on the calling thread**, because a curl handle is `thread_local`: threads made for
-  a walk and dropped after it would be a handshake to that node for every walk of every table.
+  makes is made on the calling thread**, because the connections are `thread_local`: threads made
+  for a walk and dropped after it would be a handshake to that node for every walk of every table.
   `from` is the key a piece starts after and `to` is the last key in it, which is what makes the
   pieces a cover — the key one piece stops at is the key the next starts after. `bytes` is the
   whole walk's budget shared out between the pieces, so a share read in eight pieces holds no more
