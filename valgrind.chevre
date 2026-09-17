@@ -33,17 +33,21 @@ memcheck()
 	local log="$1.valgrind"
 	local status=0
 
-	# --log-file keeps valgrind's own report out of the test binary's output, so
-	# that the report can be read on its own once the suite has finished. The
-	# binary still writes to the terminal as it runs.
-	verbose valgrind --leak-check=yes --log-file="$log" $options "$1" $args < /dev/null || status=$?
+	# The test binary runs its shards as processes of their own, so valgrind follows them and
+	# writes a report for each process, %p being its pid. --log-file keeps valgrind's own report out
+	# of the test binary's output, so that the reports can be read on their own once the suite has
+	# finished.
+	rm -f "$log".*
+	verbose valgrind --leak-check=yes --trace-children=yes --log-file="$log.%p" $options "$1" $args < /dev/null || status=$?
 
-	cat "$log"
+	for report in "$log".*; do
+		cat "$report"
 
-	if leaked "$log"; then
-		echo "$SCRIPT_NAME: $1 leaks memory, see the leak summary above" >&2
-		status=1
-	fi
+		if leaked "$report"; then
+			echo "$SCRIPT_NAME: $1 leaks memory, see the leak summary in $report above" >&2
+			status=1
+		fi
+	done
 
 	return $status
 }

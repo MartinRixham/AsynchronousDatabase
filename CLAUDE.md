@@ -43,7 +43,15 @@ run directly after `cmk test`:
 
 ```bash
 build/test/test_main --gtest_filter='table_test.fail_to_deserialise_table_with_no_name'
+GTEST_TOTAL_SHARDS=1 build/test/test_main   # the whole suite in one process
 ```
+
+**`test_main` runs the suite in parallel, as gtest shards in processes of their own** — one a core, or
+`GTEST_TOTAL_SHARDS` — and prints each shard's output whole once it has finished. The suite is waiting
+rather than computing, so a run takes as long as its slowest shard. It stays in one process for a `--gtest_filter`, `--gtest_list_tests` or a `GTEST_SHARD_INDEX`.
+Each shard gets a `TMPDIR` of its own under `asyncdb-shards/`, so **a test's store is
+`test_directory(...)` (`test/directory.h`), never a fixed path**: two shards opening one RocksDB
+directory is a lock one of them fails on.
 
 Notes:
 - `-Wall -Wextra -Wshadow -Werror` — any warning fails the build. `cppcheck --enable=style` runs in the
@@ -64,8 +72,8 @@ Notes:
   `-fno-sanitize=vptr`, because Alpine's RocksDB is built without RTTI and the vptr check needs its typeinfo.
 - The `verify` phase memchecks under valgrind, which is why `cmk verify` takes minutes rather than seconds.
   Cheesemake's own `valgrind.chevre` runs `build/bin/asyncdb`, and that serves until it is signalled, so the
-  root `valgrind.chevre` overrides it and runs `build/test/test_main` instead, keeping the report in
-  `build/test/test_main.valgrind`. **A definite or possible leak fails the build**, and the suite is clean of
+  root `valgrind.chevre` overrides it and runs `build/test/test_main` instead, following the shards with
+  `--trace-children` and keeping a report a process in `build/test/test_main.valgrind.{pid}`. **A definite or possible leak fails the build**, and the suite is clean of
   both. It is the plugin's own grep of the leak summary that fails it, and not `--error-exitcode=1`: that
   would fail on every error valgrind reports, still reachable included, and the release image builds on musl,
   where a block libstdc++ or RocksDB still holds at exit would fail the build untested. `valgrind.supp` is

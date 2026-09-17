@@ -15,6 +15,7 @@
 #include "cluster/test_cluster.h"
 #include "server/server.h"
 #include "listening.h"
+#include "directory.h"
 
 namespace
 {
@@ -52,11 +53,11 @@ protected:
 
 	void SetUp()
 	{
-		std::filesystem::remove_all("/tmp/asyncdb/");
+		std::filesystem::remove_all(test_directory("asyncdb"));
 
 		// RocksDB locks the directory it opens, so two servers in one process are two stores.
-		first = std::make_shared<server::server>(0, 2, first_cluster, "/tmp/asyncdb/first");
-		second = std::make_shared<server::server>(0, 2, second_cluster, "/tmp/asyncdb/second");
+		first = std::make_shared<server::server>(0, 2, first_cluster, test_directory("asyncdb/first"));
+		second = std::make_shared<server::server>(0, 2, second_cluster, test_directory("asyncdb/second"));
 
 		std::vector<cluster::member> members {
 			cluster::member { node(first), "" },

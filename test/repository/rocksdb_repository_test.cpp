@@ -15,6 +15,7 @@
 #include "repository/rocksdb_repository.h"
 #include "table/table.h"
 #include "table/schema.h"
+#include "directory.h"
 
 namespace
 {
@@ -92,11 +93,11 @@ protected:
 	// rather than in the body of a set up that would already have opened it.
 	void SetUp() override
 	{
-		std::filesystem::remove_all("/tmp/asyncdb/");
-		std::filesystem::remove_all("/tmp/asyncdb_other/");
+		std::filesystem::remove_all(test_directory("asyncdb"));
+		std::filesystem::remove_all(test_directory("asyncdb_other"));
 
-		repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
-		other_repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb_other");
+		repository = std::make_unique<repository::rocksdb_repository>(test_directory("asyncdb"));
+		other_repository = std::make_unique<repository::rocksdb_repository>(test_directory("asyncdb_other"));
 	}
 
 	void TearDown() override
@@ -147,7 +148,7 @@ TEST_F(repository_test, a_store_is_read_back_by_the_instance_started_after_it)
 
 	// Closed and opened again, which is a container that was restarted or a host that rebooted.
 	repository = nullptr;
-	repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
+	repository = std::make_unique<repository::rocksdb_repository>(test_directory("asyncdb"));
 
 	EXPECT_TRUE(repository->has_table("a_table"));
 	EXPECT_EQ(repository->read_record("a_table", "a key"), "a value");
@@ -164,7 +165,7 @@ TEST_F(repository_test, the_names_a_store_dropped_are_read_back_with_the_ones_it
 	repository->delete_table("dropped_table", record::version { 1, 2 });
 
 	repository = nullptr;
-	repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
+	repository = std::make_unique<repository::rocksdb_repository>(test_directory("asyncdb"));
 
 	table::schema read = repository->read_schema();
 
@@ -766,7 +767,7 @@ TEST_F(repository_test, counts_rise_across_the_store_being_opened_again)
 
 	last = repository->next_count();
 	repository = nullptr;
-	repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
+	repository = std::make_unique<repository::rocksdb_repository>(test_directory("asyncdb"));
 
 	EXPECT_GT(repository->next_count(), last);
 }
@@ -787,7 +788,7 @@ TEST_F(repository_test, the_newest_term_a_store_was_written_in_is_read_back_by_t
 	repository->write_record("a_table", older);
 
 	repository = nullptr;
-	repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
+	repository = std::make_unique<repository::rocksdb_repository>(test_directory("asyncdb"));
 
 	cluster::partition_terms terms = repository->read_terms();
 
@@ -807,7 +808,7 @@ TEST_F(repository_test, a_file_raises_the_term_of_the_partitions_it_carries_for_
 	EXPECT_EQ(other_repository->read_terms()[cluster::partition_of("4821")], 60);
 
 	other_repository = nullptr;
-	other_repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb_other");
+	other_repository = std::make_unique<repository::rocksdb_repository>(test_directory("asyncdb_other"));
 
 	cluster::partition_terms terms = other_repository->read_terms();
 
@@ -858,9 +859,9 @@ TEST_F(repository_test, a_walk_larger_than_one_file_resumes_where_it_reached)
 // and a store given a small one is a store that still opens and still answers.
 TEST_F(repository_test, a_store_serves_within_the_memory_budget_it_was_given)
 {
-	std::filesystem::remove_all("/tmp/asyncdb_small/");
+	std::filesystem::remove_all(test_directory("asyncdb_small"));
 
-	repository::rocksdb_repository small("/tmp/asyncdb_small", 16 * 1024 * 1024);
+	repository::rocksdb_repository small(test_directory("asyncdb_small"), 16 * 1024 * 1024);
 
 	small.create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 	small.write_record("a_table", record::valid_record("1", "one"));
@@ -876,14 +877,14 @@ TEST_F(repository_test, a_transfer_the_process_before_it_left_behind_goes_when_t
 	create_table("a_table");
 	repository->write_record("a_table", record::valid_record("a key", "a value"));
 
-	std::filesystem::path left("/tmp/asyncdb/transfer/left-behind.sst");
+	std::filesystem::path left(test_directory("asyncdb/transfer/left-behind.sst"));
 
 	std::ofstream(left) << "half of a file nothing can finish";
 
 	ASSERT_TRUE(std::filesystem::exists(left));
 
 	repository = nullptr;
-	repository = std::make_unique<repository::rocksdb_repository>("/tmp/asyncdb");
+	repository = std::make_unique<repository::rocksdb_repository>(test_directory("asyncdb"));
 
 	EXPECT_FALSE(std::filesystem::exists(left));
 	EXPECT_EQ(repository->read_record("a_table", "a key"), "a value");
@@ -951,11 +952,11 @@ TEST_F(repository_test, a_walk_of_keys_alone_covers_more_of_a_table_than_a_walk_
 // weighed by what is in the files a key starts, so it is approximate — which is all it has to be.
 TEST_F(repository_test, says_where_a_table_would_be_cut_up)
 {
-	std::filesystem::remove_all("/tmp/asyncdb_split/");
+	std::filesystem::remove_all(test_directory("asyncdb_split"));
 
 	// The smallest budget there is, so that what is written spills out of the memtable and into the
 	// files a split is read off rather than sitting in memory where it cannot be seen.
-	repository::rocksdb_repository splitting("/tmp/asyncdb_split", 16 * 1024 * 1024);
+	repository::rocksdb_repository splitting(test_directory("asyncdb_split"), 16 * 1024 * 1024);
 
 	splitting.create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 

@@ -12,6 +12,7 @@
 #include "cluster/etcd_cluster.h"
 #include "cluster/forwarder.h"
 #include "server/server.h"
+#include "directory.h"
 
 // A client with a real server to talk to, because what is worth testing here is what libcurl does
 // between one request and the next, and a fake would answer for neither.
@@ -32,9 +33,9 @@ protected:
 
 	void SetUp()
 	{
-		std::filesystem::remove_all("/tmp/asyncdb/");
+		std::filesystem::remove_all(test_directory("asyncdb"));
 
-		database_server = std::make_shared<server::server>(0, 2, cluster, "/tmp/asyncdb");
+		database_server = std::make_shared<server::server>(0, 2, cluster, test_directory("asyncdb"));
 		serving = true;
 		thread = std::thread([server = database_server]() { server->serve(); });
 

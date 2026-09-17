@@ -18,6 +18,7 @@
 #include "cluster/fake_cluster.h"
 #include "repository/rocksdb_repository.h"
 #include "table/table.h"
+#include "directory.h"
 
 size_t writer(void *ptr, size_t size, size_t nmemb, std::string *stream)
 {
@@ -55,8 +56,8 @@ protected:
 
 	void SetUp()
 	{
-		std::filesystem::remove_all("/tmp/asyncdb/");
-		database_server = std::make_shared<server::server>(0, 2, cluster, "/tmp/asyncdb");
+		std::filesystem::remove_all(test_directory("asyncdb"));
+		database_server = std::make_shared<server::server>(0, 2, cluster, test_directory("asyncdb"));
 		port = database_server->port();
 
 		thread = std::thread([server = database_server]() { server->serve(); });
@@ -539,12 +540,12 @@ TEST_F(server_test, a_file_of_records_says_what_it_carries_in_a_header)
 // the rebuild runs on an empty store alone — so joining is what runs the first pass.
 TEST(server_reconcile_test, reconciles_a_store_this_node_came_back_to)
 {
-	std::filesystem::remove_all("/tmp/asyncdb/");
+	std::filesystem::remove_all(test_directory("asyncdb"));
 
 	// Written by the process before this one, and closed: RocksDB locks the directory the server
 	// is about to open.
 	{
-		repository::rocksdb_repository repository("/tmp/asyncdb");
+		repository::rocksdb_repository repository(test_directory("asyncdb"));
 
 		repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 	}
@@ -552,7 +553,7 @@ TEST(server_reconcile_test, reconciles_a_store_this_node_came_back_to)
 	cluster::fake_cluster nodes(
 		"http://asyncdb-1:8080",
 		std::vector<std::string> { "http://asyncdb-1:8080", "http://asyncdb-2:8080" });
-	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, "/tmp/asyncdb");
+	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, test_directory("asyncdb"));
 	boost::asio::ip::port_type port = database_server->port();
 	std::thread thread([server = database_server]() { server->serve(); });
 
@@ -574,12 +575,12 @@ TEST(server_reconcile_test, reconciles_a_store_this_node_came_back_to)
 // is nothing for a pass to move and none is run.
 TEST(server_reconcile_test, reconciles_nothing_after_a_store_this_node_filled)
 {
-	std::filesystem::remove_all("/tmp/asyncdb/");
+	std::filesystem::remove_all(test_directory("asyncdb"));
 
 	cluster::fake_cluster nodes(
 		"http://asyncdb-1:8080",
 		std::vector<std::string> { "http://asyncdb-1:8080", "http://asyncdb-2:8080" });
-	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, "/tmp/asyncdb");
+	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, test_directory("asyncdb"));
 	boost::asio::ip::port_type port = database_server->port();
 	std::thread thread([server = database_server]() { server->serve(); });
 
@@ -598,7 +599,7 @@ TEST(server_reconcile_test, reconciles_nothing_after_a_store_this_node_filled)
 // back the membership it already had — while the others dropped it and took writes it never saw.
 TEST(server_reconcile_test, reconciles_once_this_node_registers_again)
 {
-	std::filesystem::remove_all("/tmp/asyncdb/");
+	std::filesystem::remove_all(test_directory("asyncdb"));
 
 	cluster::fake_cluster nodes(
 		"http://asyncdb-1:8080",
@@ -606,7 +607,7 @@ TEST(server_reconcile_test, reconciles_once_this_node_registers_again)
 
 	nodes.reads_etcd("http://etcd:2379");
 
-	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, "/tmp/asyncdb");
+	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, test_directory("asyncdb"));
 	boost::asio::ip::port_type port = database_server->port();
 	std::thread thread([server = database_server]() { server->serve(); });
 

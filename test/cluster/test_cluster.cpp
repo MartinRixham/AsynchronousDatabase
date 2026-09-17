@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <mutex>
 #include <shared_mutex>
 
@@ -126,8 +127,7 @@ cluster::partition_set cluster::test_cluster::vouched() const
 	return filled & holdings();
 }
 
-std::map<std::string, cluster::partition_set> cluster::test_cluster::holders(
-	const partition_set &partitions) const
+std::map<std::string, cluster::partition_set> cluster::test_cluster::holders(const partition_set &partitions) const
 {
 	std::shared_lock<std::shared_mutex> lock(membership_mutex);
 
