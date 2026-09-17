@@ -1,10 +1,13 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <sstream>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include <boost/asio.hpp>
 #include <gtest/gtest.h>
 
 #include "http/curl_client.h"
@@ -13,6 +16,35 @@
 #include "cluster/forwarder.h"
 #include "server/server.h"
 #include "directory.h"
+
+namespace
+{
+	// An answer that sends one piece and then holds the connection open without ending, which is
+	// what a watch is. It returns once the client has gone.
+	void answer_without_ending(boost::asio::ip::tcp::acceptor *acceptor, const std::string &piece)
+	{
+		boost::asio::ip::tcp::socket socket = acceptor->accept();
+		boost::asio::streambuf request;
+		boost::system::error_code error;
+
+		boost::asio::read_until(socket, request, "\r\n\r\n", error);
+
+		std::string chunk = (std::ostringstream() << std::hex << piece.size()).str() + "\r\n" + piece + "\r\n";
+
+		boost::asio::write(
+			socket,
+			boost::asio::buffer(
+				"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n" + chunk),
+			error);
+
+		char ignored[256];
+
+		while (!error)
+		{
+			socket.read_some(boost::asio::buffer(ignored), error);
+		}
+	}
+}
 
 // A client with a real server to talk to, because what is worth testing here is what libcurl does
 // between one request and the next, and a fake would answer for neither.
@@ -281,4 +313,60 @@ TEST_F(curl_client_test, keeps_a_connection_to_more_nodes_than_a_cluster_has)
 	{
 		EXPECT_TRUE(client.send(target, 30).reused) << target.url;
 	}
+}
+
+// A piece of a stream is handed on while the answer is still going, and stopping is what ends it.
+TEST_F(curl_client_test, hand_on_a_stream_as_it_arrives_until_it_is_stopped)
+{
+	boost::asio::io_context context;
+	boost::asio::ip::tcp::acceptor acceptor(
+		context,
+		boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+	std::thread streaming([&acceptor]() { answer_without_ending(&acceptor, "{\"result\":{}}\n"); });
+	std::stop_source stop;
+	std::string received;
+
+	http::request watch = get("/");
+
+	watch.method = "POST";
+	watch.url = "http://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/v3/watch";
+	watch.body = "{}";
+
+	http::response response = client.stream(
+		watch,
+		[&received, &stop](std::string_view piece)
+		{
+			received.append(piece);
+			stop.request_stop();
+
+			return true;
+		},
+		stop.get_token());
+
+	streaming.join();
+
+	EXPECT_EQ(received, "{\"result\":{}}\n");
+	EXPECT_FALSE(response.is_valid);
+}
+
+TEST_F(curl_client_test, end_a_stream_the_receiver_is_done_with)
+{
+	boost::asio::io_context context;
+	boost::asio::ip::tcp::acceptor acceptor(
+		context,
+		boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+	std::thread streaming([&acceptor]() { answer_without_ending(&acceptor, "cancelled\n"); });
+	std::stop_source stop;
+
+	http::request watch = get("/");
+
+	watch.url = "http://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/v3/watch";
+
+	http::response response =
+		client.stream(watch, [](std::string_view) { return false; }, stop.get_token());
+
+	streaming.join();
+
+	EXPECT_FALSE(response.is_valid);
+	EXPECT_FALSE(stop.stop_requested());
 }

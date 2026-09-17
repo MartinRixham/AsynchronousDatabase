@@ -197,8 +197,11 @@ for.
 A node claims **a few partitions at a time** — sixty-four on each pass of the
 membership thread, walking the ring from an offset of its own name. Claiming
 costs a round trip to etcd each, and there are 256 of them; taking a few at a
-time keeps a node's start-up short. Between them, the nodes of a fresh cluster
-settle it in a pass or two.
+time keeps a node's start-up short. A pass runs on every tick, a third of the
+lease, and also **as soon as etcd reports a change** under `/asyncdb/` — a watch
+held open to etcd — so a claim, a registration or a lease running out anywhere
+starts a pass on every node. Between them, the nodes of a fresh cluster settle
+it in moments rather than ticks.
 
 A write does not wait for a pass. **A partition nothing claims is claimed by the
 write that asks who leads it**: the node taking the write reads the one key out
@@ -223,9 +226,9 @@ lead nothing for as long as it lived.
 
 The delete is conditional on the key still holding this node's own address, so a
 claim whose lease ran out between the read and the delete belongs to whichever
-node claimed it next and is left where it is. And a claim is given up on the
-*second* pass that finds it gone rather than the first: a membership read a
-moment out of date is a partition this node may be about to be given back, and
+node claimed it next and is left where it is. And a claim is given up on a
+pass at least a tick after the one that first found it gone, not on that pass
+itself: a membership read a moment out of date is a partition this node may be about to be given back, and
 dropping that one is a partition with no leader until somebody claims it again.
 Giving a claim up costs the round trip that claiming one does, and comes out of
 the same sixty-four.

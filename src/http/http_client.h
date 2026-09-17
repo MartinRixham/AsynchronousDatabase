@@ -1,6 +1,9 @@
 #pragma once
 
+#include <functional>
+#include <stop_token>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -56,5 +59,13 @@ namespace http
 		[[nodiscard]] virtual std::vector<response> send_all(
 			const std::vector<request> &requests,
 			long timeout_seconds) const = 0;
+
+		// An answer that does not end on its own. Each piece of the body is handed to receive as it
+		// arrives rather than kept, and the transfer runs until the server ends it, the connection
+		// fails, receive answers false or stop is asked for — so it has no timeout but connecting.
+		[[nodiscard]] virtual response stream(
+			const request &request,
+			const std::function<bool(std::string_view)> &receive,
+			const std::stop_token &stop) const = 0;
 	};
 }

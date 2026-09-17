@@ -1641,3 +1641,101 @@ TEST(etcd_cluster_test, claim_partitions_no_other_node_is_claiming)
 	first_cluster.stop();
 	second_cluster.stop();
 }
+
+// The tick is ten seconds here, so a membership read again within it was read because etcd said it
+// had changed.
+TEST(etcd_cluster_test, read_the_membership_again_as_soon_as_etcd_says_it_changed)
+{
+	http::fake_client http;
+	cluster::config config = configuration(one);
+
+	config.lease_seconds = 30;
+
+	answer_etcd(&http, { one });
+	http.answer_stream("/v3/watch");
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	ASSERT_EQ(names(cluster.members()), std::vector<std::string>({ one }));
+
+	http.forget("/v3/kv/range");
+	http.answer("/v3/kv/range", http::answer(200, "application/json", membership(zoneless({ one, two }))));
+	http.push("/v3/watch", "{\"result\":{\"events\":[{\"kv\":{}}]}}\n");
+
+	for (size_t i = 0; i < 500 && cluster.members().size() < 2; i++)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+
+	EXPECT_EQ(names(cluster.members()), std::vector<std::string>({ one, two }));
+
+	cluster.stop();
+}
+
+// A watch etcd ended is a watch made again, on the tick, and a pass made meanwhile.
+TEST(etcd_cluster_test, watch_again_once_etcd_ends_the_watch)
+{
+	http::fake_client http;
+	cluster::config config = configuration(one);
+
+	config.lease_seconds = 1;
+
+	answer_etcd(&http, { one });
+	http.answer_stream("/v3/watch");
+	http.push("/v3/watch", "{\"result\":{\"canceled\":true}}\n");
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	for (size_t i = 0; i < 500 && http.sent_to("/v3/watch").size() < 2; i++)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+
+	EXPECT_GE(http.sent_to("/v3/watch").size(), 2u);
+
+	cluster.stop();
+}
+
+// A change in etcd starts a pass at once, so passes can follow one another within moments — and a
+// claim given up on the second pass to find it would be given up on a membership read a moment out
+// of date after all.
+TEST(etcd_cluster_test, give_up_no_claim_until_a_tick_after_finding_it_however_many_passes_etcd_starts)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "a" } };
+	size_t moved = partition_led(members, one, false);
+
+	ASSERT_LT(moved, cluster::partition_count);
+
+	answer_leaders(&http, { { moved, one } });
+	answer_etcd(&http, members);
+	answer_elections(&http, 41);
+	http.answer_stream("/v3/watch");
+
+	cluster::config config = configuration(one, "a");
+
+	config.claims_per_refresh = cluster::partition_count;
+	config.lease_seconds = 30;
+
+	cluster::forwarder forwarder(http);
+	cluster::etcd_cluster cluster(config, http, forwarder);
+
+	cluster.start();
+
+	for (size_t pass = 2; pass <= 4; pass++)
+	{
+		http.push("/v3/watch", "{\"result\":{\"events\":[]}}\n");
+
+		ASSERT_TRUE(wait_for_passes(http, pass));
+	}
+
+	EXPECT_TRUE(released(http).empty());
+
+	cluster.stop();
+}

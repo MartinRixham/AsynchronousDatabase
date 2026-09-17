@@ -59,6 +59,32 @@ namespace
 		return read_number(response.at("header").as_object(), "revision");
 	}
 
+	// Whether a watch goes on after one of its answers, which is every answer but etcd ending it. A
+	// line that is not a document says nothing either way.
+	bool still_watching(const std::string &line)
+	{
+		boost::system::error_code error;
+		boost::json::value value = boost::json::parse(line, error);
+
+		if (error || !value.is_object())
+		{
+			return true;
+		}
+
+		const boost::json::object &answer = value.as_object();
+
+		if (answer.contains("error"))
+		{
+			return false;
+		}
+
+		return !answer.contains("result") ||
+			!answer.at("result").is_object() ||
+			!answer.at("result").as_object().contains("canceled") ||
+			!answer.at("result").as_object().at("canceled").is_bool() ||
+			!answer.at("result").as_object().at("canceled").as_bool();
+	}
+
 	std::optional<etcd::claim> read_claim(const boost::json::object &response)
 	{
 		if (!response.contains("responses") ||
@@ -297,6 +323,67 @@ bool etcd::client::revoke(int64_t lease) const
 	boost::json::object request { { "ID", std::to_string(lease) } };
 
 	return call("lease/revoke", request, false).has_value();
+}
+
+void etcd::client::watch(
+	const std::string &prefix,
+	const std::function<void()> &changed,
+	const std::stop_token &stop) const
+{
+	if (endpoints.empty())
+	{
+		return;
+	}
+
+	boost::json::object watched { { "key", base64::encode(prefix) },
+								  { "range_end", base64::encode(range_end(prefix)) } };
+
+	http::request request { "POST",
+							endpoint() + "/v3/watch",
+							boost::json::serialize(boost::json::object { { "create_request", watched } }),
+							{ "Content-Type: application/json" } };
+
+	// The gateway writes one document to a line, and a piece of the stream ends wherever the
+	// network cut it.
+	std::string partial;
+
+	http::response response = http_client.stream(
+		request,
+		[&partial, &changed](std::string_view piece)
+		{
+			partial.append(piece);
+
+			size_t end = 0;
+
+			while ((end = partial.find('\n')) != std::string::npos)
+			{
+				std::string line = partial.substr(0, end);
+
+				partial.erase(0, end + 1);
+
+				if (line.find_first_not_of(" \t\r") == std::string::npos)
+				{
+					continue;
+				}
+
+				if (!still_watching(line))
+				{
+					DEBUG("etcd ended a watch: " + line);
+
+					return false;
+				}
+
+				changed();
+			}
+
+			return true;
+		},
+		stop);
+
+	if (!response.is_valid)
+	{
+		DEBUG("etcd watch at " + request.url + " ended: " + response.message);
+	}
 }
 
 const std::string &etcd::client::endpoint() const

@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
-#include <set>
 #include <shared_mutex>
 #include <stop_token>
 #include <thread>
@@ -121,11 +120,12 @@ namespace cluster
 		// outside is the state that outlasted a lease rather than the state of the last pass.
 		std::atomic<std::chrono::steady_clock::time_point> unled_since;
 
-		// The partitions this node holds a claim on and should no longer lead, as the pass before
-		// this one found them. A claim is given up on the second pass that finds it rather than the
-		// first, so a membership read a moment out of date is not a partition left with no leader.
-		// Touched only by the membership thread.
-		std::set<size_t> releasing;
+		// The partitions this node holds a claim on and should no longer lead, and when a pass first
+		// found each. A claim is given up a tick after it was found rather than when it was, so a
+		// membership read a moment out of date is not a partition left with no leader — and a tick
+		// rather than a pass, because a change in etcd starts a pass at once. Touched only by the
+		// membership thread and by start(), before that thread is running.
+		std::map<size_t, std::chrono::steady_clock::time_point> releasing;
 
 		// One slot a partition rather than a map behind a lock: the count is fixed, so every write
 		// raises the term of its own partition and no write waits on a write of another.
@@ -133,9 +133,17 @@ namespace cluster
 
 		std::jthread thread;
 
+		// Holds a watch on every key this node reads, so a change in etcd starts a pass at once
+		// rather than on the next tick. The tick stays: renewing a lease over the gateway is a call
+		// and not a stream, and a watch cut off without a word is a membership read on the tick.
+		std::jthread watcher;
+
 		std::mutex wait_mutex;
 
 		std::condition_variable_any wake;
+
+		// Whether etcd said something changed since the last pass began. Guarded by wait_mutex.
+		bool changed = false;
 
 	public:
 		etcd_cluster(const config &cluster_config, const http::client &http, const forwarder &forwarding);
@@ -203,6 +211,11 @@ namespace cluster
 		void leave();
 
 		void run(const std::stop_token &token);
+
+		void watch(const std::stop_token &token);
+
+		// A third of the lease: two chances to be renewed before it runs out.
+		std::chrono::seconds tick() const;
 
 		void refresh();
 

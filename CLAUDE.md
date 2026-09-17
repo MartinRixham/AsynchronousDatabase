@@ -437,7 +437,11 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   about either: what it asks another node for is a share, and a share is a set of partitions. `cluster::etcd_cluster` registers
   `/asyncdb/node/{address}` in etcd on a lease with `{"node":...,"zone":...}` as its value (a bare
   address is still read, as a node in no zone), renews it on a thread of its own, and reads the
-  membership back — and **a membership of fewer than two nodes is this node holding every key**,
+  membership back — on every tick, and **at once whenever a watch on `/asyncdb/` says a key under
+  it changed**, the watch being a second thread holding one `http::client::stream` open to etcd.
+  The watch only starts a pass and is never read for what changed, so a watch that is cut off costs
+  a tick and not a membership gone wrong; and the tick stays, because a lease is renewed over the
+  gateway a call at a time — and **a membership of fewer than two nodes is this node holding every key**,
   which is the cluster an instance told nothing runs as, so there is no second implementation of
   the seam for standing alone. The seam itself is `cluster/cluster.h`, and the rest of the
   directory is what stands behind it: `partition.h` is the hashing — `partition_of` is the 256
@@ -677,8 +681,9 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   a pass or two rather than 256 round trips. **A claim outlives the membership it was made under**:
   nothing but a lease takes one away, and a membership change renames the leader of a partition
   without any node losing its lease — so a node gives up the claim on a partition it is no longer
-  named for, deleting the key only while it still holds that node's own address and on the second
-  pass that finds it gone rather than the first. **Naming and giving up are what make leadership
+  named for, deleting the key only while it still holds that node's own address and on a pass a tick
+  after the one that first found it gone — a tick and not a second pass, because a change in etcd
+  starts a pass within milliseconds of the last. **Naming and giving up are what make leadership
   follow the membership**: a claim only ever freed by a lease running out is a node that joins a
   healthy cluster leading nothing for as long as it lives, and leadership that settles wherever the
   first race left it is one node ordering the writes of a third of the keyspace and another
@@ -686,7 +691,8 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   claiming one does and comes out of the same 64. **A write does not wait for a pass**:
   `etcd_cluster::leader` asks etcd for a claim the list does not name, and when nothing holds it the
   node the membership names creates it there and then — any other node sends the write to that one —
-  so a claim gone with a lease or given up is a window as long as the membership read, not a pass.
+  so a claim gone with a lease or given up is a window as long as the membership read, not a pass —
+  and a claim given up is itself a change the watch reports, so the node named claims it at once.
   That is why `leader()` is not const on the seam. The **term** is the etcd revision that
   created the claim; it travels in `X-Asyncdb-Term` on every write the leader orders, and a copy
   refuses anything older than the newest term it has applied (`stale_leader`, 409). That term is

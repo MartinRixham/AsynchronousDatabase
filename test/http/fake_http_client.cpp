@@ -65,6 +65,69 @@ std::vector<http::response> http::fake_client::send_all(const std::vector<reques
 	return responses;
 }
 
+void http::fake_client::answer_stream(const std::string &url)
+{
+	std::lock_guard<std::mutex> lock(mutex);
+
+	streams[url];
+}
+
+void http::fake_client::push(const std::string &url, const std::string &piece)
+{
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+
+		streams[url].push_back(piece);
+	}
+
+	pushed.notify_all();
+}
+
+http::response http::fake_client::stream(
+	const request &request,
+	const std::function<bool(std::string_view)> &receive,
+	const std::stop_token &stop) const
+{
+	std::unique_lock<std::mutex> lock(mutex);
+
+	requests.push_back(request);
+
+	auto streaming = std::ranges::find_if(
+		streams,
+		[&request](const auto &told) { return request.url.find(told.first) != std::string::npos; });
+
+	if (streaming == streams.end())
+	{
+		response response;
+
+		response.message = "Nothing answers at " + request.url;
+
+		return response;
+	}
+
+	std::deque<std::string> &waiting = streaming->second;
+
+	while (pushed.wait(lock, stop, [&waiting]() { return !waiting.empty(); }))
+	{
+		std::string piece = waiting.front();
+
+		waiting.pop_front();
+
+		lock.unlock();
+
+		bool going = receive(piece);
+
+		lock.lock();
+
+		if (!going)
+		{
+			break;
+		}
+	}
+
+	return http::answer(200, "application/json", "");
+}
+
 std::vector<http::request> http::fake_client::sent() const
 {
 	std::lock_guard<std::mutex> lock(mutex);

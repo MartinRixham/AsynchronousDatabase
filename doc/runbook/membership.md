@@ -13,7 +13,11 @@ a lease. That is what makes most of what goes wrong here fix itself.
 
 Every node renews its lease every **three seconds** — a third of the lease, so
 two chances to be renewed before it runs out — and on the same pass reads the
-membership back and claims up to **64** of the 256 partitions.
+membership back and claims up to **64** of the 256 partitions. It also holds a
+watch on `/asyncdb/` open to etcd, and runs a pass **as soon as anything under it
+changes**, so a node joining, leaving or giving a claim up is seen by the others
+within milliseconds rather than on their next tick. A watch that breaks is made
+again a tick later, and until then the tick alone keeps the node up to date.
 
 ## Reading it directly
 
@@ -244,11 +248,11 @@ Reads never wait for a leader, which is why this presents as a write-only outage
 | `leads` across the cluster | Means |
 | --- | --- |
 | Sums to 256 | Settled. Every partition is led |
-| Sums to less, and rising | A cold cluster still claiming. 64 per node per pass — wait a pass or two |
+| Sums to less, and rising | A cold cluster still claiming. 64 per node per pass, and each claim starts a pass on every node — seconds at most |
 | `0` everywhere, not rising | No node can write to etcd. Claims are transactions, so a read-only etcd claims nothing |
 | `0` on a node whose `nodes` names only itself | etcd names nobody else, or this node has never reached it, and `ASYNCDB_SERVE_UNLED=false` refuses a write nothing ordered. It is [a node alone](#a-node-alone) |
 | Sums to 256 but a write still says `no_leader` | The leader of that partition is a node this one cannot reach, or the two disagree about the membership |
-| Sums to 256, and a node that just joined leads none of it | The nodes the membership stopped naming have not given those claims up yet. Two passes, so seconds — longer, and they cannot write to etcd |
+| Sums to 256, and a node that just joined leads none of it | The nodes the membership stopped naming have not given those claims up yet. A tick after they first noticed, so seconds — longer, and they cannot write to etcd |
 | Sums to 256, and one node leads far more of it than the others | The membership those nodes read does not agree. `leads` is worked out from the same hashing on every node, so an even split is what agreement looks like |
 
 A node claims only partitions the membership names it to lead, on its own lease,

@@ -4,7 +4,6 @@
 #include <cstdlib>
 #include <iterator>
 #include <memory>
-#include <set>
 #include <utility>
 
 #include <pthread.h>
@@ -140,6 +139,7 @@ void cluster::etcd_cluster::start()
 	pthread_sigmask(SIG_BLOCK, &blocked, &previous);
 
 	thread = std::jthread([this](std::stop_token token) { run(token); });
+	watcher = std::jthread([this](std::stop_token token) { watch(token); });
 
 	pthread_sigmask(SIG_SETMASK, &previous, nullptr);
 
@@ -166,11 +166,13 @@ void cluster::etcd_cluster::stop()
 void cluster::etcd_cluster::leave()
 {
 	std::jthread finishing;
+	std::jthread watching;
 
 	{
 		std::lock_guard<std::mutex> lock(wait_mutex);
 
 		finishing = std::move(thread);
+		watching = std::move(watcher);
 	}
 
 	if (!finishing.joinable())
@@ -179,7 +181,9 @@ void cluster::etcd_cluster::leave()
 	}
 
 	finishing.request_stop();
+	watching.request_stop();
 	finishing.join();
+	watching.join();
 
 	if (lease != 0 && !etcd_client.revoke(lease))
 	{
@@ -584,21 +588,63 @@ std::vector<router::response> cluster::etcd_cluster::send_each(const std::vector
 	return request_forwarder.forward_each(enquiries);
 }
 
+std::chrono::seconds cluster::etcd_cluster::tick() const
+{
+	return std::chrono::seconds(std::max<int64_t>(configuration.lease_seconds / 3, 1));
+}
+
 void cluster::etcd_cluster::run(const std::stop_token &token)
 {
 	std::unique_lock<std::mutex> lock(wait_mutex);
 
-	// A third of the lease is two chances to be renewed before it runs out, which is what keeps a
-	// node in the membership across a slow answer from etcd.
-	std::chrono::seconds interval(std::max<int64_t>(configuration.lease_seconds / 3, 1));
-
-	// Waiting answers true when it was woken to stop and false when the interval ran out, which
-	// is the tick that renews the lease and reads the membership again.
-	while (!wake.wait_for(lock, token, interval, [&token]() { return token.stop_requested(); }))
+	// A pass on every tick, which renews the lease, and on every change etcd reports between them.
+	// Changes that arrive during a pass are one more pass and not one each.
+	while (true)
 	{
+		wake.wait_for(lock, token, tick(), [this]() { return changed; });
+
+		if (token.stop_requested())
+		{
+			return;
+		}
+
+		changed = false;
+
 		lock.unlock();
 		refresh();
 		lock.lock();
+	}
+}
+
+void cluster::etcd_cluster::watch(const std::stop_token &token)
+{
+	const std::string &nodes = configuration.prefix;
+	const std::string &leaders = configuration.leader_prefix;
+
+	// One watch over both, which is the prefix they share.
+	std::string prefix(nodes.begin(), std::ranges::mismatch(nodes, leaders).in1);
+
+	while (!token.stop_requested())
+	{
+		etcd_client.watch(
+			prefix,
+			[this]()
+			{
+				{
+					std::lock_guard<std::mutex> lock(wait_mutex);
+
+					changed = true;
+				}
+
+				wake.notify_all();
+			},
+			token);
+
+		// A watch etcd ends as soon as it is made would otherwise be one made over and over. What
+		// changes meanwhile is read on the tick.
+		std::unique_lock<std::mutex> lock(wait_mutex);
+
+		wake.wait_for(lock, token, tick(), []() { return false; });
 	}
 }
 
@@ -667,7 +713,8 @@ void cluster::etcd_cluster::read_leaders()
 	}
 
 	std::map<size_t, leadership> known;
-	std::set<size_t> to_release;
+	std::map<size_t, std::chrono::steady_clock::time_point> to_release;
+	std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
 	size_t claims = 0;
 
 	size_t offset = ::cluster::score(configuration.node, "leader") % partition_count;
@@ -686,9 +733,12 @@ void cluster::etcd_cluster::read_leaders()
 			// does, the node named now cannot claim it, because the key is there.
 			if (holder->second == configuration.node && !should_lead(*registered, partition))
 			{
+				auto found = releasing.find(partition);
+				std::chrono::steady_clock::time_point since = found == releasing.end() ? now : found->second;
+
 				// A round trip either way, so giving one up costs what claiming one does and is
 				// bounded with it.
-				if (releasing.count(partition) != 0 && claims < configuration.claims_per_refresh)
+				if (now - since >= tick() && claims < configuration.claims_per_refresh)
 				{
 					claims++;
 
@@ -705,7 +755,7 @@ void cluster::etcd_cluster::read_leaders()
 					}
 				}
 
-				to_release.insert(partition);
+				to_release[partition] = since;
 			}
 
 			// The term is not in the value, so a leadership read back from the range is the node

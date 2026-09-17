@@ -27,6 +27,21 @@ namespace
 		return size * count;
 	}
 
+	size_t hand_on(void *contents, size_t size, size_t count, void *receive)
+	{
+		std::string_view piece(static_cast<const char *>(contents), size * count);
+
+		// Answering less than it was given is how libcurl is told to end the transfer.
+		return (*static_cast<std::function<bool(std::string_view)> *>(receive))(piece) ? size * count : 0;
+	}
+
+	// Called about once a second while a stream is waiting for more, which is how long stopping one
+	// takes.
+	int keep_streaming(void *stop, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+	{
+		return static_cast<const std::stop_token *>(stop)->stop_requested() ? 1 : 0;
+	}
+
 	// Every header of this API's own, kept for the answer they belong to. A status line starts a
 	// block of them, so an answer that carried more than one block — a redirect, an interim answer
 	// — is read as the last block alone rather than as all of them at once.
@@ -343,4 +358,39 @@ std::vector<http::response> http::curl_client::send_all(const std::vector<reques
 	}
 
 	return responses;
+}
+
+http::response http::curl_client::stream(
+	const request &request,
+	const std::function<bool(std::string_view)> &receive,
+	const std::stop_token &stop) const
+{
+	CURL *curl = thread_handle();
+	response response;
+
+	if (curl == nullptr)
+	{
+		response.message = "Failed to create a curl handle.";
+
+		return response;
+	}
+
+	auto headers = apply(curl, request, &response, 0, connect_timeout_seconds, &unacknowledged_timeout_seconds);
+
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, hand_on);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &receive);
+	curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+	curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, keep_streaming);
+	curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &stop);
+
+	// A stream sends nothing once it is asked, so the bound on what goes unacknowledged never comes
+	// into it on its own: a probe is something sent, and a server gone from the network is one that
+	// acknowledges none of them.
+	curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+	curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, unacknowledged_timeout_seconds);
+	curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, unacknowledged_timeout_seconds);
+
+	complete(curl, curl_easy_perform(curl), request.url, &response);
+
+	return response;
 }

@@ -2,8 +2,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -67,6 +69,13 @@ namespace etcd
 		[[nodiscard]] std::optional<std::map<std::string, std::string>> get(const std::string &key) const;
 
 		[[nodiscard]] bool revoke(int64_t lease) const;
+
+		// Every key under a prefix, watched until the watch ends: stopped, cut off, or cancelled or
+		// refused by etcd. changed is called for each answer the watch carries, and one of them is
+		// the watch being created, so a caller that reads the keys again on every call misses no
+		// change made before the watch was there. It is made to the member the other calls last
+		// reached.
+		void watch(const std::string &prefix, const std::function<void()> &changed, const std::stop_token &stop) const;
 
 		// The member the next call will be made to.
 		const std::string &endpoint() const;

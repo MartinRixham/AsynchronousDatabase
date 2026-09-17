@@ -27,5 +27,10 @@ namespace http
 		[[nodiscard]] std::vector<response> send_all(
 			const std::vector<request> &requests,
 			long timeout_seconds) const override;
+
+		[[nodiscard]] response stream(
+			const request &request,
+			const std::function<bool(std::string_view)> &receive,
+			const std::stop_token &stop) const override;
 	};
 }

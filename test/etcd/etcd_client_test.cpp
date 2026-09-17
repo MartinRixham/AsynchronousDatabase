@@ -1,3 +1,4 @@
+#include <stop_token>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -499,4 +500,98 @@ TEST(etcd_client_test, fail_to_remove_a_key_when_etcd_is_not_there)
 	etcd::client client(http, { "http://etcd-1:2379" });
 
 	EXPECT_FALSE(client.remove("/asyncdb/leader/7", "http://asyncdb-1:8080"));
+}
+
+TEST(etcd_client_test, watch_every_key_under_a_prefix)
+{
+	http::fake_client http;
+	std::stop_source stop;
+
+	http.answer_stream("/v3/watch");
+	http.push("/v3/watch", "{\"result\":{\"header\":{\"revision\":\"7\"},\"created\":true}}\n");
+
+	etcd::client client(http, { "http://etcd:2379" });
+
+	client.watch("/asyncdb/", [&stop]() { stop.request_stop(); }, stop.get_token());
+
+	ASSERT_EQ(http.sent_to("/v3/watch").size(), 1u);
+	EXPECT_EQ(http.sent_to("/v3/watch")[0].url, "http://etcd:2379/v3/watch");
+
+	boost::json::object create = body_of(http.sent_to("/v3/watch")[0]).at("create_request").as_object();
+
+	EXPECT_EQ(decoded(create, "key"), "/asyncdb/");
+	EXPECT_EQ(decoded(create, "range_end"), "/asyncdb0");
+}
+
+TEST(etcd_client_test, tell_the_watcher_of_every_answer_however_the_stream_is_cut)
+{
+	http::fake_client http;
+	std::stop_source stop;
+	size_t answers = 0;
+
+	http.answer_stream("/v3/watch");
+	http.push("/v3/watch", "{\"result\":{\"created\":true}}\n{\"result\":{\"events\":[]}}\n{\"result\":");
+	http.push("/v3/watch", "{\"events\":[]}}\n");
+
+	etcd::client client(http, { "http://etcd:2379" });
+
+	client.watch(
+		"/asyncdb/",
+		[&answers, &stop]()
+		{
+			if (++answers == 3)
+			{
+				stop.request_stop();
+			}
+		},
+		stop.get_token());
+
+	EXPECT_EQ(answers, 3u);
+}
+
+TEST(etcd_client_test, end_a_watch_etcd_cancelled)
+{
+	http::fake_client http;
+	std::stop_source stop;
+	size_t answers = 0;
+
+	http.answer_stream("/v3/watch");
+	http.push("/v3/watch", "{\"result\":{\"canceled\":true,\"cancel_reason\":\"compacted\"}}\n");
+
+	etcd::client client(http, { "http://etcd:2379" });
+
+	client.watch("/asyncdb/", [&answers]() { answers++; }, stop.get_token());
+
+	EXPECT_FALSE(stop.stop_requested());
+	EXPECT_EQ(answers, 0u);
+}
+
+TEST(etcd_client_test, end_a_watch_etcd_refused)
+{
+	http::fake_client http;
+	std::stop_source stop;
+	size_t answers = 0;
+
+	http.answer_stream("/v3/watch");
+	http.push("/v3/watch", "{\"error\":{\"grpc_code\":14,\"message\":\"etcdserver: no leader\"}}\n");
+
+	etcd::client client(http, { "http://etcd:2379" });
+
+	client.watch("/asyncdb/", [&answers]() { answers++; }, stop.get_token());
+
+	EXPECT_EQ(answers, 0u);
+}
+
+TEST(etcd_client_test, end_a_watch_when_etcd_is_not_there)
+{
+	http::fake_client http;
+	std::stop_source stop;
+	size_t answers = 0;
+
+	etcd::client client(http, { "http://etcd:2379" });
+
+	client.watch("/asyncdb/", [&answers]() { answers++; }, stop.get_token());
+
+	EXPECT_EQ(answers, 0u);
+	EXPECT_EQ(http.sent_to("/v3/watch").size(), 1u);
 }
