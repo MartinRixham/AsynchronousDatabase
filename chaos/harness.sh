@@ -19,6 +19,7 @@ export LC_ALL=C
 stack=${CHAOS_STACK:-asyncdb}
 table=${CHAOS_TABLE:-chaos}
 records=${CHAOS_RECORDS:-200}
+value_bytes=${CHAOS_VALUE_BYTES:-5}
 settle=${CHAOS_SETTLE:-100}
 recovery=${CHAOS_RECOVERY:-600}
 onset=${CHAOS_ONSET:-20}
@@ -228,19 +229,30 @@ seed()
 		*) die "Could not create $table: $status." ;;
 	esac
 
+	# record::max_value_size, and client_max_body_size in server/server.conf.
+	[[ $value_bytes =~ ^[0-9]+$ ]] && [ "$value_bytes" -le 16777216 ] \
+		|| die "CHAOS_VALUE_BYTES is $value_bytes, and a value is 0 to 16777216 bytes."
+
+	# Base64 of random bytes, so the store cannot compress the seed down to less than it was asked
+	# to hold.
+	head -c "$value_bytes" /dev/urandom | base64 | tr -d '\n' > "$work/seed.value"
+	truncate --size "$value_bytes" "$work/seed.value"
+
 	for (( i = 0; i < records; i++ )); do
 		printf 'url = "%s"\noutput = "/dev/null"\n' "$base/table/$table/key/$i"
 	done > "$work/seed"
 
-	curl --silent --show-error --request PUT --data "chaos" \
-		--header 'Content-Type: application/octet-stream' \
+	# Only nginx answers a 100 Continue, so an address that is not behind it waits out curl's own
+	# timeout on every value over a kilobyte.
+	curl --silent --show-error --request PUT --data-binary "@$work/seed.value" \
+		--header 'Content-Type: application/octet-stream' --header 'Expect:' \
 		--config "$work/seed" --write-out '%{http_code}\n' \
 		| grep -cv '^2' > "$work/seeded"
 
 	[ "$(cat "$work/seeded")" = 0 ] \
 		|| die "$(cat "$work/seeded") of $records seed writes were refused."
 
-	echo "Seeded $records records into $table."
+	echo "Seeded $records records of $value_bytes bytes into $table."
 }
 
 status()

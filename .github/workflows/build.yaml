@@ -163,20 +163,32 @@ jobs:
           - stack: asyncdb-one
             suites: 'true'
             experiments: zone-lost containers-restart
+            records: 1000
+            value-bytes: 262144
           - stack: asyncdb-two
             experiments: etcd-unreachable nodes-added
+            records: 1000
+            value-bytes: 262144
           - stack: asyncdb-three
             experiments: node-stops nodes-removed zone-retired
+            records: 1000
+            value-bytes: 262144
           - stack: asyncdb-four
             experiments: nodes-go-deaf node-latency disk-fills etcd-quorum-lost
+            records: 1000
+            value-bytes: 262144
           - stack: asyncdb-five
             experiments: write-storm
+            records: 1000
+            value-bytes: 262144
 
     env:
       VERSION: ${{ needs.build.outputs.version }}
       STACK: ${{ matrix.stack }}
       CHAOS_STACK: ${{ matrix.stack }}
       CHAOS_EXPERIMENTS: ${{ matrix.experiments }}
+      CHAOS_RECORDS: ${{ matrix.records }}
+      CHAOS_VALUE_BYTES: ${{ matrix.value-bytes }}
 
     steps:
 

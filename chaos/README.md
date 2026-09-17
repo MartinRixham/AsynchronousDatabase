@@ -754,6 +754,7 @@ As in [`perf/`](../perf).
 | `CHAOS_URL` | The address to drive, instead of the stack's `Url` output | |
 | `CHAOS_TABLE` | The table the suite seeds and reads | `chaos` |
 | `CHAOS_RECORDS` | How many records it seeds | 200 |
+| `CHAOS_VALUE_BYTES` | How large each seeded value is, up to 16 MiB | 5 |
 | `CHAOS_SETTLE` | How long a membership change is given | 150 seconds |
 | `CHAOS_RECOVERY` | How long an instance replacement is given | 600 seconds |
 | `CHAOS_ONSET` | How long a started fault is given to bite | 20 seconds |
@@ -796,7 +797,7 @@ fault that never landed.
 == A node is stopped
    Reads survive it, writes recover with the membership, the replacement rebuilds.
 
-  Seeded 200 records into chaos.
+  Seeded 200 records of 5 bytes into chaos.
   A client is reading chaos and writing chaos-load throughout.
   PASS the stack is running six database nodes
   Stopping i-0a1b2c3d4e5f60718.
