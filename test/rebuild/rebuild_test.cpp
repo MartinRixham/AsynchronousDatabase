@@ -13,8 +13,8 @@
 #include "table/table.h"
 #include "table/schema.h"
 #include "url/url.h"
-#include "../cluster/fake_cluster.h"
-#include "../repository/fake_repository.h"
+#include "cluster/fake_cluster.h"
+#include "repository/fake_repository.h"
 
 namespace
 {
@@ -27,10 +27,7 @@ namespace
 	// This node alone in its zone, and one node in a zone of its own holding the other copy.
 	std::vector<cluster::member> two_zones()
 	{
-		return std::vector<cluster::member> {
-			cluster::member { self, "one" },
-			cluster::member { peer, "two" }
-		};
+		return std::vector<cluster::member> { cluster::member { self, "one" }, cluster::member { peer, "two" } };
 	}
 
 	router::response tables(const std::vector<std::string> &names)
@@ -222,11 +219,7 @@ TEST(rebuild_test, asks_for_the_next_file_from_the_key_the_one_before_it_reached
 	cluster::fake_cluster nodes(self, two_zones());
 
 	// The walk that wrote the first file stopped at "b", so the second begins again there.
-	nodes.answer_in_turn(peer, {
-		tables({ "account" }),
-		file({ "a", "b" }, "b"),
-		file({ "c" })
-	});
+	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a", "b" }, "b"), file({ "c" }) });
 
 	EXPECT_EQ(3u, rebuilt(repository, nodes).records);
 
@@ -243,11 +236,11 @@ TEST(rebuild_test, asks_for_the_next_file_from_the_key_the_one_before_it_reached
 TEST(rebuild_test, reads_a_share_that_more_than_one_node_of_a_zone_holds_from_each_of_them)
 {
 	repository::fake_repository repository;
-	cluster::fake_cluster nodes(self, std::vector<cluster::member> {
-		cluster::member { self, "one" },
-		cluster::member { peer, "two" },
-		cluster::member { other, "two" }
-	});
+	cluster::fake_cluster nodes(
+		self,
+		std::vector<cluster::member> { cluster::member { self, "one" },
+									   cluster::member { peer, "two" },
+									   cluster::member { other, "two" } });
 
 	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }) });
 	nodes.answer_in_turn(other, { file({ "b" }) });
@@ -266,10 +259,9 @@ TEST(rebuild_test, gives_up_on_a_zone_whose_node_does_not_answer)
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
 
-	nodes.answer_in_turn(peer, {
-		tables({ "account" }),
-		router::error_response(error::code::storage_error, "Node did not answer.")
-	});
+	nodes.answer_in_turn(
+		peer,
+		{ tables({ "account" }), router::error_response(error::code::storage_error, "Node did not answer.") });
 
 	// Short of its share: the count alone says nothing, because a node that needed nothing takes
 	// no records either.
@@ -283,11 +275,11 @@ TEST(rebuild_test, gives_up_on_a_zone_whose_node_does_not_answer)
 TEST(rebuild_test, asks_the_next_zone_when_one_of_them_does_not_answer)
 {
 	repository::fake_repository repository;
-	cluster::fake_cluster nodes(self, std::vector<cluster::member> {
-		cluster::member { self, "one" },
-		cluster::member { peer, "two" },
-		cluster::member { other, "three" }
-	});
+	cluster::fake_cluster nodes(
+		self,
+		std::vector<cluster::member> { cluster::member { self, "one" },
+									   cluster::member { peer, "two" },
+									   cluster::member { other, "three" } });
 
 	nodes.answer_in_turn(peer, { router::error_response(error::code::storage_error, "Node did not answer.") });
 	nodes.answer_in_turn(other, { tables({ "account" }), file({ "a" }) });
@@ -306,11 +298,7 @@ TEST(rebuild_test, stops_rather_than_asking_for_ever_when_a_file_does_not_advanc
 
 	// A file that ends where the one before it did, and says there is more, is a walk that asking
 	// again would ask the same thing of for ever.
-	nodes.answer_in_turn(peer, {
-		tables({ "account" }),
-		file({ "a" }, "a"),
-		file({ "a" }, "a")
-	});
+	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }, "a"), file({ "a" }, "a") });
 
 	// A rebuild that did not read a whole zone answers nothing, and the node starts thin: what it
 	// took is still its own, and there is no zone left to ask.
@@ -327,20 +315,14 @@ TEST(rebuild_test, resumes_from_a_key_that_has_to_be_encoded)
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
 
-	nodes.answer_in_turn(peer, {
-		tables({ "account" }),
-		file({ "a", "a b/c" }, "a b/c"),
-		file({ "d" })
-	});
+	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a", "a b/c" }, "a b/c"), file({ "d" }) });
 
 	EXPECT_EQ(3u, rebuilt(repository, nodes).records);
 
 	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
 
 	ASSERT_EQ(3u, sent.size());
-	EXPECT_NE(
-		std::string::npos,
-		sent[2].second.query.find("from=" + url::encode(base64::encode("a b/c"))));
+	EXPECT_NE(std::string::npos, sent[2].second.query.find("from=" + url::encode(base64::encode("a b/c"))));
 }
 
 // A node is out of the membership until its rebuild is done, so a rebuild being answered nothing

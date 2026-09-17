@@ -9,7 +9,7 @@
 
 namespace repository
 {
-	class fake_repository : public repository
+	class fake_repository final : public repository
 	{
 		table::schema tables;
 

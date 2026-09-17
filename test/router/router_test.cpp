@@ -1593,7 +1593,7 @@ namespace
 {
 	// The zones of paired_zones, with a fan out slow enough to be caught overlapping another and a
 	// count of the most writes that were ever inside one at once.
-	class counting_cluster : public cluster::fake_cluster
+	class counting_cluster final : public cluster::fake_cluster
 	{
 		mutable std::mutex counting;
 

@@ -71,7 +71,7 @@ namespace cluster
 
 	config from_environment();
 
-	class etcd_cluster : public cluster
+	class etcd_cluster final : public cluster
 	{
 		config configuration;
 

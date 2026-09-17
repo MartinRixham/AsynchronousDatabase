@@ -19,7 +19,7 @@ namespace cluster
 	// Two real servers on two real ports, which are known only once they are listening, so the
 	// membership is told to the cluster rather than read from etcd. Everything else — who owns a
 	// key, and how a request reaches the node that does — is the cluster the server runs.
-	class test_cluster : public cluster
+	class test_cluster final : public cluster
 	{
 		// A test redraws the membership and names the leader while the servers are running, and
 		// their sessions and reconcile passes read both throughout.

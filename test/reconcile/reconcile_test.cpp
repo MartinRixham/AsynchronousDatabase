@@ -13,8 +13,8 @@
 #include "table/table.h"
 #include "table/schema.h"
 #include "url/url.h"
-#include "../cluster/fake_cluster.h"
-#include "../repository/fake_repository.h"
+#include "cluster/fake_cluster.h"
+#include "repository/fake_repository.h"
 
 namespace
 {
@@ -34,12 +34,10 @@ namespace
 	// Two nodes in this node's zone, and one in each of two more.
 	std::vector<cluster::member> three_zones()
 	{
-		return std::vector<cluster::member> {
-			cluster::member { self, "one" },
-			cluster::member { mate, "one" },
-			cluster::member { peer, "two" },
-			cluster::member { other, "three" }
-		};
+		return std::vector<cluster::member> { cluster::member { self, "one" },
+											  cluster::member { mate, "one" },
+											  cluster::member { peer, "two" },
+											  cluster::member { other, "three" } };
 	}
 
 	// A file as the node being read from would have answered with, which is that node's own store
@@ -169,8 +167,9 @@ namespace
 
 	bool is_file(const router::request &request, bool values)
 	{
-		return request.path.size() == 3 && request.path[2] == "file" &&
-			url::read_parameter(request.query, "values") == (values ? "true" : "false");
+		return request.path.size() == 3 &&
+			   request.path[2] == "file" &&
+			   url::read_parameter(request.query, "values") == (values ? "true" : "false");
 	}
 
 	cluster::partition_set partitions_of(const router::request &request)
@@ -189,9 +188,7 @@ namespace
 			sent.begin(),
 			sent.end(),
 			[&node](const std::pair<std::string, router::request> &request)
-			{
-				return request.first == node && is_file(request.second, true);
-			});
+			{ return request.first == node && is_file(request.second, true); });
 
 		return asked == sent.end() ? cluster::partition_set() : partitions_of(asked->second);
 	}
@@ -207,8 +204,7 @@ namespace
 			sent.end(),
 			[&key](const std::pair<std::string, router::request> &request)
 			{
-				return is_file(request.second, false) &&
-					partitions_of(request.second).test(cluster::partition_of(key));
+				return is_file(request.second, false) && partitions_of(request.second).test(cluster::partition_of(key));
 			});
 
 		return asked == sent.end() ? "" : asked->first;
@@ -240,9 +236,7 @@ namespace
 			sent.begin(),
 			sent.end(),
 			[&node, values](const std::pair<std::string, router::request> &request)
-			{
-				return request.first == node && is_file(request.second, values);
-			}));
+			{ return request.first == node && is_file(request.second, values); }));
 	}
 }
 

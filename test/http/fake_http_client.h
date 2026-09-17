@@ -11,7 +11,7 @@ namespace http
 	// Answers what it was told to answer to a URL holding a given piece of text, and remembers
 	// every request it was sent. The membership of a cluster is kept up by a thread of its own,
 	// so both are guarded.
-	class fake_client : public client
+	class fake_client final : public client
 	{
 		struct reply
 		{

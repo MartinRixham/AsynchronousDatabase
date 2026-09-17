@@ -6,7 +6,7 @@
 
 namespace http
 {
-	class curl_client : public client
+	class curl_client final : public client
 	{
 		// Connecting is bounded apart from the transfer, because the two answer different
 		// questions. A node that is not there is told from a node that is slow: the first costs

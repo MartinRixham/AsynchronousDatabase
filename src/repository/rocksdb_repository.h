@@ -25,7 +25,7 @@ namespace repository
 	// and the default is the smallest machine this is meant to run on rather than the largest.
 	constexpr size_t default_memory_bytes = 512 * 1024 * 1024;
 
-	class rocksdb_repository : public repository
+	class rocksdb_repository final : public repository
 	{
 		// Declared before the database so that what the database holds a share of outlives it.
 		std::shared_ptr<rocksdb::Cache> block_cache;

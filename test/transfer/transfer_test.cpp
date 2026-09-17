@@ -22,8 +22,8 @@
 #include "router/router.h"
 #include "table/table.h"
 #include "transfer/transfer.h"
-#include "../cluster/fake_cluster.h"
-#include "../repository/fake_repository.h"
+#include "cluster/fake_cluster.h"
+#include "repository/fake_repository.h"
 
 namespace
 {
@@ -36,7 +36,7 @@ namespace
 	// The node being read from, with a real router over a real store behind it — which is what a
 	// walk is reading when it runs, rather than answers written out by hand. Only the two calls a
 	// walk makes are answered; everything else is a cluster of one.
-	class serving_node : public cluster::cluster
+	class serving_node final : public cluster::cluster
 	{
 		router::router &served;
 
@@ -45,7 +45,8 @@ namespace
 		mutable std::atomic<size_t> widest_fan_out = 0;
 
 	public:
-		explicit serving_node(router::router &router): served(router)
+		explicit serving_node(router::router &router):
+			served(router)
 		{
 		}
 
@@ -119,8 +120,7 @@ namespace
 			return holdings();
 		}
 
-		std::map<std::string, ::cluster::partition_set> holders(
-			const ::cluster::partition_set &) const override
+		std::map<std::string, ::cluster::partition_set> holders(const ::cluster::partition_set &) const override
 		{
 			return std::map<std::string, ::cluster::partition_set>();
 		}
@@ -176,9 +176,8 @@ namespace
 		{
 		}
 
-		std::optional<router::response> send_all(
-			const std::vector<std::string> &,
-			const router::request &) const override
+		std::optional<router::response> send_all(const std::vector<std::string> &, const router::request &)
+			const override
 		{
 			return std::nullopt;
 		}
