@@ -1,3 +1,5 @@
+#include <poll.h>
+
 #include <boost/asio/error.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -12,6 +14,11 @@ namespace
 	// into the body as it goes, so a buffer left to grow on its own reads a body 512 bytes at a
 	// time. This is the most Beast reads at once.
 	constexpr size_t read_size = 64 * 1024;
+
+	// A node closes a connection it has waited sixty seconds on for a request (server::session), and
+	// a request sent on one it has closed can go unanswered until the unacknowledged timeout rather
+	// than be refused. So a connection is given up well before the node would give it up.
+	constexpr std::chrono::seconds max_idle(45);
 }
 
 http::connection::connection(
@@ -33,6 +40,25 @@ bool http::connection::goes_to(const std::string &host, const std::string &port)
 bool http::connection::is_open() const noexcept
 {
 	return socket_stream.socket().is_open();
+}
+
+void http::connection::mark_idle() noexcept
+{
+	idle_since = std::chrono::steady_clock::now();
+}
+
+bool http::connection::is_reusable(std::chrono::steady_clock::time_point at) noexcept
+{
+	if (!is_open() || at - idle_since >= max_idle)
+	{
+		return false;
+	}
+
+	// Nothing is due on a connection between an answer and the next request, so anything to read
+	// on one is the node closing it, or a reset.
+	pollfd waiting = { socket_stream.socket().native_handle(), POLLIN, 0 };
+
+	return poll(&waiting, 1, 0) == 0;
 }
 
 boost::beast::tcp_stream &http::connection::stream() noexcept

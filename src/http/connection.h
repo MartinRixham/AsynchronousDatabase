@@ -22,6 +22,8 @@ namespace http
 
 		boost::beast::flat_buffer received;
 
+		std::chrono::steady_clock::time_point idle_since;
+
 	public:
 		connection(const boost::asio::any_io_executor &executor, const std::string &host, const std::string &port);
 
@@ -32,6 +34,13 @@ namespace http
 		[[nodiscard]] bool goes_to(const std::string &host, const std::string &port) const noexcept;
 
 		[[nodiscard]] bool is_open() const noexcept;
+
+		// Handed back to a pool, and waiting from now for the next request to the node.
+		void mark_idle() noexcept;
+
+		// Whether a connection that has been idle can still be sent a request at the time named:
+		// open, closed by nothing at the other end, and not idle for as long as a node keeps one.
+		[[nodiscard]] bool is_reusable(std::chrono::steady_clock::time_point at) noexcept;
 
 		[[nodiscard]] boost::beast::tcp_stream &stream() noexcept;
 

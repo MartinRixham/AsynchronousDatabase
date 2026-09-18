@@ -63,3 +63,26 @@ TEST(connection_test, keep_room_for_a_whole_read)
 
 	EXPECT_GE(link.buffer().capacity(), 64 * 1024);
 }
+
+TEST(connection_test, give_up_a_connection_idle_for_as_long_as_a_node_keeps_one)
+{
+	boost::asio::io_context context;
+	boost::asio::ip::tcp::acceptor acceptor(
+		context,
+		boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+	http::connection link(context.get_executor(), "127.0.0.1", std::to_string(acceptor.local_endpoint().port()));
+
+	boost::asio::co_spawn(
+		context,
+		link.connect(std::chrono::steady_clock::now() + std::chrono::seconds(5)),
+		boost::asio::detached);
+
+	context.run();
+
+	link.mark_idle();
+
+	std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+
+	EXPECT_TRUE(link.is_reusable(now));
+	EXPECT_FALSE(link.is_reusable(now + std::chrono::seconds(60)));
+}

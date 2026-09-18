@@ -337,9 +337,9 @@ namespace
 
 			link.close();
 
-			// A connection out of the pool may have been closed by the node at the other end while
-			// nothing was going on it, which is a request to make again rather than a request that
-			// failed. Only once, and only while nothing of the answer has been read.
+			// A connection out of the pool may have been closed by the node at the other end since
+			// the pool last looked at it, which is a request to make again rather than a request
+			// that failed. Only once, and only while nothing of the answer has been read.
 			if (!answer.reused || parser.got_some())
 			{
 				answer.message = failed.message();

@@ -444,7 +444,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   slowest of them rather than for the sum of them. **A fan out does not copy the bodies it is
   given** — the message carries a span of the caller's own — so the requests have to outlive the
   call. **A connection out of the pool may have been closed at the other end while nothing was going
-  on it**, and what says so is the request that fails on it: an exchange given a kept connection
+  on it**, and a request sent on one can go unanswered until the unacknowledged timeout rather than
+  be refused. So both pools hand out the connection kept last, and pass over one the node has
+  closed or that has been idle for most of the sixty seconds a session waits for a request. A close
+  that crosses the request is left to the exchange: given a kept connection, it
   makes its request again on a connection of its own, once, and only while nothing of the answer has
   been read. **`async_send` is the same exchange awaited on the executor of the
   coroutine asking**, which is the server's strand for a record: it takes a connection from an

@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <chrono>
+#include <iterator>
 
 #include "pool.h"
 
@@ -17,18 +19,25 @@ boost::asio::io_context &http::pool::context() noexcept
 
 std::unique_ptr<http::connection> http::pool::take(const std::string &host, const std::string &port)
 {
-	auto held = std::ranges::find_if(
+	std::erase_if(
 		idle,
+		[&host, &port, now = std::chrono::steady_clock::now()](const std::unique_ptr<connection> &kept)
+		{ return kept->goes_to(host, port) && !kept->is_reusable(now); });
+
+	// The connection kept last is the one least likely to have been closed since.
+	auto held = std::ranges::find_if(
+		idle.rbegin(),
+		idle.rend(),
 		[&host, &port](const std::unique_ptr<connection> &kept) { return kept->goes_to(host, port); });
 
-	if (held == idle.end())
+	if (held == idle.rend())
 	{
 		return std::make_unique<connection>(io.get_executor(), host, port);
 	}
 
 	std::unique_ptr<connection> taken = std::move(*held);
 
-	idle.erase(held);
+	idle.erase(std::next(held).base());
 
 	return taken;
 }
@@ -47,6 +56,7 @@ void http::pool::keep(std::unique_ptr<connection> used)
 		idle.erase(idle.begin());
 	}
 
+	used->mark_idle();
 	idle.push_back(std::move(used));
 }
 

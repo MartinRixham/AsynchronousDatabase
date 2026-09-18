@@ -69,3 +69,40 @@ TEST(pool_test, drop_the_connection_asked_for_longest_ago_to_keep_another)
 		EXPECT_TRUE(held.take(node(number), port)->is_open()) << node(number);
 	}
 }
+
+TEST(pool_test, take_the_connection_to_a_node_kept_last)
+{
+	boost::asio::io_context context;
+	boost::asio::ip::tcp::acceptor acceptor(
+		context,
+		boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+	std::string port = std::to_string(acceptor.local_endpoint().port());
+	http::pool held;
+	std::unique_ptr<http::connection> first = opened(held, node(1), port);
+	std::unique_ptr<http::connection> last = opened(held, node(1), port);
+	boost::asio::ip::port_type kept_last = last->stream().socket().local_endpoint().port();
+
+	held.keep(std::move(first));
+	held.keep(std::move(last));
+
+	EXPECT_EQ(held.take(node(1), port)->stream().socket().local_endpoint().port(), kept_last);
+}
+
+TEST(pool_test, pass_over_a_connection_the_node_closed)
+{
+	boost::asio::io_context context;
+	boost::asio::ip::tcp::acceptor acceptor(
+		context,
+		boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+	std::string port = std::to_string(acceptor.local_endpoint().port());
+	http::pool held;
+	std::unique_ptr<http::connection> link = opened(held, node(1), port);
+	boost::asio::ip::tcp::socket accepted = acceptor.accept();
+
+	accepted.close();
+	link->stream().socket().wait(boost::asio::ip::tcp::socket::wait_read);
+
+	held.keep(std::move(link));
+
+	EXPECT_FALSE(held.take(node(1), port)->is_open());
+}
