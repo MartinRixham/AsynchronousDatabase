@@ -60,7 +60,7 @@ namespace router
 
 		response route_table(const request &request, const std::string &name);
 
-		response route_range(const request &request, const std::string &name);
+		boost::asio::awaitable<response> route_range(const request &request, const std::string &name);
 
 		response route_file(const request &request, const std::string &name);
 
@@ -151,7 +151,7 @@ namespace router
 
 		response delete_table(const request &request, const std::string &name);
 
-		response scan_records(const request &request, const std::string &name);
+		boost::asio::awaitable<response> scan_records(const request &request, const std::string &name);
 
 		response answer_page(const request &request, const std::string &name);
 

@@ -11,3 +11,7 @@ mutex:std::condition_variable::wait
 # RocksDB's out-of-line std::string copies bind to the instrumented copy in test_main, so memory it
 # synchronises for itself is reported from our binary rather than from the library.
 race:rocksdb::VersionStorageInfo::VersionStorageInfo
+
+# RocksDB hands its cached zstd decompression contexts between threads through atomics of its own, and
+# zstd is reached from RocksDB alone, so a context one thread made is reported as raced by the next.
+called_from_lib:libzstd.so

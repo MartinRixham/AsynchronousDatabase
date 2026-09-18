@@ -243,7 +243,7 @@ boost::asio::awaitable<router::response> router::router::route(const request &re
 
 	if (path.size() == 3)
 	{
-		return answered(route_range(request, path[1]));
+		return route_range(request, path[1]);
 	}
 
 	if (path.size() != 4 && path.size() != 5)
@@ -373,11 +373,11 @@ router::response router::router::route_table(const request &request, const std::
 	return json_response(boost::beast::http::status::ok, table.json);
 }
 
-router::response router::router::route_range(const request &request, const std::string &name)
+boost::asio::awaitable<router::response> router::router::route_range(const request &request, const std::string &name)
 {
 	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
 	{
-		return method_not_allowed(request.method);
+		return answered(method_not_allowed(request.method));
 	}
 
 	return scan_records(request, name);
@@ -699,23 +699,6 @@ boost::asio::awaitable<router::response> router::router::read_record(const reque
 	co_return answer;
 }
 
-router::response router::router::read_copies(const request &request, const std::vector<std::string> &replicas)
-{
-	response answer = error_response(error::code::storage_error, "No node holding this key answered.");
-
-	for (const auto &replica : replicas)
-	{
-		answer = forwarding.forward(replica, request);
-
-		if (answer.status < boost::beast::http::status::internal_server_error)
-		{
-			return answer;
-		}
-	}
-
-	return answer;
-}
-
 router::router::ordering router::router::order_schema(const request &request)
 {
 	// A term is a leader having ordered this already, so the node it was sent to carries it out
@@ -867,16 +850,16 @@ router::response router::router::delete_table(const request &request, const std:
 	return failure ? *failure : empty_response(boost::beast::http::status::no_content);
 }
 
-router::response router::router::scan_records(const request &request, const std::string &name)
+boost::asio::awaitable<router::response> router::router::scan_records(const request &request, const std::string &name)
 {
 	if (!request.forwarded && nodes.is_alone())
 	{
-		return node_alone();
+		return answered(node_alone());
 	}
 
 	if (!repository.has_table(name))
 	{
-		return table_not_found(name);
+		return answered(table_not_found(name));
 	}
 
 	// **The partition is what routes a scan, and it is read before anything else in the range.**
@@ -888,7 +871,7 @@ router::response router::router::scan_records(const request &request, const std:
 	{
 		scan::range refused = scan::parse_range(request.query, repository.instance());
 
-		return error_response(refused.code, refused.message);
+		return answered(error_response(refused.code, refused.message));
 	}
 
 	// **A scan is answered by one node, because a partition is held by one node of every zone.**
@@ -900,7 +883,7 @@ router::response router::router::scan_records(const request &request, const std:
 
 	if (where.local && whole)
 	{
-		return answer_page(request, name);
+		return answered(answer_page(request, name));
 	}
 
 	// A node holding less than it owns cannot answer for a partition it may not have filled: what
@@ -908,10 +891,10 @@ router::response router::router::scan_records(const request &request, const std:
 	// of them. So it asks a copy that can, and answers for itself only when there is no other.
 	if (!where.nodes.empty())
 	{
-		return read_copies(request, where.nodes);
+		return read_record(request, where);
 	}
 
-	return whole ? answer_page(request, name) : node_incomplete();
+	return answered(whole ? answer_page(request, name) : node_incomplete());
 }
 
 // The page this node's own store answers with. The range is read here and not before the scan was
