@@ -33,6 +33,7 @@ namespace
 	restored copy_table(
 		repository::repository &repository,
 		cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		const std::string &node,
 		const std::string &name,
 		const cluster::partition_set &partitions,
@@ -52,7 +53,7 @@ namespace
 		std::atomic<size_t> records = 0;
 
 		taken.whole = transfer::walk(
-			nodes,
+			forwarding,
 			wanted,
 			unstopped,
 			waiting,
@@ -70,13 +71,14 @@ namespace
 	restored from_zone(
 		repository::repository &repository,
 		cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		const std::vector<std::string> &zone,
 		const cluster::partition_set &partitions,
 		size_t workers,
 		progress::patience &waiting)
 	{
 		restored taken;
-		std::optional<table::schema> tables = transfer::tables(nodes, zone, waiting);
+		std::optional<table::schema> tables = transfer::tables(forwarding, zone, waiting);
 
 		if (!tables)
 		{
@@ -100,7 +102,7 @@ namespace
 		{
 			for (const auto &[holder, share] : holders)
 			{
-				restored copied = copy_table(repository, nodes, holder, name, share, workers, waiting);
+				restored copied = copy_table(repository, nodes, forwarding, holder, name, share, workers, waiting);
 
 				taken.records += copied.records;
 
@@ -120,6 +122,7 @@ namespace
 rebuild::outcome rebuild::rebuild(
 	repository::repository &repository,
 	cluster::cluster &nodes,
+	const cluster::forwarder &forwarding,
 	long seconds,
 	size_t workers)
 {
@@ -157,7 +160,7 @@ rebuild::outcome rebuild::rebuild(
 			return outcome { 0, false };
 		}
 
-		restored taken = from_zone(repository, nodes, zones[i], partitions, workers, waiting);
+		restored taken = from_zone(repository, nodes, forwarding, zones[i], partitions, workers, waiting);
 
 		if (taken.whole)
 		{

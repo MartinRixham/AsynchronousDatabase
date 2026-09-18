@@ -15,6 +15,7 @@
 #include "request.h"
 #include "response.h"
 #include "cluster/cluster.h"
+#include "cluster/forwarder.h"
 #include "repository/repository.h"
 
 namespace router
@@ -24,6 +25,10 @@ namespace router
 		repository::repository &repository;
 
 		cluster::cluster &nodes;
+
+		// How a request reaches one of them. Where the key lives and how to get there are two
+		// questions, and the router asks each of them of the seam that answers it.
+		const cluster::forwarder &forwarding;
 
 		// There are far more stripes than the pool has threads because a collision is not cheap:
 		// a stripe is held across the fan out, so the second key waits a round trip on the first.
@@ -45,7 +50,7 @@ namespace router
 		std::atomic<bool> draining = false;
 
 	public:
-		router(repository::repository &repo, cluster::cluster &nodes);
+		router(repository::repository &repo, cluster::cluster &nodes, const cluster::forwarder &forwarding);
 
 		response route(const request &request);
 

@@ -5,6 +5,7 @@
 #include <stop_token>
 
 #include "cluster/cluster.h"
+#include "cluster/forwarder.h"
 #include "repository/repository.h"
 #include "transfer/transfer.h"
 
@@ -69,6 +70,7 @@ namespace reconcile
 	[[nodiscard]] outcome reconcile(
 		repository::repository &repository,
 		cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		const std::stop_token &token,
 		size_t page = default_page,
 		long seconds = default_seconds,

@@ -116,6 +116,7 @@ server::server::server(
 	boost::asio::ip::port_type port,
 	int threads,
 	cluster::cluster &cluster_nodes,
+	const cluster::forwarder &node_forwarding,
 	const std::string &directory,
 	size_t memory_bytes):
 	thread_count(threads),
@@ -124,7 +125,8 @@ server::server::server(
 	drain_timer(acceptor.get_executor()),
 	repository(repository::rocksdb_repository(directory, memory_bytes)),
 	nodes(cluster_nodes),
-	router(router::router(repository, nodes))
+	forwarding(node_forwarding),
+	router(router::router(repository, nodes, forwarding))
 {
 	boost::beast::error_code error;
 	boost::asio::ip::tcp::endpoint endpoint { boost::asio::ip::address_v4::any(), port };
@@ -193,7 +195,7 @@ void server::server::serve()
 	{
 		try
 		{
-			whole = rebuild::rebuild(repository, nodes).whole;
+			whole = rebuild::rebuild(repository, nodes, forwarding).whole;
 		}
 		catch (const std::exception &caught)
 		{
@@ -357,7 +359,7 @@ void server::server::reconcile(const std::stop_token &token, bool behind)
 			// is a pass that did some of it, and the attempts left are what runs the rest.
 			try
 			{
-				reconcile::outcome done = reconcile::reconcile(repository, nodes, token);
+				reconcile::outcome done = reconcile::reconcile(repository, nodes, forwarding, token);
 
 				nodes.vouch(done.filled, done.generation);
 

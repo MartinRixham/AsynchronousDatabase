@@ -14,6 +14,7 @@
 #include "table/schema.h"
 #include "url/url.h"
 #include "cluster/fake_cluster.h"
+#include "cluster/fake_forwarder.h"
 #include "repository/fake_repository.h"
 
 namespace
@@ -158,11 +159,12 @@ namespace
 	reconcile::outcome reconciled(
 		repository::repository &repository,
 		cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		const std::stop_token &flag,
 		size_t page = reconcile::default_page,
 		long seconds = reconcile::default_seconds)
 	{
-		return reconcile::reconcile(repository, nodes, flag, page, seconds, 1);
+		return reconcile::reconcile(repository, nodes, forwarding, flag, page, seconds, 1);
 	}
 
 	bool is_file(const router::request &request, bool values)
@@ -180,9 +182,9 @@ namespace
 
 	// The partitions the first file of records asked of a node named, which is the whole of what
 	// decides what that node sends back.
-	cluster::partition_set asked_for(const cluster::fake_cluster &nodes, const std::string &node)
+	cluster::partition_set asked_for(const cluster::fake_forwarder &forwarding, const std::string &node)
 	{
-		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+		const std::vector<std::pair<std::string, router::request>> &sent = forwarding.sent();
 
 		auto asked = std::find_if(
 			sent.begin(),
@@ -195,9 +197,9 @@ namespace
 
 	// Where the question that lets this key go was put, which is the whole of what makes clearing
 	// down safe.
-	std::string asked_about(const cluster::fake_cluster &nodes, const std::string &key)
+	std::string asked_about(const cluster::fake_forwarder &forwarding, const std::string &key)
 	{
-		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+		const std::vector<std::pair<std::string, router::request>> &sent = forwarding.sent();
 
 		auto asked = std::find_if(
 			sent.begin(),
@@ -212,9 +214,9 @@ namespace
 
 	// The queries of the files asked of a node, in the order they were asked for, so that a test
 	// about resuming a walk does not also depend on which node a pass asks first.
-	std::vector<std::string> file_queries_of(const cluster::fake_cluster &nodes, const std::string &node)
+	std::vector<std::string> file_queries_of(const cluster::fake_forwarder &forwarding, const std::string &node)
 	{
-		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+		const std::vector<std::pair<std::string, router::request>> &sent = forwarding.sent();
 		std::vector<std::string> queries;
 
 		for (const auto &[asked, request] : sent)
@@ -228,9 +230,9 @@ namespace
 		return queries;
 	}
 
-	size_t files_asked_of(const cluster::fake_cluster &nodes, const std::string &node, bool values)
+	size_t files_asked_of(const cluster::fake_forwarder &forwarding, const std::string &node, bool values)
 	{
-		const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+		const std::vector<std::pair<std::string, router::request>> &sent = forwarding.sent();
 
 		return static_cast<size_t>(std::count_if(
 			sent.begin(),
@@ -244,8 +246,9 @@ TEST(reconcile_test, moves_nothing_for_an_instance_standing_alone)
 {
 	repository::fake_repository repository = store({ "a" });
 	cluster::fake_cluster nodes(self, std::vector<cluster::member>());
+	cluster::fake_forwarder forwarding;
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(0u, done.fetched);
 	EXPECT_EQ(0u, done.cleared);
@@ -254,7 +257,7 @@ TEST(reconcile_test, moves_nothing_for_an_instance_standing_alone)
 	EXPECT_FALSE(done.moved());
 
 	// Nobody was asked anything, and the record it owns on its own is still there.
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 }
 
@@ -264,18 +267,19 @@ TEST(reconcile_test, a_pass_that_is_no_longer_running_asks_nobody_anything)
 {
 	repository::fake_repository repository = store({ "gone" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 	std::stop_source stopping;
 
 	stopping.request_stop();
 
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer(mate, holds({ "gone" }));
+	forwarding.answer(mate, holds({ "gone" }));
 
-	reconcile::outcome done = reconciled(repository, nodes, stopping.get_token());
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, stopping.get_token());
 
 	EXPECT_EQ(0u, done.cleared);
 	EXPECT_FALSE(done.settled());
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_TRUE(repository.read_record("account", "gone").has_value());
 }
 
@@ -283,11 +287,12 @@ TEST(reconcile_test, fetches_a_record_this_node_owns_and_holds_nothing_for)
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(mate, records({ "a" }));
+	forwarding.answer(mate, records({ "a" }));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(1u, done.fetched);
 	EXPECT_TRUE(done.moved());
@@ -298,11 +303,12 @@ TEST(reconcile_test, does_not_overwrite_a_record_it_holds_already)
 {
 	repository::fake_repository repository = store({ "a" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(mate, records({ "a" }));
+	forwarding.answer(mate, records({ "a" }));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	// A local record is this node's own copy and the newer of the two: every write since the
 	// ownership moved came here, and what the file carries was written before it did.
@@ -314,14 +320,15 @@ TEST(reconcile_test, does_not_fetch_a_record_it_does_not_own)
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer(mate, records({}));
+	forwarding.answer(mate, records({}));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(0u, done.fetched);
-	EXPECT_FALSE(asked_for(nodes, mate).test(cluster::partition_of("a")));
+	EXPECT_FALSE(asked_for(forwarding, mate).test(cluster::partition_of("a")));
 	EXPECT_FALSE(repository.read_record("account", "a").has_value());
 }
 
@@ -332,13 +339,14 @@ TEST(reconcile_test, fetches_from_a_further_zone_when_the_nearer_ones_hold_nothi
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(mate, records({}));
-	nodes.answer(peer, records({}));
-	nodes.answer(other, records({ "a" }));
+	forwarding.answer(mate, records({}));
+	forwarding.answer(peer, records({}));
+	forwarding.answer(other, records({ "a" }));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(1u, done.fetched);
 	EXPECT_EQ("value of a", repository.read_record("account", "a").value_or(""));
@@ -348,18 +356,19 @@ TEST(reconcile_test, clears_down_a_record_the_owner_in_its_own_zone_holds)
 {
 	repository::fake_repository repository = store({ "a" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	// The copy in this node's own zone is the first this node would ask, which is how replicas
 	// orders them.
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "a" }) });
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "a" }) });
 
 	// The fetch half asks every node of every zone, and a pass any of them would not answer is a
 	// pass that is not settled whatever the clear down did.
-	nodes.answer(peer, records({}));
-	nodes.answer(other, records({}));
+	forwarding.answer(peer, records({}));
+	forwarding.answer(other, records({}));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(1u, done.cleared);
 	EXPECT_EQ(0u, done.deferred);
@@ -371,11 +380,12 @@ TEST(reconcile_test, keeps_a_record_the_owner_in_its_own_zone_has_not_taken_over
 {
 	repository::fake_repository repository = store({ "a" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer(mate, holds({}));
+	forwarding.answer(mate, holds({}));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	// The copy is never the last one: a node that has not fetched what it now owns is a node this
 	// one waits for, and a pass that is waiting is not settled.
@@ -391,15 +401,16 @@ TEST(reconcile_test, asks_the_owner_in_its_own_zone_and_never_another_zone)
 {
 	repository::fake_repository repository = store({ "a" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer(mate, holds({}));
-	nodes.answer(peer, holds({ "a" }));
-	nodes.answer(other, holds({ "a" }));
+	forwarding.answer(mate, holds({}));
+	forwarding.answer(peer, holds({ "a" }));
+	forwarding.answer(other, holds({ "a" }));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
-	EXPECT_EQ(mate, asked_about(nodes, "a"));
+	EXPECT_EQ(mate, asked_about(forwarding, "a"));
 	EXPECT_EQ(0u, done.cleared);
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 }
@@ -410,6 +421,7 @@ TEST(reconcile_test, asks_the_owner_once_for_a_share_rather_than_once_for_every_
 {
 	repository::fake_repository repository = store({ "a", "b", "c", "d", "e" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { mate, peer, other });
 	nodes.copies("b", { mate, peer, other });
@@ -417,12 +429,12 @@ TEST(reconcile_test, asks_the_owner_once_for_a_share_rather_than_once_for_every_
 	nodes.copies("d", { mate, peer, other });
 	nodes.copies("e", { mate, peer, other });
 
-	nodes.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "a", "b", "c", "d", "e" }) });
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "a", "b", "c", "d", "e" }) });
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(5u, done.cleared);
-	EXPECT_EQ(1u, files_asked_of(nodes, mate, false));
+	EXPECT_EQ(1u, files_asked_of(forwarding, mate, false));
 }
 
 // And the answer carries keys and no values, because what is being decided is where a record
@@ -431,24 +443,26 @@ TEST(reconcile_test, asks_the_owner_for_keys_and_never_for_values)
 {
 	repository::fake_repository repository = store({ "a" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { mate, peer, other });
-	nodes.answer(mate, holds({ "a" }));
+	forwarding.answer(mate, holds({ "a" }));
 
-	reconciled(repository, nodes, running);
+	reconciled(repository, nodes, forwarding, running);
 
-	EXPECT_EQ(1u, files_asked_of(nodes, mate, false));
+	EXPECT_EQ(1u, files_asked_of(forwarding, mate, false));
 }
 
 TEST(reconcile_test, keeps_a_record_there_is_nobody_to_ask_about)
 {
 	repository::fake_repository repository = store({ "a" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	// A key this node holds no copy of and owns no copy of is one nothing can be asked about.
 	nodes.copies("a", std::vector<std::string>());
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(0u, done.cleared);
 	EXPECT_EQ(1u, done.deferred);
@@ -461,15 +475,16 @@ TEST(reconcile_test, fetches_what_it_gained_and_clears_down_what_it_lost)
 {
 	repository::fake_repository repository = store({ "gone" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("gained", { self, peer, other });
 	nodes.copies("gone", { mate, peer, other });
 
-	nodes.answer_in_turn(mate, { named({ "account" }), records({ "gained" }), holds({ "gone" }) });
-	nodes.answer(peer, records({}));
-	nodes.answer(other, records({}));
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({ "gained" }), holds({ "gone" }) });
+	forwarding.answer(peer, records({}));
+	forwarding.answer(other, records({}));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(1u, done.fetched);
 	EXPECT_EQ(1u, done.cleared);
@@ -486,11 +501,12 @@ TEST(reconcile_test, a_pass_that_ran_out_of_patience_is_not_settled)
 {
 	repository::fake_repository repository = store({ "gone" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer(mate, holds({ "gone" }));
+	forwarding.answer(mate, holds({ "gone" }));
 
-	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 0);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running, reconcile::default_page, 0);
 
 	EXPECT_EQ(0u, done.cleared);
 	EXPECT_EQ(0u, done.deferred);
@@ -505,12 +521,13 @@ TEST(reconcile_test, a_share_the_node_holding_it_would_not_answer_for_is_not_set
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	// This node owns the key and holds nothing for it, and no node is told what to answer, so
 	// every node it asks refuses the file.
 	nodes.copies("a", { self, peer, other });
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(0u, done.fetched);
 	EXPECT_TRUE(done.refused);
@@ -522,13 +539,14 @@ TEST(reconcile_test, fills_a_partition_every_node_holding_it_answered_for)
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer_in_turn(mate, { named({ "account" }), records({ "a" }) });
-	nodes.answer(peer, records({}));
-	nodes.answer(other, records({}));
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({ "a" }) });
+	forwarding.answer(peer, records({}));
+	forwarding.answer(other, records({}));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_TRUE(done.filled.test(cluster::partition_of("a")));
 	EXPECT_EQ(done.filled, nodes.holdings());
@@ -538,12 +556,13 @@ TEST(reconcile_test, does_not_fill_a_partition_a_node_holding_it_would_not_answe
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer_in_turn(mate, { named({ "account" }), records({ "a" }) });
-	nodes.answer(peer, records({}));
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({ "a" }) });
+	forwarding.answer(peer, records({}));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_TRUE(done.refused);
 	EXPECT_FALSE(done.filled.test(cluster::partition_of("a")));
@@ -555,14 +574,15 @@ TEST(reconcile_test, fills_a_partition_while_a_clear_down_is_still_waiting)
 {
 	repository::fake_repository repository = store({ "gone" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("gained", { self, peer, other });
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer_in_turn(mate, { named({ "account" }), records({ "gained" }), holds({}) });
-	nodes.answer(peer, records({}));
-	nodes.answer(other, records({}));
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({ "gained" }), holds({}) });
+	forwarding.answer(peer, records({}));
+	forwarding.answer(other, records({}));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(1u, done.deferred);
 	EXPECT_FALSE(done.settled());
@@ -573,10 +593,11 @@ TEST(reconcile_test, fills_nothing_when_no_node_names_the_tables)
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_TRUE(done.filled.none());
 }
@@ -588,12 +609,13 @@ TEST(reconcile_test, a_refused_fetch_does_not_stop_the_clear_down)
 {
 	repository::fake_repository repository = store({ "gone" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	// The owner in this node's own zone answers, and the two further zones answer nothing.
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "gone" }) });
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "gone" }) });
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(1u, done.cleared);
 	EXPECT_TRUE(done.refused);
@@ -607,15 +629,16 @@ TEST(reconcile_test, keeps_going_while_the_files_keep_arriving)
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
 	nodes.copies("b", { self, peer, other });
 
 	// Two files, each of them longer than the whole patience of the half that asks for them.
-	nodes.answer_in_turn(mate, { named({ "account" }), records({ "a" }, "a"), records({ "b" }) });
-	nodes.slow(mate, std::chrono::milliseconds(700));
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({ "a" }, "a"), records({ "b" }) });
+	forwarding.slow(mate, std::chrono::milliseconds(700));
 
-	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running, reconcile::default_page, 1);
 
 	EXPECT_EQ(2u, done.fetched);
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
@@ -629,15 +652,16 @@ TEST(reconcile_test, clears_down_what_it_lost_after_a_fetch_that_took_a_long_tim
 {
 	repository::fake_repository repository = store({ "gone" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "gone" }) });
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "gone" }) });
 
 	// Longer than the patience of either half, so a clock the two halves shared would be spent
 	// before the clear down began.
-	nodes.slow(peer, std::chrono::milliseconds(1100));
+	forwarding.slow(peer, std::chrono::milliseconds(1100));
 
-	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running, reconcile::default_page, 1);
 
 	EXPECT_EQ(1u, done.cleared);
 	EXPECT_FALSE(repository.read_record("account", "gone").has_value());
@@ -649,15 +673,16 @@ TEST(reconcile_test, asks_for_the_partitions_it_gained_and_for_no_others)
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("gained", { self, peer, other });
 	nodes.copies("theirs", { mate, peer, other });
 
-	nodes.answer(mate, records({ "gained" }));
+	forwarding.answer(mate, records({ "gained" }));
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
-	cluster::partition_set wanted = asked_for(nodes, mate);
+	cluster::partition_set wanted = asked_for(forwarding, mate);
 
 	EXPECT_TRUE(wanted.test(cluster::partition_of("gained")));
 	EXPECT_FALSE(wanted.test(cluster::partition_of("theirs")));
@@ -673,19 +698,20 @@ TEST(reconcile_test, asks_for_the_next_file_from_the_key_the_one_before_it_reach
 {
 	repository::fake_repository repository = store({});
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
 	nodes.copies("b", { self, peer, other });
 
-	nodes.answer_in_turn(mate, { named({ "account" }), records({ "a" }, "a"), records({ "b" }) });
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({ "a" }, "a"), records({ "b" }) });
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(2u, done.fetched);
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 	EXPECT_TRUE(repository.read_record("account", "b").has_value());
 
-	std::vector<std::string> asked = file_queries_of(nodes, mate);
+	std::vector<std::string> asked = file_queries_of(forwarding, mate);
 
 	ASSERT_EQ(2u, asked.size());
 	EXPECT_EQ(std::string::npos, asked[0].find("from="));
@@ -696,13 +722,14 @@ TEST(reconcile_test, walks_a_store_larger_than_one_page)
 {
 	repository::fake_repository repository = store({ "a", "b", "c" });
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { mate, peer, other });
 	nodes.copies("b", { mate, peer, other });
 	nodes.copies("c", { mate, peer, other });
-	nodes.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "a", "b", "c" }) });
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({}), holds({ "a", "b", "c" }) });
 
-	reconcile::outcome done = reconciled(repository, nodes, running, 1);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running, 1);
 
 	EXPECT_EQ(3u, done.cleared);
 	EXPECT_FALSE(repository.read_record("account", "a").has_value());
@@ -722,11 +749,12 @@ TEST(reconcile_test, takes_a_record_written_after_the_one_this_node_holds)
 	repository.write_record("account", stamped("a", "stale", 41, 4));
 
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(peer, versioned_file({ "a" }, "fresh", true, 41, 9));
+	forwarding.answer(peer, versioned_file({ "a" }, "fresh", true, 41, 9));
 
-	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running, reconcile::default_page, 1);
 
 	EXPECT_EQ(1u, done.fetched);
 	EXPECT_EQ("fresh", repository.read_record("account", "a").value_or(""));
@@ -742,11 +770,12 @@ TEST(reconcile_test, keeps_a_record_written_after_the_one_a_file_carries)
 	repository.write_record("account", stamped("a", "fresh", 41, 9));
 
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(peer, versioned_file({ "a" }, "stale", true, 41, 4));
+	forwarding.answer(peer, versioned_file({ "a" }, "stale", true, 41, 4));
 
-	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running, reconcile::default_page, 1);
 
 	EXPECT_EQ(0u, done.fetched);
 	EXPECT_EQ("fresh", repository.read_record("account", "a").value_or(""));
@@ -760,11 +789,12 @@ TEST(reconcile_test, refuses_a_write_older_than_the_term_of_a_record_it_fetched)
 	repository.write_record("account", stamped("a", "stale", 2, 1));
 
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer(peer, versioned_file({ "a" }, "fresh", true, 60, 9));
+	forwarding.answer(peer, versioned_file({ "a" }, "fresh", true, 60, 9));
 
-	reconciled(repository, nodes, running, reconcile::default_page, 1);
+	reconciled(repository, nodes, forwarding, running, reconcile::default_page, 1);
 
 	EXPECT_FALSE(nodes.accept("a", 41));
 	EXPECT_TRUE(nodes.accept("a", 60));
@@ -782,11 +812,12 @@ TEST(reconcile_test, keeps_a_record_the_node_that_owns_it_has_yet_to_catch_up_on
 	repository.write_record("account", stamped("gone", "fresh", 41, 9));
 
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer(mate, versioned_file({ "gone" }, "stale", false, 41, 4));
+	forwarding.answer(mate, versioned_file({ "gone" }, "stale", false, 41, 4));
 
-	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running, reconcile::default_page, 1);
 
 	EXPECT_EQ(0u, done.cleared);
 	EXPECT_EQ(1u, done.deferred);
@@ -804,11 +835,12 @@ TEST(reconcile_test, gives_up_a_record_the_node_that_owns_it_holds_at_the_same_v
 	repository.write_record("account", stamped("gone", "the write", 41, 9));
 
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("gone", { mate, peer, other });
-	nodes.answer(mate, versioned_file({ "gone" }, "the write", false, 41, 9));
+	forwarding.answer(mate, versioned_file({ "gone" }, "the write", false, 41, 9));
 
-	reconcile::outcome done = reconciled(repository, nodes, running, reconcile::default_page, 1);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running, reconcile::default_page, 1);
 
 	EXPECT_EQ(1u, done.cleared);
 	EXPECT_FALSE(repository.read_record("account", "gone").has_value());
@@ -821,10 +853,11 @@ TEST(reconcile_test, declares_a_table_the_rest_of_the_cluster_has)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer(mate, named({ "account" }));
+	forwarding.answer(mate, named({ "account" }));
 
-	reconciled(repository, nodes, running);
+	reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_TRUE(repository.has_table("account"));
 }
@@ -835,11 +868,12 @@ TEST(reconcile_test, fills_a_table_it_declared_in_the_same_pass)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
 	nodes.copies("a", { self, peer, other });
-	nodes.answer_in_turn(mate, { named({ "account" }), records({ "a" }) });
+	forwarding.answer_in_turn(mate, { named({ "account" }), records({ "a" }) });
 
-	reconcile::outcome done = reconciled(repository, nodes, running);
+	reconcile::outcome done = reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_EQ(1u, done.fetched);
 	EXPECT_EQ("value of a", repository.read_record("account", "a").value_or(""));
@@ -855,10 +889,11 @@ TEST(reconcile_test, keeps_a_table_no_other_node_names)
 	repository.create_table(table::valid_table("kept", std::vector<std::string>()), record::version { 1, 1 });
 
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer(mate, named({ "account" }));
+	forwarding.answer(mate, named({ "account" }));
 
-	reconciled(repository, nodes, running);
+	reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_TRUE(repository.has_table("kept"));
 }
@@ -874,10 +909,11 @@ TEST(reconcile_test, drops_a_table_the_cluster_dropped_while_this_node_was_away)
 	repository.write_record("gone", record::valid_record("a", "a value"));
 
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer(mate, named({ "account" }, { "gone" }, record::version { 1, 2 }));
+	forwarding.answer(mate, named({ "account" }, { "gone" }, record::version { 1, 2 }));
 
-	reconciled(repository, nodes, running);
+	reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_FALSE(repository.has_table("gone"));
 	EXPECT_FALSE(repository.read_record("gone", "a").has_value());
@@ -892,10 +928,11 @@ TEST(reconcile_test, keeps_a_table_against_a_tombstone_older_than_it)
 	repository.create_table(table::valid_table("kept", std::vector<std::string>()), record::version { 2, 1 });
 
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer(mate, named({}, { "kept" }, record::version { 1, 9 }));
+	forwarding.answer(mate, named({}, { "kept" }, record::version { 1, 9 }));
 
-	reconciled(repository, nodes, running);
+	reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_TRUE(repository.has_table("kept"));
 }
@@ -911,10 +948,11 @@ TEST(reconcile_test, keeps_the_records_of_a_table_the_cluster_stamped_again)
 	repository.write_record("account", record::valid_record("a", "a value"));
 
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer(mate, named({ "account" }, {}, record::version { 9, 9 }));
+	forwarding.answer(mate, named({ "account" }, {}, record::version { 9, 9 }));
 
-	reconciled(repository, nodes, running);
+	reconciled(repository, nodes, forwarding, running);
 
 	EXPECT_TRUE(repository.has_table("account"));
 	EXPECT_EQ("a value", repository.read_record("account", "a").value_or(""));
@@ -925,14 +963,15 @@ TEST(reconcile_test, a_pass_that_is_no_longer_running_asks_for_no_tables)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, three_zones());
+	cluster::fake_forwarder forwarding;
 	std::stop_source stopping;
 
 	stopping.request_stop();
 
-	nodes.answer(mate, named({ "account" }));
+	forwarding.answer(mate, named({ "account" }));
 
-	reconciled(repository, nodes, stopping.get_token());
+	reconciled(repository, nodes, forwarding, stopping.get_token());
 
 	EXPECT_FALSE(repository.has_table("account"));
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }

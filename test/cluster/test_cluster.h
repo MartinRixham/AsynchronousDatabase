@@ -11,14 +11,13 @@
 #include <vector>
 
 #include "cluster/cluster.h"
-#include "cluster/forwarder.h"
-#include "http/beast_client.h"
 
 namespace cluster
 {
 	// Two real servers on two real ports, which are known only once they are listening, so the
 	// membership is told to the cluster rather than read from etcd. Everything else — who owns a
-	// key, and how a request reaches the node that does — is the cluster the server runs.
+	// key and which node leads it — is worked out the way production works it out, and reaching
+	// the node that holds it is the real forwarder the test hands the server beside this.
 	class test_cluster final : public cluster
 	{
 		// A test redraws the membership and names the leader while the servers are running, and
@@ -44,10 +43,6 @@ namespace cluster
 		mutable std::mutex vouch_mutex;
 
 		partition_set filled;
-
-		http::beast_client client;
-
-		forwarder request_forwarder;
 
 	public:
 		test_cluster();
@@ -109,15 +104,5 @@ namespace cluster
 		bool accept(const std::string &key, int64_t term) override;
 
 		void restore_terms(const partition_terms &applied) override;
-
-		router::response send(const std::string &node, const router::request &request) const override;
-
-		// The real fan out over real sockets, so that a write reaching every copy at once is
-		// exercised here rather than only in production.
-		std::optional<router::response> send_all(
-			const std::vector<std::string> &node_list,
-			const router::request &request) const override;
-
-		std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const override;
 	};
 }

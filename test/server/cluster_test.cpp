@@ -11,8 +11,10 @@
 #include <curl/curl.h>
 #include <boost/json.hpp>
 
+#include "cluster/http_forwarder.h"
 #include "cluster/partition.h"
 #include "cluster/test_cluster.h"
+#include "http/beast_client.h"
 #include "server/server.h"
 #include "listening.h"
 #include "directory.h"
@@ -39,6 +41,12 @@ namespace
 class cluster_test : public ::testing::Test
 {
 protected:
+	// The real client and the real forwarder, so that what one server sends the other goes over a
+	// socket: the fan out, the connections and the answers read back are production's.
+	http::beast_client client = http::beast_client(2, 5);
+
+	cluster::http_forwarder forwarding = cluster::http_forwarder(client);
+
 	cluster::test_cluster first_cluster;
 
 	cluster::test_cluster second_cluster;
@@ -56,8 +64,8 @@ protected:
 		std::filesystem::remove_all(test_directory("asyncdb"));
 
 		// RocksDB locks the directory it opens, so two servers in one process are two stores.
-		first = std::make_shared<server::server>(0, 2, first_cluster, test_directory("asyncdb/first"));
-		second = std::make_shared<server::server>(0, 2, second_cluster, test_directory("asyncdb/second"));
+		first = std::make_shared<server::server>(0, 2, first_cluster, forwarding, test_directory("asyncdb/first"));
+		second = std::make_shared<server::server>(0, 2, second_cluster, forwarding, test_directory("asyncdb/second"));
 
 		std::vector<cluster::member> members {
 			cluster::member { node(first), "" },

@@ -357,7 +357,8 @@ Request flow, one layer per directory under `src/`:
 `main.cpp` → `server::server` → `server::session` → `router::router` → `repository::repository` →
 `table::table` / `record::record` / `scan::range`
 
-and, off the router, `cluster::cluster` → `http::client` → the other nodes, and
+and, off the router, `cluster::cluster` for which node holds a key and
+`cluster::forwarder` → `http::client` → that node, and
 `cluster::etcd_cluster` → `etcd::client` → `http::client` → etcd.
 
 Beside that, two passes that move records between nodes rather than serving anybody:
@@ -434,12 +435,20 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   having sent nothing to go unacknowledged. Nothing asks for a 100 Continue, which only the nginx in
   front of a node answers. **Nothing bounds the body of an answer** either, what bounds one being
   the budget the request carried, and the headers are bounded well above Beast's own 8 KiB because
-  an answer names the key a walk resumes at. `send_all` on the cluster seam throws every answer away
-  but a refusal, which is what a write to the copies of a record wants; `send_each` is the same fan
-  out for a caller asking each node something *different* and reading what each of them said, which
-  is what a walk reading a share in several pieces at once is.
+  an answer names the key a walk resumes at.
+- **`cluster::forwarder`** is the seam over asking another node — `forward` to one, `forward_all`
+  to every node named and `forward_each` for a different request to each — and
+  `cluster::http_forwarder` is the `http::client` behind it, turning a `router::request` into a URL
+  and what came back into a `router::response`. `forward_all` is a **fan out** and answers one for
+  one in the order the nodes were named; `cluster::refusal` is what a write does with that, the
+  copies of a record being written beside each other rather than one behind another, and
+  `forward_each` is what a walk reading a share in several pieces at once asks with. **It is handed
+  to the server and not to the cluster**: where a key lives and how to get there are two questions,
+  so `main.cpp` builds one over the `http::client` and hands it to `server::server`, which passes it
+  to the router and to the passes that move records — and a test names the nodes without standing
+  any of them up, or stands one up without naming it.
 - **`cluster::cluster`** is the second pure-virtual seam the router routes against, over "which
-  nodes hold this key" and "ask that node". `cluster::replicas` answers a `cluster::placement` —
+  nodes hold this key". `cluster::replicas` answers a `cluster::placement` —
   whether this node holds a copy, and the other nodes that do, this node's own zone first — and
   `cluster::copies_of` is the same question asked of a *partition*, which is what routes a scan: a
   scan names a partition and has no key to ask about. `cluster::zones` groups the membership for a
@@ -459,9 +468,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   partitions, `owner_of` is rendezvous hashing over a set of nodes, `owners_of` runs it once per
   zone and `zones_of` is the grouping behind `zones()`; `partition_set` is 256 bits of them and
   `encode_partitions`/`decode_partitions` are how one travels, 64 hexadecimal characters wide
-  whatever is in it; `cluster::forwarder` is how a request
-  travels, `forward` and `forward_all` over the `http::client` it is handed, and it is handed to
-  `etcd_cluster` in turn rather than made inside it; `member.h` is `member` and `membership`,
+  whatever is in it; `member.h` is `member` and `membership`,
   the whole list held as a `shared_ptr<const vector<member>>` and swapped rather than edited, so a
   reader loads it without excluding the thread that replaces it.
 - **`repository::repository`** is the pure-virtual seam, over tables, records, scans and
@@ -573,7 +580,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 - **A share is read in several pieces at once, on one thread.** `GET /table/{table}/split?ways=`
   is the node being read saying where to cut its own table up — keys taken from the sizes of the
   files it holds, so the pieces are roughly equal and deliberately approximate. `transfer::walk`
-  then asks for every piece in one `send_each`, and hands each answer to a thread of its own that
+  then asks for every piece in one `forward_each`, and hands each answer to a thread of its own that
   takes it into the store while the next round is already being asked for. **Every request a walk
   makes is made on the calling thread**, because the connections are `thread_local`: threads made
   for a walk and dropped after it would be a handshake to that node for every walk of every table.
@@ -721,12 +728,14 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 ### Tests
 
 `test/` mirrors `src/`. Unit tests substitute `repository::fake_repository` (an in-memory map) for the
-RocksDB implementation, `cluster::fake_cluster` for the cluster and `http::fake_client` for the
-network. `server_test` is an integration test: it starts a real server on port 0 in a thread and
+RocksDB implementation, `cluster::fake_cluster` for the membership, `cluster::fake_forwarder` for the
+other nodes — it answers what the test told each of them to answer and keeps what they were asked —
+and `http::fake_client` for the network. `server_test` is an integration test: it starts a real server on port 0 in a thread and
 drives it with libcurl. `test/server/cluster_test.cpp` is the same thing twice over: two real servers
 on two ports, each given a `cluster::test_cluster` naming the other — the production routing with the
-membership and the leader told to it rather than read from etcd, and a `send_all` that is a real fan
-out — so forwarding, table fan-out and scans routed by partition are exercised over real sockets. Both have to stop
+membership and the leader told to it rather than read from etcd — and both given the real
+`cluster::http_forwarder`, so forwarding, table fan-out and scans routed by partition are exercised
+over real sockets. Both have to stop
 the servers they start, and both wait on `server::wait_until_listening` (`test/server/listening.h`)
 first: a server binds in its constructor, which is what settles the port a test asks it for, and
 listens only in `serve()`, once the store is filled and the node has joined — so a test that started
@@ -734,10 +743,11 @@ listens only in `serve()`, once the store is filled and the node has joined — 
 
 **Behaviour the server never runs belongs in `test/`, not in `src/`.** A base class body every
 implementation in `src/` overrides is production code the suite proves and the binary never
-executes: the fan out `cluster::fake_cluster` and `http::fake_client` run one request at a time is
-written in each of them and not as a default on the seam, which is why `send_all` is pure virtual
-in both `cluster::cluster` and `http::client`. What stays in `src/` is the **seam itself** — the
-constructors that take a `cluster::cluster` or an `http::client`, and `server::port()` for the
+executes: the fan out `cluster::fake_forwarder` and `http::fake_client` run one request at a time is
+written in each of them and not as a default on the seam, which is why `forward_all` is pure virtual
+on `cluster::forwarder` and `send_all` on `http::client`. What stays in `src/` is the **seam
+itself** — the constructors that take a `cluster::cluster`, a `cluster::forwarder` or an
+`http::client`, and `server::port()` for the
 ephemeral port a test binds — because production reaches those through the other implementation,
 and a test that cannot substitute anything is a test against etcd and a fixed port. The line is
 whether the code is a way *in* or a second copy of what production already does.

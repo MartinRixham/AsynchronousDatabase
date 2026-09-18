@@ -831,7 +831,7 @@ are the load balancer's health check interval and not the database, and latency 
 A `FAIL` carries the statuses that failed it, and a `----` line under it carries what those
 refusals **said**. Every error this API answers is a document with a sentence in it, and on a write
 that sentence is the half the status cannot say: a copy that did not answer is a 500 whichever copy
-it was, and `cluster::forwarder` names the node and what curl made of it. A refusal the server
+it was, and `cluster::http_forwarder` names the node and what curl made of it. A refusal the server
 answers on its own carries no body and gets no line — a 404 for a key a copy does not hold is a
 code that has said the whole of it.
 

@@ -15,6 +15,7 @@
 #include <boost/beast/core.hpp>
 
 #include "cluster/cluster.h"
+#include "cluster/forwarder.h"
 #include "router/router.h"
 #include "repository/rocksdb_repository.h"
 
@@ -71,6 +72,11 @@ namespace server
 		// for a key this instance does not hold is answered by asking the one that does.
 		cluster::cluster &nodes;
 
+		// How this instance asks one of them. It is handed in beside the membership rather than
+		// held by it: routing and sending are two seams, so a test can name the nodes without
+		// standing any of them up, and stand one up without naming it.
+		const cluster::forwarder &forwarding;
+
 		router::router router;
 
 		std::mutex session_mutex;
@@ -92,12 +98,14 @@ namespace server
 		std::condition_variable_any reconcile_wake;
 
 	public:
-		// The cluster is handed in and never made here: this server joins and leaves whichever one
-		// it was given, which is etcd's for the binary and its own membership for a test.
+		// The cluster and the forwarder are handed in and never made here: this server joins and
+		// leaves whichever cluster it was given — etcd's for the binary and its own membership for
+		// a test — and reaches the other nodes through whichever forwarder came with it.
 		server(
 			boost::asio::ip::port_type port,
 			int thread_count,
 			cluster::cluster &nodes,
+			const cluster::forwarder &forwarding,
 			const std::string &directory = data_directory(),
 			size_t memory_bytes = memory_size());
 

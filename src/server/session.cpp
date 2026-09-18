@@ -6,6 +6,7 @@
 #include <boost/lexical_cast/try_lexical_convert.hpp>
 
 #include "log.h"
+#include "cluster/forwarder.h"
 #include "record/record.h"
 #include "url/url.h"
 #include "session.h"

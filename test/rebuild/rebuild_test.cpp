@@ -14,6 +14,7 @@
 #include "table/schema.h"
 #include "url/url.h"
 #include "cluster/fake_cluster.h"
+#include "cluster/fake_forwarder.h"
 #include "repository/fake_repository.h"
 
 namespace
@@ -70,9 +71,10 @@ namespace
 	rebuild::outcome rebuilt(
 		repository::repository &repository,
 		cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		long seconds = rebuild::default_seconds)
 	{
-		return rebuild::rebuild(repository, nodes, seconds, 1);
+		return rebuild::rebuild(repository, nodes, forwarding, seconds, 1);
 	}
 
 	// The partitions a request asked for, which is the whole of what decides what comes back.
@@ -87,48 +89,52 @@ TEST(rebuild_test, rebuilds_nothing_when_the_store_already_holds_a_table)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
 	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
-	nodes.answer(peer, tables({ "account" }));
+	forwarding.answer(peer, tables({ "account" }));
 
 	// Whole, because a node that kept its store is not one that came up short of its share.
-	EXPECT_TRUE(rebuilt(repository, nodes).whole);
+	EXPECT_TRUE(rebuilt(repository, nodes, forwarding).whole);
 
 	// Nothing was asked of anybody, because a node that kept its store has nothing to rebuild.
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 TEST(rebuild_test, rebuilds_nothing_when_there_is_only_one_zone)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, std::vector<std::string> { self, peer });
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer(peer, tables({ "account" }));
+	forwarding.answer(peer, tables({ "account" }));
 
-	EXPECT_TRUE(rebuilt(repository, nodes).whole);
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(rebuilt(repository, nodes, forwarding).whole);
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 TEST(rebuild_test, rebuilds_nothing_when_the_instance_stands_alone)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, std::vector<std::string> { self });
+	cluster::fake_forwarder forwarding;
 
 	// A node with nowhere to read from owns every key it is asked about, so a miss it reports is
 	// its store and not a share it never read.
-	EXPECT_TRUE(rebuilt(repository, nodes).whole);
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(rebuilt(repository, nodes, forwarding).whole);
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 TEST(rebuild_test, writes_the_tables_of_another_zone)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer_in_turn(peer, { tables({ "account", "summary" }), file({}) });
+	forwarding.answer_in_turn(peer, { tables({ "account", "summary" }), file({}) });
 
-	rebuilt(repository, nodes);
+	rebuilt(repository, nodes, forwarding);
 
 	EXPECT_TRUE(repository.has_table("account"));
 	EXPECT_TRUE(repository.has_table("summary"));
@@ -138,10 +144,11 @@ TEST(rebuild_test, writes_the_records_of_another_zone)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a", "b" }) });
+	forwarding.answer_in_turn(peer, { tables({ "account" }), file({ "a", "b" }) });
 
-	EXPECT_EQ(2u, rebuilt(repository, nodes).records);
+	EXPECT_EQ(2u, rebuilt(repository, nodes, forwarding).records);
 
 	EXPECT_EQ("value of a", repository.read_record("account", "a").value_or(""));
 	EXPECT_EQ("value of b", repository.read_record("account", "b").value_or(""));
@@ -163,10 +170,11 @@ TEST(rebuild_test, refuses_a_write_older_than_the_term_of_a_record_it_rebuilt)
 	repository::extract taken = source.export_records("account", whole);
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer_in_turn(peer, { tables({ "account" }), router::file_response(taken.file, taken.records, "") });
+	forwarding.answer_in_turn(peer, { tables({ "account" }), router::file_response(taken.file, taken.records, "") });
 
-	rebuilt(repository, nodes);
+	rebuilt(repository, nodes, forwarding);
 
 	EXPECT_FALSE(nodes.accept("a", 41));
 	EXPECT_TRUE(nodes.accept("a", 60));
@@ -179,16 +187,17 @@ TEST(rebuild_test, asks_for_the_partitions_this_node_will_hold)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
 	// "b" is held by another node of this node's own zone, so it is not this node's to ask for: a
 	// copy of it here would be a stale one the moment the key was written again.
 	nodes.copies("b", std::vector<std::string> { other });
 
-	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }) });
+	forwarding.answer_in_turn(peer, { tables({ "account" }), file({ "a" }) });
 
-	EXPECT_EQ(1u, rebuilt(repository, nodes).records);
+	EXPECT_EQ(1u, rebuilt(repository, nodes, forwarding).records);
 
-	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+	const std::vector<std::pair<std::string, router::request>> &sent = forwarding.sent();
 
 	ASSERT_EQ(2u, sent.size());
 
@@ -202,12 +211,13 @@ TEST(rebuild_test, asks_for_a_file_of_the_table_rather_than_for_its_records)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }) });
+	forwarding.answer_in_turn(peer, { tables({ "account" }), file({ "a" }) });
 
-	rebuilt(repository, nodes);
+	rebuilt(repository, nodes, forwarding);
 
-	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+	const std::vector<std::pair<std::string, router::request>> &sent = forwarding.sent();
 
 	ASSERT_EQ(2u, sent.size());
 	EXPECT_EQ((std::vector<std::string> { "table", "account", "file" }), sent[1].second.path);
@@ -217,17 +227,18 @@ TEST(rebuild_test, asks_for_the_next_file_from_the_key_the_one_before_it_reached
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
 	// The walk that wrote the first file stopped at "b", so the second begins again there.
-	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a", "b" }, "b"), file({ "c" }) });
+	forwarding.answer_in_turn(peer, { tables({ "account" }), file({ "a", "b" }, "b"), file({ "c" }) });
 
-	EXPECT_EQ(3u, rebuilt(repository, nodes).records);
+	EXPECT_EQ(3u, rebuilt(repository, nodes, forwarding).records);
 
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 	EXPECT_TRUE(repository.read_record("account", "b").has_value());
 	EXPECT_TRUE(repository.read_record("account", "c").has_value());
 
-	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+	const std::vector<std::pair<std::string, router::request>> &sent = forwarding.sent();
 
 	ASSERT_EQ(3u, sent.size());
 	EXPECT_NE(std::string::npos, sent[2].second.query.find("from=" + url::encode(base64::encode("b"))));
@@ -241,14 +252,15 @@ TEST(rebuild_test, reads_a_share_that_more_than_one_node_of_a_zone_holds_from_ea
 		std::vector<cluster::member> { cluster::member { self, "one" },
 									   cluster::member { peer, "two" },
 									   cluster::member { other, "two" } });
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }) });
-	nodes.answer_in_turn(other, { file({ "b" }) });
+	forwarding.answer_in_turn(peer, { tables({ "account" }), file({ "a" }) });
+	forwarding.answer_in_turn(other, { file({ "b" }) });
 
 	// A zone holds a copy of the whole keyspace split between its nodes, so a share of it that two
 	// of them hold is read from both. Which of them holds a partition is the cluster's to say, and
 	// partition_test's to prove.
-	EXPECT_EQ(2u, rebuilt(repository, nodes).records);
+	EXPECT_EQ(2u, rebuilt(repository, nodes, forwarding).records);
 
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 	EXPECT_TRUE(repository.read_record("account", "b").has_value());
@@ -258,14 +270,15 @@ TEST(rebuild_test, gives_up_on_a_zone_whose_node_does_not_answer)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer_in_turn(
+	forwarding.answer_in_turn(
 		peer,
 		{ tables({ "account" }), router::error_response(error::code::storage_error, "Node did not answer.") });
 
 	// Short of its share: the count alone says nothing, because a node that needed nothing takes
 	// no records either.
-	EXPECT_FALSE(rebuilt(repository, nodes).whole);
+	EXPECT_FALSE(rebuilt(repository, nodes, forwarding).whole);
 
 	// The table is still declared, because a node that holds no table can hold no record either.
 	EXPECT_TRUE(repository.has_table("account"));
@@ -280,11 +293,12 @@ TEST(rebuild_test, asks_the_next_zone_when_one_of_them_does_not_answer)
 		std::vector<cluster::member> { cluster::member { self, "one" },
 									   cluster::member { peer, "two" },
 									   cluster::member { other, "three" } });
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer_in_turn(peer, { router::error_response(error::code::storage_error, "Node did not answer.") });
-	nodes.answer_in_turn(other, { tables({ "account" }), file({ "a" }) });
+	forwarding.answer_in_turn(peer, { router::error_response(error::code::storage_error, "Node did not answer.") });
+	forwarding.answer_in_turn(other, { tables({ "account" }), file({ "a" }) });
 
-	rebuild::outcome taken = rebuilt(repository, nodes);
+	rebuild::outcome taken = rebuilt(repository, nodes, forwarding);
 
 	EXPECT_EQ(1u, taken.records);
 	EXPECT_TRUE(taken.whole);
@@ -295,18 +309,19 @@ TEST(rebuild_test, stops_rather_than_asking_for_ever_when_a_file_does_not_advanc
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
 	// A file that ends where the one before it did, and says there is more, is a walk that asking
 	// again would ask the same thing of for ever.
-	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }, "a"), file({ "a" }, "a") });
+	forwarding.answer_in_turn(peer, { tables({ "account" }), file({ "a" }, "a"), file({ "a" }, "a") });
 
 	// A rebuild that did not read a whole zone answers nothing, and the node starts thin: what it
 	// took is still its own, and there is no zone left to ask.
-	rebuild::outcome taken = rebuilt(repository, nodes);
+	rebuild::outcome taken = rebuilt(repository, nodes, forwarding);
 
 	EXPECT_EQ(0u, taken.records);
 	EXPECT_FALSE(taken.whole);
-	EXPECT_EQ(3u, nodes.sent().size());
+	EXPECT_EQ(3u, forwarding.sent().size());
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 }
 
@@ -314,12 +329,13 @@ TEST(rebuild_test, resumes_from_a_key_that_has_to_be_encoded)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a", "a b/c" }, "a b/c"), file({ "d" }) });
+	forwarding.answer_in_turn(peer, { tables({ "account" }), file({ "a", "a b/c" }, "a b/c"), file({ "d" }) });
 
-	EXPECT_EQ(3u, rebuilt(repository, nodes).records);
+	EXPECT_EQ(3u, rebuilt(repository, nodes, forwarding).records);
 
-	const std::vector<std::pair<std::string, router::request>> &sent = nodes.sent();
+	const std::vector<std::pair<std::string, router::request>> &sent = forwarding.sent();
 
 	ASSERT_EQ(3u, sent.size());
 	EXPECT_NE(std::string::npos, sent[2].second.query.find("from=" + url::encode(base64::encode("a b/c"))));
@@ -332,15 +348,16 @@ TEST(rebuild_test, gives_up_when_it_is_answered_nothing)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a", "b" }) });
+	forwarding.answer_in_turn(peer, { tables({ "account" }), file({ "a", "b" }) });
 
 	// And a rebuild that gave up is told from one that had nothing to do, which is what the node
 	// answers a read with while it is short.
-	EXPECT_FALSE(rebuilt(repository, nodes, 0).whole);
+	EXPECT_FALSE(rebuilt(repository, nodes, forwarding, 0).whole);
 
 	// Nothing was asked of the zone, rather than asked and thrown away.
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_FALSE(repository.has_table("account"));
 }
 
@@ -350,13 +367,14 @@ TEST(rebuild_test, keeps_going_while_the_files_keep_arriving)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes(self, two_zones());
+	cluster::fake_forwarder forwarding;
 
-	nodes.answer_in_turn(peer, { tables({ "account" }), file({ "a" }, "a"), file({ "b" }) });
+	forwarding.answer_in_turn(peer, { tables({ "account" }), file({ "a" }, "a"), file({ "b" }) });
 
 	// Three answers, each of them longer than the whole of the patience.
-	nodes.slow(peer, std::chrono::milliseconds(700));
+	forwarding.slow(peer, std::chrono::milliseconds(700));
 
-	EXPECT_EQ(2u, rebuilt(repository, nodes, 1).records);
+	EXPECT_EQ(2u, rebuilt(repository, nodes, forwarding, 1).records);
 
 	EXPECT_TRUE(repository.read_record("account", "a").has_value());
 	EXPECT_TRUE(repository.read_record("account", "b").has_value());

@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include "cluster/cluster.h"
+#include "cluster/forwarder.h"
 #include "repository/repository.h"
 #include "transfer/transfer.h"
 
@@ -38,6 +39,7 @@ namespace rebuild
 	[[nodiscard]] outcome rebuild(
 		repository::repository &repository,
 		cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		long seconds = default_seconds,
 		size_t workers = transfer::default_workers);
 }

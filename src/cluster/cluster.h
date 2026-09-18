@@ -7,35 +7,17 @@
 #include <string>
 #include <vector>
 
-#include "router/request.h"
-#include "router/response.h"
 #include "member.h"
 #include "partition.h"
 
 namespace cluster
 {
-	constexpr char forwarded_header[] = "X-Asyncdb-Forwarded";
-
-	constexpr char term_header[] = "X-Asyncdb-Term";
-
-	// The count the leader stamped the write with. The term beside it is the other half of the
-	// version, so this travels only where that does.
-	constexpr char count_header[] = "X-Asyncdb-Count";
-
 	// The key the tables are led by. A table is held by every node rather than by the copies of a
 	// partition, so it has no key of its own to hash: one constant is what gives every create and
 	// delete of a table the same leader, and one leader is what orders two creates of one name
 	// against each other and a create against the drop of a table it depends on. Ordering them is
 	// all it does — the operation still goes to every node, because every node holds every table.
 	constexpr char table_key[] = "/table";
-
-	// A request and the node it is for, so that several different ones can be asked at once.
-	struct enquiry
-	{
-		std::string node;
-
-		router::request request;
-	};
 
 	struct placement
 	{
@@ -79,8 +61,9 @@ namespace cluster
 	};
 
 	// The seam over the other instances, in the way that repository::repository is the seam over
-	// the store. A key belongs to one node in each zone, and a request for a key this node holds no
-	// copy of is answered by a node that does.
+	// the store. A key belongs to one node in each zone, and this is what says which ones: getting
+	// a request to one of them is cluster::forwarder's, so that a node can be routed for without
+	// being asked and asked without being routed for.
 	class cluster
 	{
 	public:
@@ -172,23 +155,5 @@ namespace cluster
 		// applied since. A restart forgets what is held in memory, and a record handed over is fenced
 		// by the term it was written in wherever it lands.
 		virtual void restore_terms(const partition_terms &applied) = 0;
-
-		[[nodiscard]] virtual router::response send(const std::string &node, const router::request &request) const = 0;
-
-		// A cluster that can ask them at once asks them at once. A write is not done until every
-		// copy has taken it, and asking one after another holds the thread serving the write for a
-		// round trip each — and a thread waiting on another node cannot answer anything else, its
-		// health check included.
-		[[nodiscard]] virtual std::optional<router::response> send_all(
-			const std::vector<std::string> &node_list,
-			const router::request &request) const = 0;
-
-		// A different request to each node named, all of them at once, answered one for one and in
-		// the order they were given. send_all() is this with everything but a refusal thrown away,
-		// which is what a write to the copies of a record wants; a walk reading a share in several
-		// pieces wants what each answer carried, and asks for a different piece in each.
-		[[nodiscard]] virtual std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const = 0;
 	};
-
-	std::optional<router::response> refusal(const std::vector<router::response> &answers);
 }

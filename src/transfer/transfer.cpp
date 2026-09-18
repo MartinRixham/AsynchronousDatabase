@@ -128,7 +128,7 @@ namespace
 
 	// Where the node being read from would cut the table up. A node that will not say is a table
 	// walked in one piece, which is slower and not wrong.
-	std::vector<std::string> split_points(const cluster::cluster &nodes, const transfer::share &wanted)
+	std::vector<std::string> split_points(const cluster::forwarder &forwarding, const transfer::share &wanted)
 	{
 		std::vector<std::string> points;
 
@@ -137,7 +137,7 @@ namespace
 			return points;
 		}
 
-		router::response answer = nodes.send(wanted.node, split_request(wanted));
+		router::response answer = forwarding.forward(wanted.node, split_request(wanted));
 
 		if (answer.status != boost::beast::http::status::ok ||
 			!answer.json.contains("keys") || !answer.json.at("keys").is_array())
@@ -226,7 +226,7 @@ namespace
 }
 
 transfer::outcome transfer::walk(
-	const cluster::cluster &nodes,
+	const cluster::forwarder &forwarding,
 	const share &wanted,
 	const std::stop_token &token,
 	progress::patience &waiting,
@@ -239,7 +239,7 @@ transfer::outcome transfer::walk(
 		return done;
 	}
 
-	std::vector<piece> pieces = pieces_of(split_points(nodes, wanted));
+	std::vector<piece> pieces = pieces_of(split_points(forwarding, wanted));
 
 	// The budget is the whole walk's, so a share read in several pieces at once holds no more of
 	// itself in memory than one read in one piece.
@@ -278,7 +278,7 @@ transfer::outcome transfer::walk(
 			break;
 		}
 
-		std::vector<router::response> answers = nodes.send_each(asking);
+		std::vector<router::response> answers = forwarding.forward_each(asking);
 
 		for (size_t i = 0; i < asked.size() && i < answers.size(); i++)
 		{
@@ -313,7 +313,7 @@ transfer::outcome transfer::walk(
 }
 
 std::optional<table::schema> transfer::tables(
-	const cluster::cluster &nodes,
+	const cluster::forwarder &forwarding,
 	const std::vector<std::string> &zone,
 	progress::patience &waiting)
 {
@@ -324,7 +324,7 @@ std::optional<table::schema> transfer::tables(
 			return std::nullopt;
 		}
 
-		router::response answer = nodes.send(node, schema_request());
+		router::response answer = forwarding.forward(node, schema_request());
 
 		if (answer.status != boost::beast::http::status::ok ||
 			!answer.json.contains("schema") || !answer.json.at("schema").is_array())

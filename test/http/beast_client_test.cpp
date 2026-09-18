@@ -13,7 +13,7 @@
 #include "http/beast_client.h"
 #include "server/listening.h"
 #include "cluster/etcd_cluster.h"
-#include "cluster/forwarder.h"
+#include "cluster/http_forwarder.h"
 #include "server/server.h"
 #include "directory.h"
 
@@ -75,9 +75,9 @@ class beast_client_test : public ::testing::Test
 protected:
 	http::beast_client client { http::beast_client(2, 5) };
 
-	cluster::forwarder forwarder = cluster::forwarder(client);
+	cluster::http_forwarder forwarder = cluster::http_forwarder(client);
 
-	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config(), client, forwarder);
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config(), client);
 
 	std::shared_ptr<server::server> database_server;
 
@@ -89,7 +89,7 @@ protected:
 	{
 		std::filesystem::remove_all(test_directory("asyncdb"));
 
-		database_server = std::make_shared<server::server>(0, 2, cluster, test_directory("asyncdb"));
+		database_server = std::make_shared<server::server>(0, 2, cluster, forwarder, test_directory("asyncdb"));
 		serving = true;
 		thread = std::thread([server = database_server]() { server->serve(); });
 

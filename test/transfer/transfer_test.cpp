@@ -1,11 +1,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstdint>
 #include <iterator>
-#include <map>
 #include <mutex>
-#include <optional>
 #include <set>
 #include <stop_token>
 #include <string>
@@ -14,7 +11,7 @@
 
 #include <gtest/gtest.h>
 
-#include "cluster/cluster.h"
+#include "cluster/forwarder.h"
 #include "cluster/partition.h"
 #include "progress/patience.h"
 #include "record/record.h"
@@ -23,6 +20,7 @@
 #include "table/table.h"
 #include "transfer/transfer.h"
 #include "cluster/fake_cluster.h"
+#include "cluster/fake_forwarder.h"
 #include "repository/fake_repository.h"
 
 namespace
@@ -34,9 +32,9 @@ namespace
 	const std::stop_token running;
 
 	// The node being read from, with a real router over a real store behind it — which is what a
-	// walk is reading when it runs, rather than answers written out by hand. Only the two calls a
-	// walk makes are answered; everything else is a cluster of one.
-	class serving_node final : public cluster::cluster
+	// walk is reading when it runs, rather than answers written out by hand. Every request lands
+	// on that one node, there being only one to ask.
+	class serving_node final : public cluster::forwarder
 	{
 		router::router &served;
 
@@ -62,127 +60,20 @@ namespace
 			return widest_fan_out;
 		}
 
-		router::response send(const std::string &, const router::request &request) const override
+		router::response forward(const std::string &, const router::request &request) const override
 		{
 			asks++;
 
 			return served.route(request);
 		}
 
-		void start() override
-		{
-		}
-
-		bool discover() override
-		{
-			return false;
-		}
-
-		void stop() override
-		{
-		}
-
-		std::vector<::cluster::member> members() const override
-		{
-			return std::vector<::cluster::member>();
-		}
-
-		::cluster::placement replicas(const std::string &) const override
-		{
-			return ::cluster::placement();
-		}
-
-		::cluster::placement copies_of(size_t) const override
-		{
-			return ::cluster::placement();
-		}
-
-		::cluster::partition_set holdings() const override
-		{
-			::cluster::partition_set held;
-
-			held.set();
-
-			return held;
-		}
-
-		uint64_t generation() const override
-		{
-			return 0;
-		}
-
-		void vouch(const ::cluster::partition_set &, uint64_t) override
-		{
-		}
-
-		::cluster::partition_set vouched() const override
-		{
-			return holdings();
-		}
-
-		std::map<std::string, ::cluster::partition_set> holders(const ::cluster::partition_set &) const override
-		{
-			return std::map<std::string, ::cluster::partition_set>();
-		}
-
-		std::map<std::string, ::cluster::partition_set> holders_in(
-			const ::cluster::partition_set &,
-			const std::vector<std::string> &) const override
-		{
-			return std::map<std::string, ::cluster::partition_set>();
-		}
-
-		std::vector<std::string> peers() const override
-		{
-			return std::vector<std::string>();
-		}
-
-		std::vector<std::vector<std::string>> zones() const override
-		{
-			return std::vector<std::vector<std::string>>();
-		}
-
-		std::optional<::cluster::leadership> leader(const std::string &) override
-		{
-			return std::nullopt;
-		}
-
-		size_t leads() const override
-		{
-			return 0;
-		}
-
-		bool is_unled() const override
-		{
-			return false;
-		}
-
-		bool is_alone() const override
-		{
-			return false;
-		}
-
-		::cluster::etcd_registration registration() const override
-		{
-			return ::cluster::etcd_registration();
-		}
-
-		bool accept(const std::string &, int64_t) override
-		{
-			return true;
-		}
-
-		void restore_terms(const ::cluster::partition_terms &) override
-		{
-		}
-
-		std::optional<router::response> send_all(const std::vector<std::string> &, const router::request &)
+		std::vector<router::response> forward_all(const std::vector<std::string> &, const router::request &)
 			const override
 		{
-			return std::nullopt;
+			return std::vector<router::response>();
 		}
 
-		std::vector<router::response> send_each(const std::vector<::cluster::enquiry> &enquiries) const override
+		std::vector<router::response> forward_each(const std::vector<::cluster::enquiry> &enquiries) const override
 		{
 			std::vector<router::response> responses;
 
@@ -194,7 +85,7 @@ namespace
 			std::ranges::transform(
 				enquiries,
 				std::back_inserter(responses),
-				[this](const ::cluster::enquiry &one) { return send(one.node, one.request); });
+				[this](const ::cluster::enquiry &one) { return forward(one.node, one.request); });
 
 			return responses;
 		}
@@ -297,7 +188,8 @@ TEST(transfer_test, walks_a_share_in_one_piece_for_one_worker)
 	repository::fake_repository store;
 	repository::fake_repository taking;
 	cluster::fake_cluster alone(there, std::vector<std::string>());
-	router::router router(store, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(store, alone, nobody);
 	serving_node node(router);
 	progress::patience waiting(30);
 	collector taken;
@@ -323,7 +215,8 @@ TEST(transfer_test, cuts_a_share_into_a_piece_for_every_worker)
 	repository::fake_repository store;
 	repository::fake_repository taking;
 	cluster::fake_cluster alone(there, std::vector<std::string>());
-	router::router router(store, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(store, alone, nobody);
 	serving_node node(router);
 	progress::patience waiting(30);
 	collector taken;
@@ -350,7 +243,8 @@ TEST(transfer_test, takes_every_record_of_a_share_exactly_once)
 	repository::fake_repository store;
 	repository::fake_repository taking;
 	cluster::fake_cluster alone(there, std::vector<std::string>());
-	router::router router(store, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(store, alone, nobody);
 	serving_node node(router);
 	progress::patience waiting(30);
 	collector taken;
@@ -378,7 +272,8 @@ TEST(transfer_test, asks_for_the_next_file_while_the_last_one_is_being_taken_in)
 {
 	repository::fake_repository store;
 	cluster::fake_cluster alone(there, std::vector<std::string>());
-	router::router router(store, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(store, alone, nobody);
 	serving_node node(router);
 	progress::patience waiting(30);
 
@@ -412,7 +307,8 @@ TEST(transfer_test, a_walk_that_is_no_longer_running_asks_nothing_at_all)
 {
 	repository::fake_repository store;
 	cluster::fake_cluster alone(there, std::vector<std::string>());
-	router::router router(store, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(store, alone, nobody);
 	serving_node node(router);
 	progress::patience waiting(30);
 	collector taken;
@@ -436,7 +332,8 @@ TEST(transfer_test, says_when_it_was_the_node_that_refused)
 {
 	repository::fake_repository store;
 	cluster::fake_cluster alone(there, std::vector<std::string>());
-	router::router router(store, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(store, alone, nobody);
 	serving_node node(router);
 	progress::patience waiting(30);
 	collector taken;
@@ -456,7 +353,8 @@ TEST(transfer_test, a_walk_out_of_patience_is_neither_whole_nor_refused)
 {
 	repository::fake_repository store;
 	cluster::fake_cluster alone(there, std::vector<std::string>());
-	router::router router(store, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(store, alone, nobody);
 	serving_node node(router);
 	progress::patience waiting(0);
 	collector taken;

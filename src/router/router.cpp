@@ -123,9 +123,13 @@ namespace
 	}
 }
 
-router::router::router(repository::repository &repo, cluster::cluster &cluster_nodes):
+router::router::router(
+	repository::repository &repo,
+	cluster::cluster &cluster_nodes,
+	const cluster::forwarder &node_forwarding):
 	repository(repo),
-	nodes(cluster_nodes)
+	nodes(cluster_nodes),
+	forwarding(node_forwarding)
 {
 	cluster::partition_terms applied = repository.read_terms();
 
@@ -549,7 +553,7 @@ router::response router::router::route_record(
 				return error_response(error::code::no_leader, "This node does not lead this key's partition.");
 			}
 
-			return nodes.send(lead->node, request);
+			return forwarding.forward(lead->node, request);
 		}
 
 		std::lock_guard<std::mutex> ordered(write_lock(record.key));
@@ -616,7 +620,7 @@ router::response router::router::write_record(
 
 	// Every copy at once, so the thread serving the write waits for the slowest of them rather
 	// than for the sum of them.
-	std::optional<response> refused = nodes.send_all(where.nodes, request);
+	std::optional<response> refused = cluster::refusal(forwarding.forward_all(where.nodes, request));
 
 	return refused ? *refused : empty_response(boost::beast::http::status::no_content);
 }
@@ -627,7 +631,7 @@ router::response router::router::read_record(const request &request, const std::
 
 	for (const auto &replica : replicas)
 	{
-		answer = nodes.send(replica, request);
+		answer = forwarding.forward(replica, request);
 
 		if (answer.status < boost::beast::http::status::internal_server_error)
 		{
@@ -678,7 +682,7 @@ router::router::ordering router::router::order_schema(const request &request)
 			return ordering { error_response(error::code::no_leader, "This node does not lead the tables."), {}, 0 };
 		}
 
-		return ordering { nodes.send(lead->node, request), {}, 0 };
+		return ordering { forwarding.forward(lead->node, request), {}, 0 };
 	}
 
 	return ordering { std::nullopt, nodes.peers(), lead->term };
@@ -745,7 +749,8 @@ router::response router::router::create_table(const request &request, const std:
 		created = json_response(boost::beast::http::status::created, table.json);
 	}
 
-	std::optional<response> failure = nodes.send_all(order.peers, carried(request, order.term, stamp.count));
+	std::optional<response> failure =
+		cluster::refusal(forwarding.forward_all(order.peers, carried(request, order.term, stamp.count)));
 
 	return failure ? *failure : created;
 }
@@ -780,14 +785,16 @@ router::response router::router::delete_table(const request &request, const std:
 			return node_incomplete();
 		}
 
-		std::optional<response> refused = nodes.send_all(order.peers, carried(request, order.term, stamp.count));
+		std::optional<response> refused =
+			cluster::refusal(forwarding.forward_all(order.peers, carried(request, order.term, stamp.count)));
 
 		return refused ? *refused : table_not_found(name);
 	}
 
 	repository.delete_table(name, stamp);
 
-	std::optional<response> failure = nodes.send_all(order.peers, carried(request, order.term, stamp.count));
+	std::optional<response> failure =
+		cluster::refusal(forwarding.forward_all(order.peers, carried(request, order.term, stamp.count)));
 
 	return failure ? *failure : empty_response(boost::beast::http::status::no_content);
 }

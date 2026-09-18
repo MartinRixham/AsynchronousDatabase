@@ -14,6 +14,7 @@
 #include "base64/base64.h"
 #include "cluster/partition.h"
 #include "cluster/fake_cluster.h"
+#include "cluster/fake_forwarder.h"
 #include "repository/fake_repository.h"
 #include "router/router.h"
 #include "table/schema.h"
@@ -137,7 +138,8 @@ TEST(router_test, nonsense)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(get("/wibble"));
 
@@ -149,7 +151,8 @@ TEST(router_test, health_says_whether_writes_are_stalled)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(get("/health"));
 
@@ -168,7 +171,8 @@ TEST(router_test, health_says_whether_this_node_holds_less_than_it_owns)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	EXPECT_EQ(router.route(get("/health")).json.at("incomplete"), false);
 
@@ -188,7 +192,8 @@ TEST(router_test, health_refuses_the_check_of_a_node_that_can_order_no_write)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	EXPECT_EQ(router.route(get("/health")).json.at("unled"), false);
 	EXPECT_EQ(router.route(get("/health")).status, boost::beast::http::status::ok);
@@ -210,7 +215,8 @@ TEST(router_test, health_refuses_the_check_of_a_draining_node_and_serves_everyth
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	EXPECT_EQ(router.route(get("/health")).json.at("draining"), false);
 
@@ -230,7 +236,8 @@ TEST(router_test, refuse_a_read_on_a_node_with_no_membership_but_itself)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster node = lone_node();
-	router::router router(repository, node);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, node, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "a value");
@@ -263,7 +270,8 @@ TEST(router_test, list_no_tables)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(get("/table"));
 
@@ -275,7 +283,8 @@ TEST(router_test, create_a_table)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(put("/table/account", "{}"));
 
@@ -288,7 +297,8 @@ TEST(router_test, create_a_table_with_no_body_at_all)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(put("/table/account", ""));
 
@@ -300,7 +310,8 @@ TEST(router_test, creating_the_same_table_again_changes_nothing)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router.route(put("/table/account", "{}"));
 
@@ -314,7 +325,8 @@ TEST(router_test, fail_to_create_a_table_that_exists_with_different_options)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -328,7 +340,8 @@ TEST(router_test, fail_to_create_a_table_with_an_invalid_name)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(put("/table/An%2FAccount", "{}"));
 
@@ -341,7 +354,8 @@ TEST(router_test, fail_to_create_a_table_from_a_body_that_is_not_json)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(put("/table/account", "not json"));
 
@@ -354,7 +368,8 @@ TEST(router_test, fail_to_create_a_table_from_a_body_that_is_not_an_object)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(put("/table/account", "[]"));
 
@@ -367,7 +382,8 @@ TEST(router_test, fail_to_create_a_table_that_depends_on_one_that_is_not_there)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(put("/table/transaction", "{\"dependencies\":[\"account\"]}"));
 
@@ -380,7 +396,8 @@ TEST(router_test, list_the_tables_and_their_dependencies)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	router.route(put("/table/transaction", "{\"dependencies\":[\"account\"]}"));
@@ -399,7 +416,8 @@ TEST(router_test, inspect_a_table)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -414,7 +432,8 @@ TEST(router_test, fail_to_inspect_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(get("/table/account"));
 
@@ -426,7 +445,8 @@ TEST(router_test, delete_a_table_and_its_data)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
@@ -448,7 +468,8 @@ TEST(router_test, fail_to_delete_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(del("/table/account"));
 
@@ -460,7 +481,8 @@ TEST(router_test, write_then_read_a_record)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -479,7 +501,8 @@ TEST(router_test, a_missing_key_and_an_empty_value_are_told_apart_by_the_status)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "");
@@ -499,7 +522,8 @@ TEST(router_test, a_value_is_kept_as_the_bytes_it_was_given)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "{\"firstName\":\"Eleanor\"");
@@ -511,7 +535,8 @@ TEST(router_test, refuse_to_delete_a_record)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
@@ -527,7 +552,8 @@ TEST(router_test, overwrite_a_record)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
@@ -540,7 +566,8 @@ TEST(router_test, fail_to_read_a_record_of_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(get("/table/account/key/4821"));
 
@@ -552,7 +579,8 @@ TEST(router_test, fail_to_read_a_key_that_is_not_valid_utf8)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -566,7 +594,8 @@ TEST(router_test, fail_to_write_a_key_that_is_too_large)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -581,7 +610,8 @@ TEST(router_test, fail_to_write_a_value_that_is_too_large)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -599,7 +629,8 @@ TEST(router_test, scan_a_partition_in_key_order)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "user/7203", "Marcus Hale");
@@ -620,7 +651,8 @@ TEST(router_test, scan_the_partition_a_key_is_in)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
@@ -639,7 +671,8 @@ TEST(router_test, a_table_is_walked_one_partition_at_a_time)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "user/7203", "Marcus Hale");
@@ -668,7 +701,8 @@ TEST(router_test, scan_a_prefix)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "user/2019", "an early year");
@@ -686,7 +720,8 @@ TEST(router_test, scan_backwards)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "n/1", "one");
@@ -702,7 +737,8 @@ TEST(router_test, scan_keys_only)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
@@ -719,7 +755,8 @@ TEST(router_test, page_through_a_scan_with_a_cursor)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "n/1", "one");
@@ -744,7 +781,8 @@ TEST(router_test, page_backwards_through_a_scan)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "n/1", "one");
@@ -768,7 +806,8 @@ TEST(router_test, page_through_a_scan_of_values_too_large_to_send_at_once)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -795,7 +834,8 @@ TEST(router_test, fail_to_scan_with_a_cursor_this_instance_did_not_issue)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -810,7 +850,8 @@ TEST(router_test, fail_to_scan_a_range_that_is_not_below_its_end)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -824,7 +865,8 @@ TEST(router_test, fail_to_scan_without_naming_a_partition)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -838,7 +880,8 @@ TEST(router_test, fail_to_scan_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/key?partition=7"))), "table_not_found");
 }
@@ -847,7 +890,8 @@ TEST(router_test, refuse_to_delete_a_range)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "user/2019", "a user");
@@ -864,7 +908,8 @@ TEST(router_test, a_method_that_is_not_a_method_of_the_route)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -878,7 +923,8 @@ TEST(router_test, a_path_below_a_key_is_not_a_route)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -950,12 +996,13 @@ TEST(router_cluster_test, read_a_record_from_the_node_that_owns_the_key)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.owns("4821", there);
-	nodes.answer(there, router::text_response(boost::beast::http::status::ok, "a value"));
+	forwarding.answer(there, router::text_response(boost::beast::http::status::ok, "a value"));
 
 	router::response response = router.route(get("/table/account/key/4821"));
 
@@ -963,43 +1010,45 @@ TEST(router_cluster_test, read_a_record_from_the_node_that_owns_the_key)
 	EXPECT_EQ(response.text, "a value");
 
 	// The request travels as it stands, so the node that owns the key answers the same question.
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
-	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::get);
-	EXPECT_EQ(nodes.sent()[0].second.path, (std::vector<std::string> { "table", "account", "key", "4821" }));
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, there);
+	EXPECT_EQ(forwarding.sent()[0].second.method, boost::beast::http::verb::get);
+	EXPECT_EQ(forwarding.sent()[0].second.path, (std::vector<std::string> { "table", "account", "key", "4821" }));
 }
 
 TEST(router_cluster_test, read_a_record_this_node_owns_without_a_hop)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "a value");
-	nodes.forget();
+	forwarding.forget();
 
 	router::response response = router.route(get("/table/account/key/4821"));
 
 	EXPECT_EQ(response.text, "a value");
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 TEST(router_cluster_test, write_a_record_to_the_node_that_owns_the_key)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.owns("4821", there);
 
 	router::response response = router.route(put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].second.body, "a value");
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].second.body, "a value");
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 }
 
@@ -1009,10 +1058,11 @@ TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.owns("4821", there);
 
 	router::request forwarded = put("/table/account/key/4821", "a value");
@@ -1020,7 +1070,7 @@ TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
 	forwarded.forwarded = true;
 
 	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
 }
 
@@ -1028,14 +1078,15 @@ TEST(router_cluster_test, fail_to_write_to_a_table_that_is_not_there_without_a_h
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.owns("4821", there);
 
 	router::response response = router.route(put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(error_code(response), "table_not_found");
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 // Every zone holds a copy, so a write is not done until every copy has taken it — this node's own
@@ -1044,10 +1095,11 @@ TEST(router_cluster_test, write_a_record_to_every_node_that_holds_a_copy)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, there, elsewhere });
 
 	router::response response = router.route(put("/table/account/key/4821", "a value"));
@@ -1055,28 +1107,29 @@ TEST(router_cluster_test, write_a_record_to_every_node_that_holds_a_copy)
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
 
-	ASSERT_EQ(nodes.sent().size(), 2u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
-	EXPECT_EQ(nodes.sent()[0].second.body, "a value");
-	EXPECT_EQ(nodes.sent()[1].first, elsewhere);
-	EXPECT_EQ(nodes.sent()[1].second.body, "a value");
+	ASSERT_EQ(forwarding.sent().size(), 2u);
+	EXPECT_EQ(forwarding.sent()[0].first, there);
+	EXPECT_EQ(forwarding.sent()[0].second.body, "a value");
+	EXPECT_EQ(forwarding.sent()[1].first, elsewhere);
+	EXPECT_EQ(forwarding.sent()[1].second.body, "a value");
 }
 
 TEST(router_cluster_test, write_a_record_to_every_copy_when_this_node_holds_none)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { there, elsewhere });
 
 	router::response response = router.route(put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
-	EXPECT_EQ(nodes.sent().size(), 2u);
+	EXPECT_EQ(forwarding.sent().size(), 2u);
 }
 
 // A copy that refuses is a record that is not in every zone, and saying so is what lets the client
@@ -1085,19 +1138,20 @@ TEST(router_cluster_test, fail_to_write_a_record_a_copy_refuses)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, there, elsewhere });
-	nodes.answer(there, router::error_response(error::code::write_stalled, "Writes are stalled."));
+	forwarding.answer(there, router::error_response(error::code::write_stalled, "Writes are stalled."));
 
 	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "a value"))), "write_stalled");
 
 	// The copies are asked at once, so the zone behind the one that refused was asked as well.
 	// That is a request that need not have been sent rather than a wrong answer: the client is
 	// told to run the whole write again, and writing a record twice is writing it once.
-	EXPECT_EQ(nodes.sent().size(), 2u);
+	EXPECT_EQ(forwarding.sent().size(), 2u);
 }
 
 // The copies are asked at once, so more than one of them can refuse. The one reported is the
@@ -1107,16 +1161,17 @@ TEST(router_cluster_test, report_the_first_copy_to_refuse_a_write)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, there, elsewhere });
-	nodes.answer(there, router::error_response(error::code::write_stalled, "Writes are stalled."));
-	nodes.answer(elsewhere, router::error_response(error::code::storage_error, "The store failed."));
+	forwarding.answer(there, router::error_response(error::code::write_stalled, "Writes are stalled."));
+	forwarding.answer(elsewhere, router::error_response(error::code::storage_error, "The store failed."));
 
 	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "a value"))), "write_stalled");
-	EXPECT_EQ(nodes.sent().size(), 2u);
+	EXPECT_EQ(forwarding.sent().size(), 2u);
 }
 
 // The reason for keeping a copy in every zone: a zone that is gone is a copy to pass over.
@@ -1124,19 +1179,22 @@ TEST(router_cluster_test, read_a_record_from_the_next_copy_when_a_node_does_not_
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { there, elsewhere });
-	nodes.answer(there, router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
-	nodes.answer(elsewhere, router::text_response(boost::beast::http::status::ok, "a value"));
+	forwarding.answer(
+		there,
+		router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
+	forwarding.answer(elsewhere, router::text_response(boost::beast::http::status::ok, "a value"));
 
 	router::response response = router.route(get("/table/account/key/4821"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.text, "a value");
-	EXPECT_EQ(nodes.sent().size(), 2u);
+	EXPECT_EQ(forwarding.sent().size(), 2u);
 }
 
 // A key that is not there is not there in any zone, because every zone is written before a write
@@ -1145,15 +1203,16 @@ TEST(router_cluster_test, take_a_missing_key_from_the_first_copy_that_answers)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { there, elsewhere });
-	nodes.answer(there, router::empty_response(boost::beast::http::status::not_found));
+	forwarding.answer(there, router::empty_response(boost::beast::http::status::not_found));
 
 	EXPECT_EQ(router.route(get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
-	EXPECT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent().size(), 1u);
 }
 
 // A node that was replaced, or a zone that came back, is the owner of keys in its own zone and
@@ -1163,30 +1222,32 @@ TEST(router_cluster_test, read_a_record_from_another_zone_when_this_node_has_non
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, there });
-	nodes.answer(there, router::text_response(boost::beast::http::status::ok, "a value"));
+	forwarding.answer(there, router::text_response(boost::beast::http::status::ok, "a value"));
 
 	router::response response = router.route(get("/table/account/key/4821"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.text, "a value");
-	EXPECT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent().size(), 1u);
 }
 
 TEST(router_cluster_test, answer_a_key_no_zone_holds_as_missing)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, there });
-	nodes.answer(there, router::empty_response(boost::beast::http::status::not_found));
+	forwarding.answer(there, router::empty_response(boost::beast::http::status::not_found));
 
 	EXPECT_EQ(router.route(get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
 }
@@ -1197,10 +1258,11 @@ TEST(router_cluster_test, answer_a_forwarded_read_of_a_key_this_node_has_none_of
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, there });
 
 	router::request forwarded = get("/table/account/key/4821");
@@ -1208,7 +1270,7 @@ TEST(router_cluster_test, answer_a_forwarded_read_of_a_key_this_node_has_none_of
 	forwarded.forwarded = true;
 
 	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::not_found);
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 // A rebuild that did not read the whole of this node's share leaves it unable to tell a key that
@@ -1218,10 +1280,11 @@ TEST(router_cluster_test, refuse_to_call_a_key_missing_when_this_node_holds_less
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, there });
 
 	router::request forwarded = get("/table/account/key/4821");
@@ -1234,17 +1297,18 @@ TEST(router_cluster_test, refuse_to_call_a_key_missing_when_this_node_holds_less
 
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
 	EXPECT_EQ(error_code(response), "node_incomplete");
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 TEST(router_cluster_test, call_a_key_missing_in_a_partition_this_node_holds_the_whole_of)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, there });
 
 	std::string elsewhere_key = "4822";
@@ -1269,13 +1333,14 @@ TEST(router_cluster_test, read_a_key_from_the_next_copy_when_the_first_cannot_sa
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { there, elsewhere });
-	nodes.answer(there, router::error_response(error::code::node_incomplete, "Not filled yet."));
-	nodes.answer(elsewhere, router::text_response(boost::beast::http::status::ok, "Robert"));
+	forwarding.answer(there, router::error_response(error::code::node_incomplete, "Not filled yet."));
+	forwarding.answer(elsewhere, router::text_response(boost::beast::http::status::ok, "Robert"));
 
 	router::response response = router.route(get("/table/account/key/4821"));
 
@@ -1289,7 +1354,8 @@ TEST(router_cluster_test, refuse_to_call_a_table_missing_when_this_node_holds_le
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	nodes.unvouched();
 
@@ -1301,10 +1367,11 @@ TEST(router_cluster_test, answer_a_key_this_node_holds_while_it_holds_less_than_
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, there });
 	repository.write_record("account", record::valid_record("4821", "Robert"));
 
@@ -1324,16 +1391,21 @@ TEST(router_cluster_test, fail_to_read_a_record_no_copy_of_which_answers)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { there, elsewhere });
-	nodes.answer(there, router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
-	nodes.answer(elsewhere, router::error_response(error::code::storage_error, "Node \"" + elsewhere + "\" did not answer."));
+	forwarding.answer(
+		there,
+		router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
+	forwarding.answer(
+		elsewhere,
+		router::error_response(error::code::storage_error, "Node \"" + elsewhere + "\" did not answer."));
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/key/4821"))), "storage_error");
-	EXPECT_EQ(nodes.sent().size(), 2u);
+	EXPECT_EQ(forwarding.sent().size(), 2u);
 }
 
 // Writes to a partition are ordered by the node that leads it, so a write that lands anywhere else
@@ -1342,10 +1414,11 @@ TEST(router_cluster_test, write_a_record_through_the_node_that_leads_its_partiti
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, partner, there });
 	nodes.led_by("4821", there, 41);
 
@@ -1355,9 +1428,9 @@ TEST(router_cluster_test, write_a_record_through_the_node_that_leads_its_partiti
 
 	// One hop to the leader, and no copy written from here: the leader decides the order and
 	// writes every copy itself.
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
-	EXPECT_EQ(nodes.sent()[0].second.body, "a value");
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, there);
+	EXPECT_EQ(forwarding.sent()[0].second.body, "a value");
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 }
 
@@ -1367,10 +1440,11 @@ TEST(router_cluster_test, order_a_write_of_a_partition_this_node_leads)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, partner });
 	nodes.led_by("4821", here, 41);
 
@@ -1379,9 +1453,9 @@ TEST(router_cluster_test, order_a_write_of_a_partition_this_node_leads)
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
 
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, partner);
-	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, partner);
+	EXPECT_EQ(forwarding.sent()[0].second.term, 41);
 }
 
 // The leader stamps the write with the term it ordered it in and a count of its own, and both
@@ -1390,10 +1464,11 @@ TEST(router_cluster_test, stamp_a_write_with_the_version_it_was_ordered_in)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("4821", { here, partner });
 	nodes.led_by("4821", here, 41);
 
@@ -1404,9 +1479,9 @@ TEST(router_cluster_test, stamp_a_write_with_the_version_it_was_ordered_in)
 	EXPECT_EQ(stamped.term, 41);
 	EXPECT_NE(stamped.count, 0u);
 
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].second.term, 41);
-	EXPECT_EQ(nodes.sent()[0].second.count, stamped.count);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].second.term, 41);
+	EXPECT_EQ(forwarding.sent()[0].second.count, stamped.count);
 }
 
 // The count is what orders two writes the same leader ordered, which a term of its own cannot: a
@@ -1415,7 +1490,8 @@ TEST(router_cluster_test, count_a_write_after_the_one_before_it)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	create_table(router, "account");
 	nodes.copies("4821", { here, partner });
@@ -1436,10 +1512,11 @@ TEST(router_cluster_test, apply_the_version_a_forwarded_write_was_ordered_in)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 
 	router::request forwarded = put("/table/account/key/4821", "a value");
 
@@ -1461,7 +1538,8 @@ TEST(router_test, count_a_write_no_leader_ordered)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -1479,17 +1557,18 @@ TEST(router_cluster_test, refuse_a_write_of_a_partition_nothing_leads)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.led_by_nobody("4821");
 
 	router::response response = router.route(put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(error_code(response), "no_leader");
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 }
 
@@ -1499,10 +1578,11 @@ TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_that_has_pa
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.applied("4821", 60);
 
 	router::request forwarded = put("/table/account/key/4821", "a value");
@@ -1523,9 +1603,10 @@ TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_older_than_
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster before = paired_zones();
+	cluster::fake_forwarder nobody;
 
 	{
-		router::router router(repository, before);
+		router::router router(repository, before, nobody);
 
 		create_table(router, "account");
 
@@ -1538,7 +1619,7 @@ TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_older_than_
 	}
 
 	cluster::fake_cluster after = paired_zones();
-	router::router restarted(repository, after);
+	router::router restarted(repository, after, nobody);
 	router::request older = put("/table/account/key/4821", "older");
 
 	older.forwarded = true;
@@ -1554,10 +1635,11 @@ TEST(router_cluster_test, refuse_a_write_sent_here_to_be_ordered_that_this_node_
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.led_by("4821", there, 41);
 
 	router::request forwarded = put("/table/account/key/4821", "a value");
@@ -1565,7 +1647,7 @@ TEST(router_cluster_test, refuse_a_write_sent_here_to_be_ordered_that_this_node_
 	forwarded.forwarded = true;
 
 	EXPECT_EQ(error_code(router.route(forwarded)), "no_leader");
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 }
 
@@ -1573,10 +1655,11 @@ TEST(router_cluster_test, apply_a_forwarded_write_ordered_in_the_term_that_stand
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.applied("4821", 60);
 
 	router::request forwarded = put("/table/account/key/4821", "a value");
@@ -1586,14 +1669,14 @@ TEST(router_cluster_test, apply_a_forwarded_write_ordered_in_the_term_that_stand
 
 	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 namespace
 {
-	// The zones of paired_zones, with a fan out slow enough to be caught overlapping another and a
-	// count of the most writes that were ever inside one at once.
-	class counting_cluster final : public cluster::fake_cluster
+	// A fan out slow enough to be caught overlapping another, and a count of the most writes that
+	// were ever inside one at once.
+	class counting_forwarder final : public cluster::fake_forwarder
 	{
 		mutable std::mutex counting;
 
@@ -1617,21 +1700,11 @@ namespace
 		}
 
 	public:
-		counting_cluster():
-			fake_cluster(here, std::vector<::cluster::member> {
-				::cluster::member { here, "a" },
-				::cluster::member { partner, "a" },
-				::cluster::member { there, "b" },
-				::cluster::member { elsewhere, "b" }
-			})
-		{
-		}
-
 		// The fan out the ordering lock is held across, which is the whole of what these tests
 		// watch. It answers for the nodes rather than recording what they were asked, because a
-		// fake_cluster remembers that in a vector and two threads remembering at once is a race
+		// fake_forwarder remembers that in a vector and two threads remembering at once is a race
 		// of the test's own making.
-		std::optional<router::response> send_all(
+		std::vector<router::response> forward_all(
 			const std::vector<std::string> &,
 			const router::request &) const override
 		{
@@ -1639,7 +1712,7 @@ namespace
 			std::this_thread::sleep_for(std::chrono::milliseconds(50));
 			leave();
 
-			return std::optional<router::response>();
+			return std::vector<router::response>();
 		}
 
 		size_t most_at_once() const
@@ -1675,8 +1748,9 @@ namespace
 TEST(router_cluster_test, order_concurrent_writes_of_one_key)
 {
 	repository::fake_repository repository;
-	counting_cluster nodes;
-	router::router router(repository, nodes);
+	cluster::fake_cluster nodes = paired_zones();
+	counting_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
 	nodes.copies("4821", { here, partner });
@@ -1684,7 +1758,7 @@ TEST(router_cluster_test, order_concurrent_writes_of_one_key)
 
 	write_together(router, { "4821", "4821", "4821", "4821" });
 
-	EXPECT_EQ(nodes.most_at_once(), 1u);
+	EXPECT_EQ(forwarding.most_at_once(), 1u);
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
 }
 
@@ -1693,8 +1767,9 @@ TEST(router_cluster_test, order_concurrent_writes_of_one_key)
 TEST(router_cluster_test, write_different_keys_at_once)
 {
 	repository::fake_repository repository;
-	counting_cluster nodes;
-	router::router router(repository, nodes);
+	cluster::fake_cluster nodes = paired_zones();
+	counting_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 	std::vector<std::string> keys;
 
 	create_table(router, "account");
@@ -1711,7 +1786,7 @@ TEST(router_cluster_test, write_different_keys_at_once)
 
 	write_together(router, keys);
 
-	EXPECT_GT(nodes.most_at_once(), 1u);
+	EXPECT_GT(forwarding.most_at_once(), 1u);
 }
 
 // A read is not ordered by anybody: it is answered by a copy, and the leader is not in its way.
@@ -1719,30 +1794,32 @@ TEST(router_cluster_test, read_a_record_without_asking_the_leader)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "a value");
-	nodes.forget();
+	forwarding.forget();
 	nodes.led_by("4821", there, 41);
 
 	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "a value");
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 TEST(router_cluster_test, create_a_table_on_every_node)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	router::response response = router.route(put("/table/account", "{}"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::created);
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
-	EXPECT_EQ(nodes.sent()[0].second.path, (std::vector<std::string> { "table", "account" }));
-	EXPECT_EQ(nodes.sent()[0].second.body, "{}");
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, there);
+	EXPECT_EQ(forwarding.sent()[0].second.path, (std::vector<std::string> { "table", "account" }));
+	EXPECT_EQ(forwarding.sent()[0].second.body, "{}");
 }
 
 // Every node holds every table, so the list is answered out of this node's own store.
@@ -1750,22 +1827,24 @@ TEST(router_cluster_test, list_the_tables_without_asking_another_node)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 
 	EXPECT_EQ(router.route(get("/table")).json.at("tables").as_array().size(), 1u);
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 TEST(router_cluster_test, fail_to_create_a_table_a_node_refuses)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
-	nodes.answer(there, router::error_response(error::code::table_exists, "A table named \"account\" exists."));
+	forwarding.answer(there, router::error_response(error::code::table_exists, "A table named \"account\" exists."));
 
 	router::response response = router.route(put("/table/account", "{}"));
 
@@ -1776,14 +1855,15 @@ TEST(router_cluster_test, create_a_forwarded_table_without_passing_it_on)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	router::request forwarded = put("/table/account", "{}");
 
 	forwarded.forwarded = true;
 
 	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::created);
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_TRUE(repository.has_table("account"));
 }
 
@@ -1791,16 +1871,17 @@ TEST(router_cluster_test, delete_a_table_on_every_node)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 
 	router::response response = router.route(del("/table/account"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].second.method, boost::beast::http::verb::delete_);
 }
 
 // A node that never had the table has nothing to say about a deletion the rest of the cluster is
@@ -1809,7 +1890,8 @@ TEST(router_cluster_test, agree_to_a_forwarded_deletion_of_a_table_that_is_not_t
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	router::request forwarded = del("/table/account");
 
@@ -1826,7 +1908,8 @@ TEST(router_cluster_test, write_down_a_forwarded_deletion_of_a_table_that_is_not
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	router::request forwarded = del("/table/account");
 
@@ -1853,7 +1936,8 @@ TEST(router_cluster_test, carry_the_version_of_a_create_that_no_leader_ordered)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	EXPECT_EQ(router.route(put("/table/account", "{}")).status, boost::beast::http::status::created);
 
@@ -1862,9 +1946,9 @@ TEST(router_cluster_test, carry_the_version_of_a_create_that_no_leader_ordered)
 	ASSERT_TRUE(made.has_value());
 	EXPECT_EQ(made->stamp.term, 0);
 
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].second.term, 0);
-	EXPECT_EQ(nodes.sent()[0].second.count, made->stamp.count);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].second.term, 0);
+	EXPECT_EQ(forwarding.sent()[0].second.count, made->stamp.count);
 }
 
 // The stamp a create is ordered in travels to every node, so one create is one version across the
@@ -1873,7 +1957,8 @@ TEST(router_cluster_test, carry_the_version_a_table_was_created_in_to_the_other_
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by(cluster::table_key, here, 41);
 
@@ -1884,9 +1969,9 @@ TEST(router_cluster_test, carry_the_version_a_table_was_created_in_to_the_other_
 	ASSERT_TRUE(made.has_value());
 	EXPECT_EQ(made->stamp.term, 41);
 
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].second.term, 41);
-	EXPECT_EQ(nodes.sent()[0].second.count, made->stamp.count);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].second.term, 41);
+	EXPECT_EQ(forwarding.sent()[0].second.count, made->stamp.count);
 }
 
 // The whole schema, tombstones and versions and all, which is what a node filling a store or
@@ -1896,7 +1981,8 @@ TEST(router_test, answer_the_schema_a_node_holds)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	create_table(router, "dropped");
@@ -1924,7 +2010,8 @@ TEST(router_test, refuse_a_method_the_schema_route_does_not_have)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	EXPECT_EQ(error_code(router.route(del("/schema"))), "method_not_allowed");
 }
@@ -1936,7 +2023,8 @@ TEST(router_cluster_test, refuse_a_deletion_forwarded_to_the_leader_of_a_table_t
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	nodes.led_by(cluster::table_key, here, 41);
 
@@ -1955,16 +2043,17 @@ TEST(router_cluster_test, carry_a_delete_of_a_table_that_is_not_here_to_the_othe
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by(cluster::table_key, here, 41);
 
 	EXPECT_EQ(error_code(router.route(del("/table/account"))), "table_not_found");
 
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
-	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
-	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, there);
+	EXPECT_EQ(forwarding.sent()[0].second.method, boost::beast::http::verb::delete_);
+	EXPECT_EQ(forwarding.sent()[0].second.term, 41);
 }
 
 // A node that refused the order is still holding the table, so what the client is told is the
@@ -1973,10 +2062,13 @@ TEST(router_cluster_test, report_a_node_that_refuses_a_delete_of_a_table_that_is
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by(cluster::table_key, here, 41);
-	nodes.answer(there, router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
+	forwarding.answer(
+		there,
+		router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
 
 	EXPECT_EQ(error_code(router.route(del("/table/account"))), "storage_error");
 }
@@ -1987,13 +2079,14 @@ TEST(router_cluster_test, refuse_to_delete_a_table_this_node_cannot_say_is_missi
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by(cluster::table_key, here, 41);
 	nodes.unvouched();
 
 	EXPECT_EQ(error_code(router.route(del("/table/account"))), "node_incomplete");
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 // A table is a record of no partition, so what orders one is the leader of the tables, and a
@@ -2002,15 +2095,16 @@ TEST(router_cluster_test, create_a_table_through_the_node_that_leads_the_tables)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by(cluster::table_key, there, 41);
 
 	router.route(put("/table/account", "{}"));
 
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
-	EXPECT_EQ(nodes.sent()[0].second.term, 0);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, there);
+	EXPECT_EQ(forwarding.sent()[0].second.term, 0);
 	EXPECT_FALSE(repository.has_table("account"));
 }
 
@@ -2020,16 +2114,17 @@ TEST(router_cluster_test, order_a_table_create_this_node_leads)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by(cluster::table_key, here, 41);
 
 	EXPECT_EQ(router.route(put("/table/account", "{}")).status, boost::beast::http::status::created);
 	EXPECT_TRUE(repository.has_table("account"));
 
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
-	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, there);
+	EXPECT_EQ(forwarding.sent()[0].second.term, 41);
 }
 
 // Nothing leading the tables is a create with nowhere to be ordered, and it is refused rather
@@ -2038,7 +2133,8 @@ TEST(router_cluster_test, refuse_a_table_create_when_nothing_leads_the_tables)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by_nobody(cluster::table_key);
 
@@ -2046,7 +2142,7 @@ TEST(router_cluster_test, refuse_a_table_create_when_nothing_leads_the_tables)
 
 	EXPECT_EQ(error_code(response), "no_leader");
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_FALSE(repository.has_table("account"));
 }
 
@@ -2054,7 +2150,8 @@ TEST(router_cluster_test, apply_a_table_create_the_leader_ordered)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by(cluster::table_key, there, 60);
 
@@ -2065,7 +2162,7 @@ TEST(router_cluster_test, apply_a_table_create_the_leader_ordered)
 
 	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::created);
 	EXPECT_TRUE(repository.has_table("account"));
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 // The same fence a record write has: a leader that lost its lease and does not know it must not
@@ -2074,7 +2171,8 @@ TEST(router_cluster_test, refuse_a_table_create_ordered_in_a_term_that_has_passe
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	nodes.applied(cluster::table_key, 60);
 
@@ -2095,7 +2193,8 @@ TEST(router_cluster_test, refuse_a_table_create_ordered_in_a_term_older_than_the
 	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 60, 1 });
 
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 	router::request forwarded = put("/table/ledger", "{}");
 
 	forwarded.forwarded = true;
@@ -2110,7 +2209,8 @@ TEST(router_cluster_test, refuse_a_table_create_sent_here_to_be_ordered_that_thi
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by(cluster::table_key, there, 41);
 
@@ -2119,7 +2219,7 @@ TEST(router_cluster_test, refuse_a_table_create_sent_here_to_be_ordered_that_thi
 	forwarded.forwarded = true;
 
 	EXPECT_EQ(error_code(router.route(forwarded)), "no_leader");
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_FALSE(repository.has_table("account"));
 }
 
@@ -2129,26 +2229,28 @@ TEST(router_cluster_test, delete_a_table_through_the_node_that_leads_the_tables)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by(cluster::table_key, here, 41);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 
 	EXPECT_EQ(router.route(del("/table/account")).status, boost::beast::http::status::no_content);
 	EXPECT_FALSE(repository.has_table("account"));
 
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].second.method, boost::beast::http::verb::delete_);
-	EXPECT_EQ(nodes.sent()[0].second.term, 41);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].second.method, boost::beast::http::verb::delete_);
+	EXPECT_EQ(forwarding.sent()[0].second.term, 41);
 }
 
 TEST(router_cluster_test, delete_a_table_the_leader_ordered_without_passing_it_on)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	nodes.led_by(cluster::table_key, there, 60);
 
@@ -2158,7 +2260,7 @@ TEST(router_cluster_test, delete_a_table_the_leader_ordered_without_passing_it_o
 	forwarded.term = 60;
 
 	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 // Every schema operation takes one lock rather than the stripe its name falls in, because what a
@@ -2168,8 +2270,9 @@ TEST(router_cluster_test, delete_a_table_the_leader_ordered_without_passing_it_o
 TEST(router_cluster_test, order_concurrent_table_creates)
 {
 	repository::fake_repository repository;
-	counting_cluster nodes;
-	router::router router(repository, nodes);
+	cluster::fake_cluster nodes = paired_zones();
+	counting_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 	std::vector<std::thread> creating;
 
 	nodes.led_by(cluster::table_key, here, 41);
@@ -2184,7 +2287,7 @@ TEST(router_cluster_test, order_concurrent_table_creates)
 		creator.join();
 	}
 
-	EXPECT_EQ(nodes.most_at_once(), 1u);
+	EXPECT_EQ(forwarding.most_at_once(), 1u);
 	EXPECT_TRUE(repository.has_table("account3"));
 }
 
@@ -2195,12 +2298,13 @@ TEST(router_cluster_test, scan_the_node_that_holds_the_partition)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.owns("b", there);
-	nodes.answer(there, page(boost::json::array { record_json("b", "2") }, false));
+	forwarding.answer(there, page(boost::json::array { record_json("b", "2") }, false));
 
 	router::response response = router.route(get("/table/account/key?key=b"));
 
@@ -2208,9 +2312,9 @@ TEST(router_cluster_test, scan_the_node_that_holds_the_partition)
 
 	// The request travels as the client sent it: the node it lands on is the one that issues the
 	// cursor, and it is the same node for every request for that partition.
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
-	EXPECT_EQ(nodes.sent()[0].second.query, "key=b");
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, there);
+	EXPECT_EQ(forwarding.sent()[0].second.query, "key=b");
 }
 
 // **A cursor belongs to the node that issued it**, which is the node that holds the partition. So
@@ -2220,46 +2324,49 @@ TEST(router_cluster_test, forward_a_scan_carrying_a_cursor_this_node_did_not_iss
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.owns("b", there);
-	nodes.answer(there, page(boost::json::array { record_json("b", "2") }, false));
+	forwarding.answer(there, page(boost::json::array { record_json("b", "2") }, false));
 
 	std::string cursor = scan::encode_cursor("b", "another instance", cluster::partition_of("b"));
 	router::response response = router.route(get("/table/account/key?key=b&cursor=" + cursor));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, there);
 }
 
 TEST(router_cluster_test, scan_this_node_s_own_store_when_it_holds_the_partition)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
 	write_record(router, "account", "a/1", "one");
-	nodes.forget();
+	forwarding.forget();
 
 	router::response response = router.route(get("/table/account/key?key=a"));
 
 	EXPECT_EQ(sorts(response), (std::vector<std::string> { "1" }));
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 TEST(router_cluster_test, serve_a_forwarded_scan_where_it_stands)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
 	write_record(router, "account", "a", "1");
-	nodes.forget();
+	forwarding.forget();
 	nodes.owns("a", there);
 
 	router::request forwarded = get("/table/account/key?key=a");
@@ -2267,7 +2374,7 @@ TEST(router_cluster_test, serve_a_forwarded_scan_where_it_stands)
 	forwarded.forwarded = true;
 
 	EXPECT_EQ(keys(router.route(forwarded)), (std::vector<std::string> { "a" }));
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 // A copy that does not answer is passed over for the next one, the way a read of a key is: every
@@ -2276,29 +2383,35 @@ TEST(router_cluster_test, scan_the_next_copy_when_the_nearest_does_not_answer)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("b", { there, elsewhere });
-	nodes.answer(there, router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
-	nodes.answer(elsewhere, page(boost::json::array { record_json("b", "2") }, false));
+	forwarding.answer(
+		there,
+		router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
+	forwarding.answer(elsewhere, page(boost::json::array { record_json("b", "2") }, false));
 
 	EXPECT_EQ(keys(router.route(get("/table/account/key?key=b"))), (std::vector<std::string> { "b" }));
-	ASSERT_EQ(nodes.sent().size(), 2u);
-	EXPECT_EQ(nodes.sent()[1].first, elsewhere);
+	ASSERT_EQ(forwarding.sent().size(), 2u);
+	EXPECT_EQ(forwarding.sent()[1].first, elsewhere);
 }
 
 TEST(router_cluster_test, fail_to_scan_when_no_copy_answers)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
 	nodes.copies("b", { there, elsewhere });
-	nodes.answer(there, router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
-	nodes.answer(elsewhere, router::error_response(error::code::storage_error, "Nor did this one."));
+	forwarding.answer(
+		there,
+		router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
+	forwarding.answer(elsewhere, router::error_response(error::code::storage_error, "Nor did this one."));
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/key?key=b"))), "storage_error");
 }
@@ -2309,15 +2422,16 @@ TEST(router_cluster_test, take_a_refusal_of_a_scan_from_the_copy_that_gave_it)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("b", { there, elsewhere });
-	nodes.answer(there, router::error_response(error::code::invalid_cursor, "Not this instance's cursor."));
+	forwarding.answer(there, router::error_response(error::code::invalid_cursor, "Not this instance's cursor."));
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/key?key=b"))), "invalid_cursor");
-	EXPECT_EQ(nodes.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent().size(), 1u);
 }
 
 // A node that holds less than it owns cannot answer for a partition it may not have filled: a page
@@ -2326,29 +2440,31 @@ TEST(router_cluster_test, scan_a_copy_that_is_whole_rather_than_this_node_s_own_
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
 	write_record(router, "account", "a", "1");
-	nodes.forget();
+	forwarding.forget();
 	nodes.copies("a", { here, there });
-	nodes.answer(there, page(boost::json::array { record_json("a", "1"), record_json("a", "2", "2") }, false));
+	forwarding.answer(there, page(boost::json::array { record_json("a", "1"), record_json("a", "2", "2") }, false));
 	nodes.unvouched("a");
 
 	EXPECT_EQ(keys(router.route(get("/table/account/key?key=a"))).size(), 2u);
-	ASSERT_EQ(nodes.sent().size(), 1u);
-	EXPECT_EQ(nodes.sent()[0].first, there);
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, there);
 }
 
 TEST(router_cluster_test, answer_node_incomplete_to_a_scan_of_a_partition_no_other_node_holds)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
 	write_record(router, "account", "a", "1");
-	nodes.forget();
+	forwarding.forget();
 	nodes.owns("a", here);
 	nodes.unvouched("a");
 
@@ -2356,14 +2472,15 @@ TEST(router_cluster_test, answer_node_incomplete_to_a_scan_of_a_partition_no_oth
 
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
 	EXPECT_EQ(error_code(response), "node_incomplete");
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 TEST(router_cluster_test, name_the_nodes_of_the_cluster_in_the_health_of_the_instance)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	boost::json::array named = router.route(get("/health")).json.at("nodes").as_array();
 
@@ -2378,7 +2495,8 @@ TEST(router_cluster_test, name_the_zones_of_the_cluster_in_the_health_of_the_ins
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = three_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	boost::json::object zones = router.route(get("/health")).json.at("zones").as_object();
 
@@ -2393,7 +2511,8 @@ TEST(router_cluster_test, count_the_partitions_this_node_leads_in_the_health_of_
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	EXPECT_EQ(router.route(get("/health")).json.at("leads").as_int64(), 0);
 
@@ -2409,7 +2528,8 @@ TEST(router_cluster_test, name_the_etcd_this_node_reads_the_membership_from)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	nodes.reads_etcd("http://etcd:2379");
 
@@ -2425,7 +2545,8 @@ TEST(router_cluster_test, say_that_this_node_is_no_longer_registered_in_etcd)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	nodes.reads_etcd("http://etcd:2379");
 	nodes.lost_etcd();
@@ -2440,7 +2561,8 @@ TEST(router_cluster_test, name_no_etcd_when_the_instance_was_told_none)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	EXPECT_FALSE(router.route(get("/health")).json.contains("etcd"));
 }
@@ -2449,7 +2571,8 @@ TEST(router_cluster_test, name_no_zones_when_the_cluster_has_none)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = two_nodes();
-	router::router router(repository, nodes);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, nodes, nobody);
 
 	router::response response = router.route(get("/health"));
 
@@ -2461,7 +2584,8 @@ TEST(router_cluster_test, name_no_nodes_when_the_instance_stands_alone)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	EXPECT_FALSE(router.route(get("/health")).json.contains("nodes"));
 }
@@ -2473,7 +2597,8 @@ TEST(router_test, answers_a_file_of_the_records_of_the_partitions_asked_for)
 	repository::fake_repository repository;
 	repository::fake_repository taking;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
@@ -2497,7 +2622,8 @@ TEST(router_test, answers_no_file_of_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	router::response response = router.route(get("/table/account/file?partitions=" + every_partition()));
 
@@ -2511,7 +2637,8 @@ TEST(router_test, refuses_a_file_of_something_that_is_not_a_set_of_partitions)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -2523,7 +2650,8 @@ TEST(router_test, refuses_a_file_resumed_at_something_that_is_not_a_cursor)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -2537,7 +2665,8 @@ TEST(router_test, a_file_is_read_and_never_written)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -2553,7 +2682,8 @@ TEST(router_test, answers_a_file_of_keys_alone_when_the_values_are_not_wanted)
 	repository::fake_repository repository;
 	repository::fake_repository giving;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
@@ -2579,7 +2709,8 @@ TEST(router_test, says_where_a_table_would_be_cut_up)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -2607,7 +2738,8 @@ TEST(router_test, cuts_a_table_up_no_ways_when_it_is_asked_for_one_piece)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
@@ -2619,7 +2751,8 @@ TEST(router_test, refuses_a_split_of_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	EXPECT_EQ(error_code(router.route(get("/table/account/split?ways=4"))), "table_not_found");
 }
@@ -2628,7 +2761,8 @@ TEST(router_test, refuses_a_split_into_something_that_is_not_a_number_of_ways)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -2644,7 +2778,8 @@ TEST(router_test, answers_a_file_that_ends_where_it_was_told_to)
 	repository::fake_repository repository;
 	repository::fake_repository taking;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
@@ -2667,7 +2802,8 @@ TEST(router_test, answers_a_file_of_no_more_of_the_table_than_it_was_asked_for)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
@@ -2684,7 +2820,8 @@ TEST(router_test, write_then_read_a_record_of_two_parts)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 
@@ -2699,7 +2836,8 @@ TEST(router_test, a_partition_key_and_a_key_sorting_under_it_are_different_recor
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	router.route(put("/table/account/key/4821", "the account"));
@@ -2715,7 +2853,8 @@ TEST(router_test, a_key_of_two_parts_is_the_key_carrying_a_zero_byte)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	router.route(put("/table/account/key/4821/2019", "Eleanor Whitmore"));
@@ -2727,7 +2866,8 @@ TEST(router_test, a_scan_says_which_half_of_a_key_is_which)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	router.route(put("/table/account/key/4821/2019", "a year of it"));
@@ -2744,7 +2884,8 @@ TEST(router_test, a_scan_of_keys_of_one_part_says_nothing_about_sorting)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
@@ -2763,7 +2904,8 @@ TEST(router_test, records_of_one_partition_key_scan_together_in_sort_key_order)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	router.route(put("/table/account/key/48210", "another account"));
@@ -2793,7 +2935,8 @@ TEST(router_test, a_partition_key_and_nothing_else_is_a_bounded_range)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
-	router::router router(repository, alone);
+	cluster::fake_forwarder nobody;
+	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
 	router.route(put("/table/account/key/4821", "the account"));

@@ -17,7 +17,6 @@
 #include "http/beast_client.h"
 #include "http/http_client.h"
 #include "cluster.h"
-#include "forwarder.h"
 #include "member.h"
 #include "partition.h"
 
@@ -73,8 +72,6 @@ namespace cluster
 	class etcd_cluster final : public cluster
 	{
 		config configuration;
-
-		const forwarder &request_forwarder;
 
 		etcd::client etcd_client;
 
@@ -146,7 +143,7 @@ namespace cluster
 		bool changed = false;
 
 	public:
-		etcd_cluster(const config &cluster_config, const http::client &http, const forwarder &forwarding);
+		etcd_cluster(const config &cluster_config, const http::client &http);
 
 		~etcd_cluster();
 
@@ -197,14 +194,6 @@ namespace cluster
 		[[nodiscard]] bool accept(const std::string &key, int64_t term) override;
 
 		void restore_terms(const partition_terms &applied) override;
-
-		[[nodiscard]] router::response send(const std::string &node, const router::request &request) const override;
-
-		[[nodiscard]] std::optional<router::response> send_all(
-			const std::vector<std::string> &node_list,
-			const router::request &request) const override;
-
-		[[nodiscard]] std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const override;
 
 	private:
 		// What stop() does, and what the destructor calls: a destructor cannot reach an override.

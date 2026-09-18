@@ -6,6 +6,7 @@
 
 #include "server/server.h"
 #include "cluster/etcd_cluster.h"
+#include "cluster/http_forwarder.h"
 
 std::shared_ptr<server::server> database_server;
 
@@ -27,10 +28,10 @@ int main(void)
 	cluster::config configuration = cluster::from_environment();
 	http::beast_client client =
 		http::beast_client(configuration.connect_timeout_seconds, configuration.unacknowledged_timeout_seconds);
-	cluster::forwarder forwarder = cluster::forwarder(client);
-	cluster::etcd_cluster cluster = cluster::etcd_cluster(configuration, client, forwarder);
+	cluster::http_forwarder forwarder = cluster::http_forwarder(client);
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(configuration, client);
 
-	database_server = std::make_shared<server::server>(8080, thread_pool_size, cluster, data_directory);
+	database_server = std::make_shared<server::server>(8080, thread_pool_size, cluster, forwarder, data_directory);
 
 	signal(SIGINT, handle_signal);
 	signal(SIGTERM, handle_signal);

@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "cluster/cluster.h"
+#include "cluster/forwarder.h"
 #include "cluster/partition.h"
 #include "repository/repository.h"
 #include "table/table.h"
@@ -64,14 +64,14 @@ namespace transfer
 	// the cluster has dropped as well as the ones it has. Nothing when no node of the zone
 	// answered, which is a zone to ask nothing else of.
 	[[nodiscard]] std::optional<table::schema> tables(
-		const cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		const std::vector<std::string> &zone,
 		progress::patience &waiting);
 
 	// Asks a node for its share of a table and hands every file to `take`, over several key ranges
 	// at once and asking for the next file of each while the last one is still being taken in.
 	[[nodiscard]] outcome walk(
-		const cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		const share &wanted,
 		const std::stop_token &token,
 		progress::patience &waiting,

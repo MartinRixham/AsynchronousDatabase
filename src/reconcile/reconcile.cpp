@@ -41,6 +41,7 @@ namespace
 	reconcile::outcome fetch_from(
 		repository::repository &repository,
 		cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		const std::string &node,
 		const std::string &name,
 		const cluster::partition_set &partitions,
@@ -59,7 +60,7 @@ namespace
 		// `refused` carries to the pass that asks it again. A walk its own patience ended is
 		// neither: it is a pass with more of this share still to read.
 		transfer::outcome done = transfer::walk(
-			nodes,
+			forwarding,
 			share_of(node, name, partitions, true, workers),
 			token,
 			waiting,
@@ -219,13 +220,13 @@ namespace
 	// cluster's and so cannot vouch for a partition of any of them.
 	std::optional<size_t> declare_tables(
 		repository::repository &repository,
-		const cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		const std::vector<std::vector<std::string>> &zones,
 		progress::patience &waiting)
 	{
 		for (const auto &in_zone : zones)
 		{
-			std::optional<table::schema> named = transfer::tables(nodes, in_zone, waiting);
+			std::optional<table::schema> named = transfer::tables(forwarding, in_zone, waiting);
 
 			if (!named)
 			{
@@ -244,6 +245,7 @@ namespace
 	reconcile::outcome clear_table(
 		repository::repository &repository,
 		const cluster::cluster &nodes,
+		const cluster::forwarder &forwarding,
 		const std::string &name,
 		size_t page,
 		size_t workers,
@@ -261,7 +263,7 @@ namespace
 			// The keys alone: what is being asked is which of them the owner has, and the values
 			// are already here.
 			transfer::outcome walked = transfer::walk(
-				nodes,
+				forwarding,
 				share_of(node, name, partitions, false, workers),
 				token,
 				waiting,
@@ -297,6 +299,7 @@ bool reconcile::outcome::moved() const
 reconcile::outcome reconcile::reconcile(
 	repository::repository &repository,
 	cluster::cluster &nodes,
+	const cluster::forwarder &forwarding,
 	const std::stop_token &token,
 	size_t page,
 	long seconds,
@@ -328,7 +331,7 @@ reconcile::outcome reconcile::reconcile(
 	// empty store alone, so a node that missed a create while it was out of the membership has no
 	// other way back to the schema the rest of the cluster is on.
 	std::optional<size_t> declared =
-		!token.stop_requested() ? declare_tables(repository, nodes, zones, fetching) : std::optional<size_t>();
+		!token.stop_requested() ? declare_tables(repository, forwarding, zones, fetching) : std::optional<size_t>();
 
 	if (declared && *declared > 0)
 	{
@@ -364,7 +367,16 @@ reconcile::outcome reconcile::reconcile(
 	{
 		for (const auto &[node, partitions] : holders)
 		{
-			outcome taken = fetch_from(repository, nodes, node, declaration.name, partitions, workers, token, fetching);
+			outcome taken = fetch_from(
+				repository,
+				nodes,
+				forwarding,
+				node,
+				declaration.name,
+				partitions,
+				workers,
+				token,
+				fetching);
 
 			done.fetched += taken.fetched;
 			unfilled |= partitions & ~taken.filled;
@@ -390,7 +402,7 @@ reconcile::outcome reconcile::reconcile(
 
 	for (const auto &declaration : tables)
 	{
-		outcome given = clear_table(repository, nodes, declaration.name, page, workers, token, clearing);
+		outcome given = clear_table(repository, nodes, forwarding, declaration.name, page, workers, token, clearing);
 
 		done.cleared += given.cleared;
 		done.deferred += given.deferred;

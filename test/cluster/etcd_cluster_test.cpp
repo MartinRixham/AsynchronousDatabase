@@ -13,7 +13,6 @@
 
 #include "base64/base64.h"
 #include "cluster/etcd_cluster.h"
-#include "cluster/forwarder.h"
 #include "http/fake_http_client.h"
 
 namespace
@@ -268,8 +267,7 @@ TEST(etcd_cluster_test, stand_alone_when_no_etcd_is_configured)
 
 	config.node = one;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -287,8 +285,7 @@ TEST(etcd_cluster_test, stand_alone_when_no_node_is_configured)
 
 	config.endpoints = { "http://etcd:2379" };
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -302,8 +299,7 @@ TEST(etcd_cluster_test, register_the_node_and_read_the_membership)
 
 	answer_etcd(&http, { one, two });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one), http);
 
 	cluster.start();
 
@@ -330,8 +326,7 @@ TEST(etcd_cluster_test, report_the_registration_it_holds_in_etcd)
 
 	answer_etcd(&http, { one, two });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one), http);
 
 	cluster.start();
 
@@ -349,8 +344,7 @@ TEST(etcd_cluster_test, report_the_registration_it_holds_in_etcd)
 TEST(etcd_cluster_test, hold_no_registration_when_etcd_is_not_there)
 {
 	http::fake_client http;
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one), http);
 
 	cluster.start();
 
@@ -367,8 +361,7 @@ TEST(etcd_cluster_test, report_no_registration_when_no_etcd_is_configured)
 
 	config.node = one;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -380,8 +373,7 @@ TEST(etcd_cluster_test, report_no_registration_when_no_etcd_is_configured)
 TEST(etcd_cluster_test, be_a_member_of_its_own_cluster_when_etcd_is_not_there)
 {
 	http::fake_client http;
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one), http);
 
 	cluster.start();
 
@@ -398,8 +390,7 @@ TEST(etcd_cluster_test, hold_every_key_when_no_other_node_is_registered)
 
 	answer_etcd(&http, { one });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one), http);
 
 	cluster.start();
 
@@ -417,8 +408,7 @@ TEST(etcd_cluster_test, name_the_node_that_holds_a_key)
 
 	answer_etcd(&http, { one, two });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one), http);
 
 	cluster.start();
 
@@ -457,8 +447,7 @@ TEST(etcd_cluster_test, register_the_zone_the_node_is_in)
 
 	answer_etcd(&http, { cluster::member { one, "a" } });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 
 	cluster.start();
 
@@ -483,8 +472,7 @@ TEST(etcd_cluster_test, read_a_node_that_registered_nothing_but_its_address)
 
 	answer_etcd(&http, { one, two });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one), http);
 
 	cluster.start();
 
@@ -516,8 +504,7 @@ TEST(etcd_cluster_test, keep_a_copy_of_every_key_in_every_zone)
 		cluster::member { three, "c" }
 	});
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 
 	cluster.start();
 
@@ -548,8 +535,7 @@ TEST(etcd_cluster_test, keep_one_copy_of_a_key_in_each_zone)
 		cluster::member { four, "b" }
 	});
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 
 	cluster.start();
 
@@ -596,8 +582,7 @@ TEST(etcd_cluster_test, register_again_when_the_lease_has_gone)
 	// what a node does when it has been away long enough to be dropped.
 	config.lease_seconds = 1;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -755,8 +740,7 @@ TEST(etcd_cluster_test, claim_the_partitions_this_node_leads)
 
 	config.claims_per_refresh = cluster::partition_count;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -805,8 +789,7 @@ TEST(etcd_cluster_test, name_the_node_that_leads_a_partition)
 	// among them whichever it is.
 	config.claims_per_refresh = cluster::partition_count;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -828,8 +811,7 @@ TEST(etcd_cluster_test, lead_nothing_when_the_instance_stands_alone)
 
 	config.node = one;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -847,8 +829,7 @@ TEST(etcd_cluster_test, lead_nobody_when_the_instance_stands_alone_and_a_write_m
 	config.node = one;
 	config.serve_unled = false;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -870,8 +851,7 @@ TEST(etcd_cluster_test, report_itself_unled_once_it_has_stood_alone_for_a_lease)
 	config.serve_unled = false;
 	config.lease_seconds = 0;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -889,8 +869,7 @@ TEST(etcd_cluster_test, report_itself_led_until_it_has_stood_alone_for_a_lease)
 	config.node = one;
 	config.serve_unled = false;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -907,8 +886,7 @@ TEST(etcd_cluster_test, report_itself_led_while_it_stands_in_a_membership)
 
 	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -927,8 +905,7 @@ TEST(etcd_cluster_test, report_itself_led_when_a_write_needs_no_leader)
 	config.node = one;
 	config.lease_seconds = 0;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -950,8 +927,7 @@ TEST(etcd_cluster_test, keep_the_membership_it_last_read_when_etcd_stops_answeri
 	config.serve_unled = false;
 	config.lease_seconds = 1;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -983,8 +959,7 @@ TEST(etcd_cluster_test, lead_nothing_while_etcd_does_not_answer_for_the_membersh
 	config.serve_unled = false;
 	config.lease_seconds = 1;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1020,8 +995,7 @@ TEST(etcd_cluster_test, take_a_write_no_leader_ordered_while_etcd_does_not_answe
 
 	config.lease_seconds = 1;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1051,8 +1025,7 @@ TEST(etcd_cluster_test, report_itself_unled_once_etcd_has_not_answered_for_a_lea
 	config.serve_unled = false;
 	config.lease_seconds = 0;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1078,8 +1051,7 @@ TEST(etcd_cluster_test, stand_alone_when_etcd_names_this_node_and_no_other)
 
 	answer_etcd(&http, { cluster::member { one, "a" } });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1097,8 +1069,7 @@ TEST(etcd_cluster_test, stand_alone_when_etcd_has_never_answered)
 
 	config.serve_unled = false;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1114,8 +1085,7 @@ TEST(etcd_cluster_test, stand_alone_and_serve_when_serving_unled)
 
 	answer_etcd(&http, { cluster::member { one, "a" } });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 
 	cluster.start();
 
@@ -1133,8 +1103,7 @@ TEST(etcd_cluster_test, never_stand_alone_when_never_clustered)
 	config.node = one;
 	config.serve_unled = false;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1151,8 +1120,7 @@ TEST(etcd_cluster_test, count_a_registration_written_again_once_its_lease_ran_ou
 
 	config.lease_seconds = 1;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1179,8 +1147,7 @@ TEST(etcd_cluster_test, count_no_registration_for_a_lease_that_was_renewed)
 
 	config.lease_seconds = 1;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1199,8 +1166,7 @@ TEST(etcd_cluster_test, lead_nothing_that_etcd_does_not_answer_for)
 
 	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 
 	cluster.start();
 
@@ -1226,8 +1192,7 @@ TEST(etcd_cluster_test, claim_a_partition_nothing_claims_when_a_write_asks_who_l
 
 	config.claims_per_refresh = 0;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1258,8 +1223,7 @@ TEST(etcd_cluster_test, name_the_node_the_membership_names_for_a_partition_nothi
 
 	config.claims_per_refresh = 0;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1294,8 +1258,7 @@ TEST(etcd_cluster_test, name_the_leader_etcd_holds_for_a_partition_the_leaders_r
 
 	answer_etcd(&http, members);
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 
 	cluster.start();
 
@@ -1317,8 +1280,7 @@ TEST(etcd_cluster_test, refuse_a_write_ordered_in_a_term_that_has_passed)
 
 	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 
 	EXPECT_TRUE(cluster.accept("4821", 41));
 	EXPECT_TRUE(cluster.accept("4821", 41));
@@ -1339,8 +1301,7 @@ TEST(etcd_cluster_test, refuse_a_write_ordered_in_a_term_older_than_one_the_stor
 
 	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 	cluster::partition_terms applied = {};
 
 	applied[cluster::partition_of("4821")] = 60;
@@ -1364,8 +1325,7 @@ TEST(etcd_cluster_test, claim_only_so_many_partitions_on_one_pass)
 
 	config.claims_per_refresh = 4;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1402,8 +1362,7 @@ TEST(etcd_cluster_test, give_up_a_claim_on_a_partition_it_no_longer_leads)
 	config.claims_per_refresh = cluster::partition_count;
 	config.lease_seconds = 1;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1442,8 +1401,7 @@ TEST(etcd_cluster_test, give_up_a_claim_on_a_partition_it_holds_a_copy_of_and_do
 	config.claims_per_refresh = cluster::partition_count;
 	config.lease_seconds = 1;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1474,8 +1432,7 @@ TEST(etcd_cluster_test, keep_a_claim_on_a_partition_it_leads_and_one_it_never_ma
 	config.claims_per_refresh = cluster::partition_count;
 	config.lease_seconds = 1;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1496,8 +1453,7 @@ TEST(etcd_cluster_test, vouch_for_every_partition_when_the_instance_stands_alone
 
 	config.node = one;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 	cluster::partition_set every;
 
 	every.set();
@@ -1512,8 +1468,7 @@ TEST(etcd_cluster_test, vouch_only_for_the_partitions_this_node_holds)
 
 	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "a" } });
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 	cluster::partition_set every;
 
 	ASSERT_TRUE(cluster.discover());
@@ -1536,8 +1491,7 @@ TEST(etcd_cluster_test, vouch_for_no_partition_gained_after_the_filling_began)
 		cluster::member { three, "a" }
 	});
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 	cluster::partition_set every;
 
 	ASSERT_TRUE(cluster.discover());
@@ -1569,8 +1523,7 @@ TEST(etcd_cluster_test, stop_vouching_for_a_partition_the_membership_took_away_a
 
 	answer_etcd(&http, pair);
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(configuration(one, "a"), http, forwarder);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 	cluster::partition_set every;
 
 	ASSERT_TRUE(cluster.discover());
@@ -1617,10 +1570,8 @@ TEST(etcd_cluster_test, claim_partitions_no_other_node_is_claiming)
 	first_config.claims_per_refresh = 8;
 	second_config.claims_per_refresh = 8;
 
-	cluster::forwarder first_forwarder(first);
-	cluster::forwarder second_forwarder(second);
-	cluster::etcd_cluster first_cluster(first_config, first, first_forwarder);
-	cluster::etcd_cluster second_cluster(second_config, second, second_forwarder);
+	cluster::etcd_cluster first_cluster(first_config, first);
+	cluster::etcd_cluster second_cluster(second_config, second);
 
 	first_cluster.start();
 	second_cluster.start();
@@ -1654,8 +1605,7 @@ TEST(etcd_cluster_test, read_the_membership_again_as_soon_as_etcd_says_it_change
 	answer_etcd(&http, { one });
 	http.answer_stream("/v3/watch");
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1687,8 +1637,7 @@ TEST(etcd_cluster_test, watch_again_once_etcd_ends_the_watch)
 	http.answer_stream("/v3/watch");
 	http.push("/v3/watch", "{\"result\":{\"canceled\":true}}\n");
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
@@ -1723,8 +1672,7 @@ TEST(etcd_cluster_test, give_up_no_claim_until_a_tick_after_finding_it_however_m
 	config.claims_per_refresh = cluster::partition_count;
 	config.lease_seconds = 30;
 
-	cluster::forwarder forwarder(http);
-	cluster::etcd_cluster cluster(config, http, forwarder);
+	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 

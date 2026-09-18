@@ -86,12 +86,8 @@ cluster::config cluster::from_environment()
 	return config;
 }
 
-cluster::etcd_cluster::etcd_cluster(
-	const config &cluster_config,
-	const http::client &http,
-	const forwarder &forwarding):
+cluster::etcd_cluster::etcd_cluster(const config &cluster_config, const http::client &http):
 	configuration(cluster_config),
-	request_forwarder(forwarding),
 	etcd_client(http, cluster_config.endpoints, cluster_config.etcd_timeout_seconds),
 	member_list(std::make_shared<const std::vector<member>>()),
 	unled_since(std::chrono::steady_clock::now())
@@ -569,23 +565,6 @@ std::vector<std::vector<std::string>> cluster::etcd_cluster::zones() const
 	}
 
 	return ::cluster::zones_of(*registered, configuration.node, configuration.zone);
-}
-
-router::response cluster::etcd_cluster::send(const std::string &node, const router::request &request) const
-{
-	return request_forwarder.forward(node, request);
-}
-
-std::optional<router::response> cluster::etcd_cluster::send_all(
-	const std::vector<std::string> &node_list,
-	const router::request &request) const
-{
-	return refusal(request_forwarder.forward_all(node_list, request));
-}
-
-std::vector<router::response> cluster::etcd_cluster::send_each(const std::vector<enquiry> &enquiries) const
-{
-	return request_forwarder.forward_each(enquiries);
 }
 
 std::chrono::seconds cluster::etcd_cluster::tick() const

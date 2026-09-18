@@ -11,11 +11,12 @@
 #include "cluster/etcd_cluster.h"
 #include "cluster/partition.h"
 #include "http/beast_client.h"
-#include "cluster/forwarder.h"
+#include "cluster/http_forwarder.h"
 #include "server/server.h"
 #include "listening.h"
 #include "http/fake_http_client.h"
 #include "cluster/fake_cluster.h"
+#include "cluster/fake_forwarder.h"
 #include "repository/rocksdb_repository.h"
 #include "table/table.h"
 #include "directory.h"
@@ -45,8 +46,8 @@ class server_test : public ::testing::Test
 {
 protected:
 	http::fake_client client;
-	cluster::forwarder forwarder = cluster::forwarder(client);
-	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config(), client, forwarder);
+	cluster::http_forwarder forwarder = cluster::http_forwarder(client);
+	cluster::etcd_cluster cluster = cluster::etcd_cluster(cluster::config(), client);
 
 	std::shared_ptr<server::server> database_server;
 
@@ -57,7 +58,7 @@ protected:
 	void SetUp()
 	{
 		std::filesystem::remove_all(test_directory("asyncdb"));
-		database_server = std::make_shared<server::server>(0, 2, cluster, test_directory("asyncdb"));
+		database_server = std::make_shared<server::server>(0, 2, cluster, forwarder, test_directory("asyncdb"));
 		port = database_server->port();
 
 		thread = std::thread([server = database_server]() { server->serve(); });
@@ -553,7 +554,9 @@ TEST(server_reconcile_test, reconciles_a_store_this_node_came_back_to)
 	cluster::fake_cluster nodes(
 		"http://asyncdb-1:8080",
 		std::vector<std::string> { "http://asyncdb-1:8080", "http://asyncdb-2:8080" });
-	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, test_directory("asyncdb"));
+	cluster::fake_forwarder forwarding;
+	std::shared_ptr<server::server> database_server =
+		std::make_shared<server::server>(0, 2, nodes, forwarding, test_directory("asyncdb"));
 	boost::asio::ip::port_type port = database_server->port();
 	std::thread thread([server = database_server]() { server->serve(); });
 
@@ -568,7 +571,7 @@ TEST(server_reconcile_test, reconciles_a_store_this_node_came_back_to)
 	// nothing is writing it.
 	database_server = nullptr;
 
-	EXPECT_FALSE(nodes.sent().empty());
+	EXPECT_FALSE(forwarding.sent().empty());
 }
 
 // A store this node filled itself is a store that matches the membership it filled from, so there
@@ -580,7 +583,9 @@ TEST(server_reconcile_test, reconciles_nothing_after_a_store_this_node_filled)
 	cluster::fake_cluster nodes(
 		"http://asyncdb-1:8080",
 		std::vector<std::string> { "http://asyncdb-1:8080", "http://asyncdb-2:8080" });
-	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, test_directory("asyncdb"));
+	cluster::fake_forwarder forwarding;
+	std::shared_ptr<server::server> database_server =
+		std::make_shared<server::server>(0, 2, nodes, forwarding, test_directory("asyncdb"));
 	boost::asio::ip::port_type port = database_server->port();
 	std::thread thread([server = database_server]() { server->serve(); });
 
@@ -592,7 +597,7 @@ TEST(server_reconcile_test, reconciles_nothing_after_a_store_this_node_filled)
 	thread.join();
 	database_server = nullptr;
 
-	EXPECT_TRUE(nodes.sent().empty());
+	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 // A node cut off from etcd keeps the membership it last read, so when it registers again it reads
@@ -604,10 +609,12 @@ TEST(server_reconcile_test, reconciles_once_this_node_registers_again)
 	cluster::fake_cluster nodes(
 		"http://asyncdb-1:8080",
 		std::vector<std::string> { "http://asyncdb-1:8080", "http://asyncdb-2:8080" });
+	cluster::fake_forwarder forwarding;
 
 	nodes.reads_etcd("http://etcd:2379");
 
-	std::shared_ptr<server::server> database_server = std::make_shared<server::server>(0, 2, nodes, test_directory("asyncdb"));
+	std::shared_ptr<server::server> database_server =
+		std::make_shared<server::server>(0, 2, nodes, forwarding, test_directory("asyncdb"));
 	boost::asio::ip::port_type port = database_server->port();
 	std::thread thread([server = database_server]() { server->serve(); });
 
@@ -625,5 +632,5 @@ TEST(server_reconcile_test, reconciles_once_this_node_registers_again)
 	thread.join();
 	database_server = nullptr;
 
-	EXPECT_FALSE(nodes.sent().empty());
+	EXPECT_FALSE(forwarding.sent().empty());
 }

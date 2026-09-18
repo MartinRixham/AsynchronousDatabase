@@ -1,20 +1,18 @@
 #pragma once
 
-#include <chrono>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "cluster/cluster.h"
 
 namespace cluster
 {
-	// A cluster of nodes that are not there: a key is held by whichever nodes the test says, and a
-	// node answers what the test told it to answer.
+	// A cluster of nodes that are not there: a key is held by whichever nodes the test says, and
+	// what one of them answers when it is asked is cluster::fake_forwarder's to say.
 	class fake_cluster : public cluster
 	{
 		std::string self;
@@ -22,16 +20,6 @@ namespace cluster
 		std::vector<member> member_list;
 
 		std::map<std::string, std::vector<std::string>> owners;
-
-		std::map<std::string, router::response> answers;
-
-		// The answers a node gives one after another, and how many of them it has given.
-		std::map<std::string, std::vector<router::response>> answer_list;
-
-		mutable std::map<std::string, size_t> answered;
-
-		// How long a node takes to answer, which is what a pass runs out of time inside.
-		std::map<std::string, std::chrono::milliseconds> delays;
 
 		std::map<std::string, leadership> leaders;
 
@@ -47,11 +35,8 @@ namespace cluster
 
 		partition_set filled;
 
-		mutable std::vector<std::pair<std::string, router::request>> requests;
-
-		// A walk asks several nodes at once, so what it was asked and what it has answered are
-		// written from several threads. Held by pointer because a fixture hands one of these back
-		// by value.
+		// A server reads the membership from a thread of its own while the test moves it. Held by
+		// pointer because a fixture hands one of these back by value.
 		std::shared_ptr<std::mutex> mutex;
 
 		// The nodes a test named, as a placement: this node taken out of the list and marked
@@ -68,16 +53,6 @@ namespace cluster
 
 		// Every node holding a copy of the key, in the order this node would ask them.
 		void copies(const std::string &key, const std::vector<std::string> &nodes);
-
-		void answer(const std::string &node, const router::response &response);
-
-		// The answers a node gives in turn rather than one answer to everything, so that a caller
-		// paging through a scan is answered a page at a time. The last of them answers everything
-		// after it, which is a range that stays exhausted.
-		void answer_in_turn(const std::string &node, const std::vector<router::response> &responses);
-
-		// A node that takes a while to answer whatever it answers.
-		void slow(const std::string &node, std::chrono::milliseconds delay);
 
 		// The node ordering writes to this key, and the term it orders them in.
 		void led_by(const std::string &key, const std::string &node, int64_t term);
@@ -159,17 +134,5 @@ namespace cluster
 		bool accept(const std::string &key, int64_t term) override;
 
 		void restore_terms(const partition_terms &terms) override;
-
-		router::response send(const std::string &node, const router::request &request) const override;
-
-		std::optional<router::response> send_all(
-			const std::vector<std::string> &node_list,
-			const router::request &request) const override;
-
-		std::vector<router::response> send_each(const std::vector<enquiry> &enquiries) const override;
-
-		const std::vector<std::pair<std::string, router::request>> &sent() const;
-
-		void forget();
 	};
 }

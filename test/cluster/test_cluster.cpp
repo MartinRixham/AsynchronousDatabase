@@ -5,9 +5,7 @@
 #include "cluster/partition.h"
 #include "test_cluster.h"
 
-cluster::test_cluster::test_cluster():
-	client(http::beast_client(2, 5)),
-	request_forwarder(forwarder(client))
+cluster::test_cluster::test_cluster()
 {
 	filled.set();
 }
@@ -217,21 +215,4 @@ void cluster::test_cluster::restore_terms(const partition_terms &applied)
 	std::unique_lock<std::shared_mutex> lock(membership_mutex);
 
 	restored = applied;
-}
-
-router::response cluster::test_cluster::send(const std::string &node, const router::request &request) const
-{
-	return request_forwarder.forward(node, request);
-}
-
-std::optional<router::response> cluster::test_cluster::send_all(
-	const std::vector<std::string> &node_list,
-	const router::request &request) const
-{
-	return refusal(request_forwarder.forward_all(node_list, request));
-}
-
-std::vector<router::response> cluster::test_cluster::send_each(const std::vector<enquiry> &enquiries) const
-{
-	return request_forwarder.forward_each(enquiries);
 }
