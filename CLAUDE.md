@@ -415,10 +415,14 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   is the one place a documented error code is mapped to a status. **`route()` answers an
   awaitable, and only a record asking one node waits in it**: `route_record` decides on the thread
   serving it — reading the store and asking the membership included — and what it asks that one node,
-  a copy it reads or the leader `order_write` hands a write to, is a coroutine of its own taking what
-  it needs by value, the call that started it having returned before it runs. A write the leader
-  carried here never reaches `route_record`: `route()` hands it to `apply_write`, which asks nobody
-  and is not awaitable at all. That split is also what keeps
+  a copy it reads or the leader it hands a client's write to, is a coroutine of its own taking what
+  it needs by value, the call that started it having returned before it runs. **`route_record`
+  branches on whether the request was forwarded, then on read or write**: a forwarded read is
+  answered out of this store, and a forwarded write is `lead_write` — stamped, written here and
+  fanned out — where this node leads the key and `apply_write` where it does not; a client's read is
+  answered here where this node holds a copy and by a copy elsewhere where it does not, and a
+  client's write is `lead_write` where this node leads and sent to the leader where it does not.
+  That split is also what keeps
   each frame small: GCC reports an Asio coroutine frame much over a kibibyte as a mismatched delete.
   Every other route — the leader carrying a write to its copies included — is answered where it is
   called, blocking as it always has, and handed back already done. **Two writes of one key are not ordered against each
@@ -594,7 +598,8 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   partition**, so it is answered by one copy of it — this node when it holds one, else the nearest
   zone's, passing over a copy that does not answer — and there is nothing to merge. A forwarded
   request carries
-  `X-Asyncdb-Forwarded` and is served where it lands, which is what stops two nodes bouncing it. A
+  `X-Asyncdb-Forwarded` and is served where it lands — a write reaching its leader being the one
+  thing carried on, to the copies — which is what stops two nodes bouncing it. A
   `GET /table/{table}/file` is the same thing by construction: it is answered out of the store it
   landed on and asks the membership nothing.
   `doc/database/cluster.md` is the spec, including what this deliberately does not do (no read
@@ -746,10 +751,11 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   forgets nothing. A partition
   nothing leads yet answers `no_leader` (503) to a write and serves reads as normal. **The term is
   what tells the two write hops apart**: a write *to* the leader carries none, a write *from* it
-  carries the term — and so `route()` sends a write with a term to `apply_write` and one without
-  through `route_record` to `order_write`, with no route of its own for either. It holds because nothing carries a
-  write in term 0: that is the term of an instance that was never clustered, which has nowhere to
-  carry one.
+  carries the term. So a forwarded write without one reaching a node that does not lead the key is
+  `no_leader` rather than written in no term, and one with a term reaching a node that leads the
+  key is `no_leader` as well — two nodes each taking themselves for the leader, which would carry
+  the write back and forth for ever. It holds because nothing carries a write in term 0: that is
+  the term of an instance that was never clustered, which has nowhere to carry one.
 - `DEBUG(...)` from `src/log.h` compiles to nothing unless the `LOG` define is `1`; `recipe.json` sets
   `"LOG": "echo 1"` (the define values are shell commands that Cheesemake evaluates).
 

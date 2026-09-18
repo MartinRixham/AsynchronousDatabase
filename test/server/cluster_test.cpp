@@ -202,6 +202,14 @@ protected:
 		second_cluster.led_by(node(leader), term);
 	}
 
+	// Every partition led by a node that is neither of them, so that both take a write carried to
+	// them as a copy does. It is how a test puts a record on one node and not the other.
+	void led_elsewhere(int64_t term)
+	{
+		first_cluster.led_by("http://localhost:1", term);
+		second_cluster.led_by("http://localhost:1", term);
+	}
+
 	// The same two servers, one in each of two zones, which is a cluster keeping a copy of every
 	// record in both of them rather than one copy between them.
 	void zone_the_cluster()
@@ -691,6 +699,7 @@ TEST_F(cluster_test, a_write_ordered_in_a_term_that_has_passed_is_refused)
 TEST_F(cluster_test, a_node_gives_up_a_record_it_no_longer_owns)
 {
 	request(first, "PUT", "/table/account", "{}");
+	led_elsewhere(1);
 
 	// Carried as a leader carries it, so written where it stands rather than where it belongs and
 	// both nodes hold a key one of them owns. That is the state a cluster is left in by a node
@@ -714,6 +723,7 @@ TEST_F(cluster_test, a_node_gives_up_a_record_it_no_longer_owns)
 TEST_F(cluster_test, a_record_moves_to_the_node_that_owns_it_and_then_off_the_one_that_does_not)
 {
 	request(first, "PUT", "/table/account", "{}");
+	led_elsewhere(1);
 
 	request(stranger("4821"), "PUT", "/table/account/key/4821", "a value", true, 1);
 
@@ -734,6 +744,7 @@ TEST_F(cluster_test, a_node_fetches_a_record_it_owns_and_holds_nothing_for)
 	zone_the_cluster();
 
 	request(first, "PUT", "/table/account", "{}");
+	led_elsewhere(1);
 
 	// One zone holds the record and the other does not, which is a copy short: every zone holds
 	// one node that owns this key, and here one of them has nothing behind it.

@@ -464,7 +464,9 @@ therefore says so: it finishes the requests it is serving, answers them with
 holding them until they time out.
 
 A request a node passes on carries `X-Asyncdb-Forwarded: true`, and a node that
-receives one serves it where it stands rather than passing it on again. Two nodes
+receives one serves it where it stands rather than passing it on again — but for
+a write reaching the leader of its key, which the leader carries to the copies
+as it would a write a client sent it. Two nodes
 that disagree about the membership for a moment can therefore give a stale
 answer, but they cannot bounce a request between them.
 

@@ -1055,8 +1055,8 @@ TEST(router_cluster_test, write_a_record_to_the_node_that_owns_the_key)
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 }
 
-// The node a leader carried a write to is the node that writes it, whatever it makes of the
-// membership, so two nodes that disagree for a moment cannot bounce a write between them.
+// A node that does not lead the key writes what the leader carried to it, whatever it makes of who
+// holds the copies.
 TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
 {
 	repository::fake_repository repository;
@@ -1067,6 +1067,7 @@ TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
 	create_table(router, "account");
 	forwarding.forget();
 	nodes.owns("4821", there);
+	nodes.led_by("4821", there, 41);
 
 	router::request forwarded = put("/table/account/key/4821", "a value");
 
@@ -1076,6 +1077,31 @@ TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
 	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
 	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+}
+
+// Two nodes that both take themselves to lead a partition would each carry the other's write back
+// to it, so a write another node ordered is refused by a node that orders that key itself.
+TEST(router_cluster_test, refuse_a_write_another_node_ordered_of_a_partition_this_node_leads)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
+
+	create_table(router, "account");
+	forwarding.forget();
+	nodes.copies("4821", { here, partner });
+	nodes.led_by("4821", here, 41);
+
+	router::request forwarded = put("/table/account/key/4821", "a value");
+
+	forwarded.forwarded = true;
+	forwarded.term = 40;
+	forwarded.count = 3;
+
+	EXPECT_EQ(error_code(router::routed(router, forwarded)), "no_leader");
+	EXPECT_TRUE(forwarding.sent().empty());
+	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 }
 
 TEST(router_cluster_test, fail_to_write_to_a_table_that_is_not_there_without_a_hop)
@@ -1462,6 +1488,34 @@ TEST(router_cluster_test, order_a_write_of_a_partition_this_node_leads)
 	EXPECT_EQ(forwarding.sent()[0].second.term, 41);
 }
 
+// A node that does not lead the key sends the client's write here, and the leader orders it as it
+// would a write a client sent it directly.
+TEST(router_cluster_test, order_a_write_forwarded_to_this_node_as_the_leader)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
+
+	create_table(router, "account");
+	forwarding.forget();
+	nodes.copies("4821", { here, partner });
+	nodes.led_by("4821", here, 41);
+
+	router::request forwarded = put("/table/account/key/4821", "a value");
+
+	forwarded.forwarded = true;
+
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+	EXPECT_EQ(stamp_of(repository, "account", "4821").term, 41);
+
+	ASSERT_EQ(forwarding.sent().size(), 1u);
+	EXPECT_EQ(forwarding.sent()[0].first, partner);
+	EXPECT_EQ(forwarding.sent()[0].second.term, 41);
+	EXPECT_EQ(forwarding.sent()[0].second.count, stamp_of(repository, "account", "4821").count);
+}
+
 // The leader stamps the write with the term it ordered it in and a count of its own, and both
 // halves travel: the copies of one write are one record and have to be able to say so.
 TEST(router_cluster_test, stamp_a_write_with_the_version_it_was_ordered_in)
@@ -1521,6 +1575,7 @@ TEST(router_cluster_test, apply_the_version_a_forwarded_write_was_ordered_in)
 
 	create_table(router, "account");
 	forwarding.forget();
+	nodes.led_by("4821", partner, 60);
 
 	router::request forwarded = put("/table/account/key/4821", "a value");
 
@@ -1546,6 +1601,7 @@ TEST(router_cluster_test, keep_the_later_of_two_writes_handed_over_out_of_order)
 	router::router router(repository, nodes, forwarding);
 
 	create_table(router, "account");
+	nodes.led_by("4821", partner, 60);
 
 	router::request later = put("/table/account/key/4821", "the later value");
 	router::request earlier = put("/table/account/key/4821", "the earlier value");
@@ -1616,6 +1672,7 @@ TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_that_has_pa
 	create_table(router, "account");
 	forwarding.forget();
 	nodes.applied("4821", 60);
+	nodes.led_by("4821", partner, 60);
 
 	router::request forwarded = put("/table/account/key/4821", "a value");
 
@@ -1637,6 +1694,8 @@ TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_older_than_
 	cluster::fake_cluster before = paired_zones();
 	cluster::fake_forwarder nobody;
 
+	before.led_by("4821", partner, 60);
+
 	{
 		router::router router(repository, before, nobody);
 
@@ -1651,6 +1710,9 @@ TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_older_than_
 	}
 
 	cluster::fake_cluster after = paired_zones();
+
+	after.led_by("4821", partner, 60);
+
 	router::router restarted(repository, after, nobody);
 	router::request older = put("/table/account/key/4821", "older");
 
@@ -1693,6 +1755,7 @@ TEST(router_cluster_test, apply_a_forwarded_write_ordered_in_the_term_that_stand
 	create_table(router, "account");
 	forwarding.forget();
 	nodes.applied("4821", 60);
+	nodes.led_by("4821", partner, 60);
 
 	router::request forwarded = put("/table/account/key/4821", "a value");
 

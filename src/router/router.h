@@ -54,6 +54,8 @@ namespace router
 		bool is_draining() const noexcept;
 
 	private:
+		response route_health(const request &request);
+
 		response route_tables(const request &request);
 
 		response route_table(const request &request, const std::string &name);
@@ -64,31 +66,35 @@ namespace router
 
 		response route_split(const request &request, const std::string &name);
 
+		// Forwarded or not decides first, and a read or a write second. A forwarded read is answered
+		// out of this store and a forwarded write written to it — ordered and carried to the copies
+		// first where this node leads. A client's read is answered here where this node holds a copy
+		// and by a copy elsewhere where it does not, and a client's write ordered here where this node
+		// leads and sent to the leader where it does not.
 		boost::asio::awaitable<response> route_record(
 			const request &request,
 			const std::string &name,
 			const std::string &partition,
 			const std::string &sort);
 
-		// A write the leader ordered, which the copy it was carried to writes and sends nowhere.
-		response apply_write(
+		response route_forwarded_record(
 			const request &request,
 			const std::string &name,
 			const std::string &partition,
 			const std::string &sort);
 
-		// A client's write: sent to the leader of its partition, or stamped and carried to every
-		// copy by this node when it is the leader.
-		boost::asio::awaitable<response> order_write(
-			const request &request,
-			const std::string &name,
-			record::record record);
+		// What this store holds of the key, and nothing asked of any other node.
+		response read_here(const std::string &name, const std::string &key) const;
 
-		response write_record(
+		// A write the leader ordered, which the copy it was carried to writes and sends nowhere.
+		response apply_write(const request &request, const std::string &name, record::record record);
+
+		// Stamped here, written here and carried to every other copy at once.
+		response lead_write(
 			const request &request,
 			const std::string &name,
-			const record::record &record,
-			const cluster::placement &where);
+			record::record record,
+			const cluster::leadership &lead);
 
 		// What waits on another node takes what it needs by value, the call that started it having
 		// returned before it runs. GCC reports a coroutine frame much over a kibibyte as a

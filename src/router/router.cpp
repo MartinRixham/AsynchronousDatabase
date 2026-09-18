@@ -47,13 +47,15 @@ namespace
 	router::response node_incomplete()
 	{
 		return router::error_response(
-			error::code::node_incomplete, "This node holds less than it owns, so it cannot say a key is missing.");
+			error::code::node_incomplete,
+			"This node holds less than it owns, so it cannot say a key is missing.");
 	}
 
 	router::response node_alone()
 	{
 		return router::error_response(
-			error::code::node_alone, "This node has no membership but itself, so it cannot say which node holds a key.");
+			error::code::node_alone,
+			"This node has no membership but itself, so it cannot say which node holds a key.");
 	}
 
 	// A route that waits on nothing, as the answer of one that does.
@@ -65,7 +67,8 @@ namespace
 	router::response method_not_allowed(const boost::beast::http::verb &method)
 	{
 		return router::error_response(
-			error::code::method_not_allowed, std::string(boost::beast::http::to_string(method)) + " is not allowed here.");
+			error::code::method_not_allowed,
+			std::string(boost::beast::http::to_string(method)) + " is not allowed here.");
 	}
 
 	std::optional<boost::json::object> parse_body(const std::string &body)
@@ -106,10 +109,7 @@ namespace
 
 	// The records of a page, and the cursor to resume at when there are more of them. The cursor
 	// carries the partition it was issued for, so it can only be given back for this same scan.
-	router::response page_response(
-		const scan::page &page,
-		const scan::range &range,
-		const std::string &instance)
+	router::response page_response(const scan::page &page, const scan::range &range, const std::string &instance)
 	{
 		boost::json::array records;
 
@@ -191,75 +191,7 @@ boost::asio::awaitable<router::response> router::router::route(const request &re
 
 	if (path.size() == 1 && path[0] == "health")
 	{
-		if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
-		{
-			return answered(method_not_allowed(request.method));
-		}
-
-		bool unled = nodes.is_unled();
-		bool leaving = draining.load();
-
-		boost::json::object health {
-			{ "status", "ok" },
-			{ "write_stalled", repository.is_write_stalled() },
-			{ "incomplete", is_incomplete() },
-			{ "unled", unled },
-			{ "draining", leaving }
-		};
-
-		// Where this node reads the membership from, and whether it is still in it. An instance
-		// that was told no etcd names none, the way it names no nodes.
-		cluster::etcd_registration registration = nodes.registration();
-
-		if (registration.configured)
-		{
-			health["etcd"] = boost::json::object {
-				{ "registered", registration.held },
-				{ "endpoint", registration.endpoint }
-			};
-		}
-
-		std::vector<cluster::member> members = nodes.members();
-
-		if (!members.empty())
-		{
-			boost::json::array names;
-			std::map<std::string, boost::json::array> zones;
-
-			for (const auto &listed : members)
-			{
-				names.push_back(boost::json::string(listed.node));
-
-				if (!listed.zone.empty())
-				{
-					zones[listed.zone].push_back(boost::json::string(listed.node));
-				}
-			}
-
-			health["nodes"] = names;
-
-			health["leads"] = static_cast<int64_t>(nodes.leads());
-
-			if (!zones.empty())
-			{
-				boost::json::object named;
-
-				for (const auto &[zone, zone_nodes] : zones)
-				{
-					named[zone] = zone_nodes;
-				}
-
-				health["zones"] = named;
-			}
-		}
-
-		// The document says what the process is doing and the status says whether to send it
-		// anything: a node that takes no writes is one a load balancer should stop choosing, and
-		// this is the only place it can be told. It goes on serving the keys it holds and
-		// answering its peers, which do not reach it this way.
-		return answered(json_response(
-			unled || leaving ? boost::beast::http::status::service_unavailable : boost::beast::http::status::ok,
-			health));
+		return answered(route_health(request));
 	}
 
 	// The whole schema, versions and tombstones and all, for a node filling a store or reconciling
@@ -318,16 +250,83 @@ boost::asio::awaitable<router::response> router::router::route(const request &re
 		return answered(not_found("route for this path"));
 	}
 
-	std::string sort = path.size() == 5 ? path[4] : "";
-
-	// Nothing orders a write in no term and carries it to another node, so a term is the leader
-	// having ordered this one already and anything without one is a client's.
-	if (request.method == boost::beast::http::verb::put && request.term != 0)
+	if (request.forwarded)
 	{
-		return answered(apply_write(request, path[1], path[3], sort));
+		return answered(route_forwarded_record(request, path[1], path[3], path.size() == 5 ? path[4] : ""));
+	}
+	else
+	{
+		return route_record(request, path[1], path[3], path.size() == 5 ? path[4] : "");
+	}
+}
+
+router::response router::router::route_health(const request &request)
+{
+	if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
+	{
+		return method_not_allowed(request.method);
 	}
 
-	return route_record(request, path[1], path[3], sort);
+	bool unled = nodes.is_unled();
+	bool leaving = draining.load();
+
+	boost::json::object health { { "status", "ok" },
+								 { "write_stalled", repository.is_write_stalled() },
+								 { "incomplete", is_incomplete() },
+								 { "unled", unled },
+								 { "draining", leaving } };
+
+	// Where this node reads the membership from, and whether it is still in it. An instance
+	// that was told no etcd names none, the way it names no nodes.
+	cluster::etcd_registration registration = nodes.registration();
+
+	if (registration.configured)
+	{
+		health["etcd"] =
+			boost::json::object { { "registered", registration.held }, { "endpoint", registration.endpoint } };
+	}
+
+	std::vector<cluster::member> members = nodes.members();
+
+	if (!members.empty())
+	{
+		boost::json::array names;
+		std::map<std::string, boost::json::array> zones;
+
+		for (const auto &listed : members)
+		{
+			names.push_back(boost::json::string(listed.node));
+
+			if (!listed.zone.empty())
+			{
+				zones[listed.zone].push_back(boost::json::string(listed.node));
+			}
+		}
+
+		health["nodes"] = names;
+
+		health["leads"] = static_cast<int64_t>(nodes.leads());
+
+		if (!zones.empty())
+		{
+			boost::json::object named;
+
+			for (const auto &[zone, zone_nodes] : zones)
+			{
+				named[zone] = zone_nodes;
+			}
+
+			health["zones"] = named;
+		}
+	}
+
+	// The document says what the process is doing and the status says whether to send it
+	// anything: a node that takes no writes is one a load balancer should stop choosing, and
+	// this is the only place it can be told. It goes on serving the keys it holds and
+	// answering its peers, which do not reach it this way.
+	return json_response(
+		unled || leaving ? boost::beast::http::status::service_unavailable : boost::beast::http::status::ok,
+		health);
 }
 
 router::response router::router::route_tables(const request &request)
@@ -401,7 +400,8 @@ router::response router::router::route_file(const request &request, const std::s
 	if (!partitions)
 	{
 		return error_response(
-			error::code::invalid_partitions, "The partitions asked for are not a set of the partitions this cluster has.");
+			error::code::invalid_partitions,
+			"The partitions asked for are not a set of the partitions this cluster has.");
 	}
 
 	repository::share wanted;
@@ -496,16 +496,15 @@ boost::asio::awaitable<router::response> router::router::route_record(
 	const std::string &partition,
 	const std::string &sort)
 {
-	if (request.method != boost::beast::http::verb::put && request.method != boost::beast::http::verb::get
-		&& request.method != boost::beast::http::verb::head)
+	bool writing = request.method == boost::beast::http::verb::put;
+
+	if (!writing && request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
 	{
 		return answered(method_not_allowed(request.method));
 	}
 
 	std::string key = record::compose_key(partition, sort);
-	record::record record = request.method == boost::beast::http::verb::put
-		? record::parse_record(key, request.body)
-		: record::parse_key(key);
+	record::record record = writing ? record::parse_record(key, request.body) : record::parse_key(key);
 
 	if (!record.is_valid)
 	{
@@ -515,7 +514,7 @@ boost::asio::awaitable<router::response> router::router::route_record(
 	// A node with no membership but itself answers every key out of a store holding its share, so
 	// its 404 may be another node's record. A peer forwarding here is asking what this store holds,
 	// which it can still say.
-	if (request.method != boost::beast::http::verb::put && !request.forwarded && nodes.is_alone())
+	if (!writing && nodes.is_alone())
 	{
 		return answered(node_alone());
 	}
@@ -525,62 +524,123 @@ boost::asio::awaitable<router::response> router::router::route_record(
 		return answered(missing_table(name));
 	}
 
-	if (request.method == boost::beast::http::verb::put)
+	if (!writing)
 	{
-		return order_write(request, name, std::move(record));
+		cluster::placement where = nodes.replicas(record.key);
+
+		if (!where.local)
+		{
+			return read_record(request, std::move(where));
+		}
+
+		std::optional<std::string> value = repository.read_record(name, key);
+
+		if (value)
+		{
+			return answered(text_response(boost::beast::http::status::ok, *value));
+		}
+
+		if (!where.nodes.empty())
+		{
+			return read_record(request, std::move(where));
+		}
+
+		return answered(read_here(name, key));
 	}
 
-	cluster::placement where = request.forwarded ? cluster::placement() : nodes.replicas(record.key);
+	cluster::leadership lead = nodes.leader(record.key);
 
-	if (!where.local)
+	if (lead.local)
 	{
-		return read_record(request, std::move(where));
+		return answered(lead_write(request, name, std::move(record), lead));
 	}
 
-	std::optional<std::string> value = repository.read_record(name, key);
-
-	if (value)
+	if (!lead.known)
 	{
-		return answered(text_response(boost::beast::http::status::ok, *value));
+		return answered(error_response(error::code::no_leader, "No node is leading this key's partition yet."));
 	}
 
-	if (!where.nodes.empty())
-	{
-		return read_record(request, std::move(where));
-	}
-
-	// A partition this node has just been handed is one it holds nothing of until it has fetched
-	// it, so a miss there is a record it may never have received.
-	if (is_short_of(cluster::partition_of(key)))
-	{
-		return answered(node_incomplete());
-	}
-
-	return answered(empty_response(boost::beast::http::status::not_found));
+	return forward_to_leader(request, std::move(lead));
 }
 
-router::response router::router::apply_write(
+router::response router::router::route_forwarded_record(
 	const request &request,
 	const std::string &name,
 	const std::string &partition,
 	const std::string &sort)
 {
-	record::record record = record::parse_record(record::compose_key(partition, sort), request.body);
+	bool writing = request.method == boost::beast::http::verb::put;
+
+	if (!writing && request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
+	{
+		return method_not_allowed(request.method);
+	}
+
+	std::string key = record::compose_key(partition, sort);
+	record::record record = writing ? record::parse_record(key, request.body) : record::parse_key(key);
 
 	if (!record.is_valid)
 	{
 		return error_response(record.code, record.message);
 	}
 
-	if (!repository.has_table(name))
+	if (!writing)
 	{
-		return missing_table(name);
+		return read_here(name, key);
+	}
+
+	cluster::leadership lead = nodes.leader(record.key);
+
+	if (!lead.local)
+	{
+		return apply_write(request, name, std::move(record));
+	}
+
+	// Another node ordered this and so does this one, and each would carry it back to the
+	// other for ever.
+	if (request.term != 0)
+	{
+		return error_response(
+			error::code::no_leader,
+			"This node leads this key's partition and another node ordered this write.");
+	}
+
+	return lead_write(request, name, std::move(record), lead);
+}
+
+router::response router::router::read_here(const std::string &name, const std::string &key) const
+{
+	std::optional<std::string> value = repository.read_record(name, key);
+
+	if (value)
+	{
+		return text_response(boost::beast::http::status::ok, *value);
+	}
+
+	// A partition this node has just been handed is one it holds nothing of until it has fetched
+	// it, so a miss there is a record it may never have received.
+	if (is_short_of(cluster::partition_of(key)))
+	{
+		return node_incomplete();
+	}
+
+	return empty_response(boost::beast::http::status::not_found);
+}
+
+router::response router::router::apply_write(const request &request, const std::string &name, record::record record)
+{
+	// Nothing carries a write in no term, so one without a term is a client's, sent here to be
+	// ordered by a node that took this one for the leader.
+	if (request.term == 0)
+	{
+		return error_response(error::code::no_leader, "This node does not lead this key's partition.");
 	}
 
 	if (!nodes.accept(record.key, request.term))
 	{
 		return error_response(
-			error::code::stale_leader, "This key is led in a later term than the one that ordered this write.");
+			error::code::stale_leader,
+			"This key is led in a later term than the one that ordered this write.");
 	}
 
 	// The version the leader stamped, applied as it was given rather than made again here: the
@@ -592,43 +652,16 @@ router::response router::router::apply_write(
 	return empty_response(boost::beast::http::status::no_content);
 }
 
-boost::asio::awaitable<router::response> router::router::order_write(
+router::response router::router::lead_write(
 	const request &request,
 	const std::string &name,
-	record::record record)
+	record::record record,
+	const cluster::leadership &lead)
 {
-	cluster::leadership lead = nodes.leader(record.key);
-
-	if (!lead.known)
-	{
-		return answered(error_response(error::code::no_leader, "No node is leading this key's partition yet."));
-	}
-
-	if (!lead.local)
-	{
-		if (request.forwarded)
-		{
-			return answered(error_response(error::code::no_leader, "This node does not lead this key's partition."));
-		}
-
-		return forward_to_leader(request, std::move(lead));
-	}
-
 	record.stamp = record::version { lead.term, repository.next_count() };
 
-	return answered(write_record(
-		carried(request, lead.term, record.stamp.count),
-		name,
-		record,
-		nodes.replicas(record.key)));
-}
+	cluster::placement where = nodes.replicas(record.key);
 
-router::response router::router::write_record(
-	const request &request,
-	const std::string &name,
-	const record::record &record,
-	const cluster::placement &where)
-{
 	if (where.local)
 	{
 		repository.write_record(name, record);
@@ -636,7 +669,8 @@ router::response router::router::write_record(
 
 	// Every copy at once, so the thread serving the write waits for the slowest of them rather
 	// than for the sum of them.
-	std::optional<response> refused = cluster::refusal(forwarding.forward_all(where.nodes, request));
+	std::optional<response> refused =
+		cluster::refusal(forwarding.forward_all(where.nodes, carried(request, lead.term, record.stamp.count)));
 
 	return refused ? *refused : empty_response(boost::beast::http::status::no_content);
 }
@@ -690,11 +724,11 @@ router::router::ordering router::router::order_schema(const request &request)
 	{
 		if (!nodes.accept(cluster::table_key, request.term))
 		{
-			return ordering {
-				error_response(error::code::stale_leader, "The tables are led in a later term than the one that ordered this."),
-				{},
-				0
-			};
+			return ordering { error_response(
+								  error::code::stale_leader,
+								  "The tables are led in a later term than the one that ordered this."),
+							  {},
+							  0 };
 		}
 
 		return ordering { std::nullopt, {}, 0, true };
@@ -769,7 +803,9 @@ router::response router::router::create_table(const request &request, const std:
 	{
 		if (!(existing == table))
 		{
-			return error_response(error::code::table_exists, "A table named \"" + name + "\" exists with different options.");
+			return error_response(
+				error::code::table_exists,
+				"A table named \"" + name + "\" exists with different options.");
 		}
 
 		created = json_response(boost::beast::http::status::ok, table.json);

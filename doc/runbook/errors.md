@@ -55,10 +55,13 @@ unaffected throughout — they never wait for a leader.
 > `This node does not lead this key's partition.`
 >
 > `This node does not lead the tables.`
+>
+> `This node leads this key's partition and another node ordered this write.`
 
-A write arrived forwarded at a node that does not lead the partition, which is
-two nodes disagreeing about who leads it. It is refused rather than passed on
-again, so that a disagreement cannot bounce a write between nodes for ever.
+A write arrived forwarded at a node that disagrees with the node that sent it
+about who leads the partition: sent to be ordered by a node that does not lead
+it, or carried from a leader to a node that takes itself for the leader. It is
+refused rather than passed on again, so that a disagreement cannot bounce a write between nodes for ever.
 This settles as the membership does. If it persists, the nodes disagree about
 the membership itself — see
 [the membership is wrong](/runbook/membership#the-membership-is-wrong).
