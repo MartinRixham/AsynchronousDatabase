@@ -162,20 +162,15 @@ std::vector<std::vector<std::string>> cluster::test_cluster::zones() const
 	return zones_of(member_list, self, zone);
 }
 
-std::optional<cluster::leadership> cluster::test_cluster::leader(const std::string &)
+cluster::leadership cluster::test_cluster::leader(const std::string &key)
 {
 	std::shared_lock<std::shared_mutex> lock(membership_mutex);
-
-	if (leader_node.empty())
-	{
-		return std::nullopt;
-	}
 
 	leadership led;
 
 	led.known = true;
-	led.local = leader_node == self;
-	led.node = leader_node;
+	led.node = leading(partition_of(key));
+	led.local = led.node == self;
 	led.term = term;
 
 	return led;
@@ -184,8 +179,19 @@ std::optional<cluster::leadership> cluster::test_cluster::leader(const std::stri
 size_t cluster::test_cluster::leads() const
 {
 	std::shared_lock<std::shared_mutex> lock(membership_mutex);
+	size_t led = 0;
 
-	return leader_node == self ? partition_count : 0;
+	for (size_t partition = 0; partition < partition_count; partition++)
+	{
+		led += leading(partition) == self ? 1 : 0;
+	}
+
+	return led;
+}
+
+std::string cluster::test_cluster::leading(size_t partition) const
+{
+	return leader_node.empty() ? leader_of(partition_name(partition), member_list) : leader_node;
 }
 
 bool cluster::test_cluster::is_unled() const

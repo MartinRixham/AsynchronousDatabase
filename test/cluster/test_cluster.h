@@ -28,9 +28,10 @@ namespace cluster
 
 		std::string zone;
 
+		// Empty is the node the membership names, as it names one in production, in the first term.
 		std::string leader_node;
 
-		int64_t term = 0;
+		int64_t term = 1;
 
 		// Restored by the router before the server listens, and read by every session after.
 		partition_terms restored = {};
@@ -43,6 +44,8 @@ namespace cluster
 		mutable std::mutex vouch_mutex;
 
 		partition_set filled;
+
+		std::string leading(size_t partition) const;
 
 	public:
 		test_cluster();
@@ -88,7 +91,7 @@ namespace cluster
 
 		std::vector<std::vector<std::string>> zones() const override;
 
-		std::optional<leadership> leader(const std::string &key) override;
+		leadership leader(const std::string &key) override;
 
 		size_t leads() const override;
 

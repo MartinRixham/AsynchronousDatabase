@@ -60,9 +60,8 @@ last read**. The nodes in it are where they were a moment ago, so:
 - a scan is still answered by one copy of the partition it names, the same way;
 - it orders no write. The leases that membership was read under may have run
   out since, and a leader it names may have been replaced by a node it cannot
-  hear about, so `ASYNCDB_SERVE_UNLED=false` — which
-  [the image sets](/database/reference#the-cluster) — **refuses every write**
-  with `no_leader` from the first pass etcd did not answer;
+  hear about, so it **refuses every write** with `no_leader` from the first
+  pass etcd did not answer;
 - a lease after that, `/health` answers `503` with `unled` set, which is what
   takes the node **out of the load balancer**: it goes on serving reads and
   answering its peers, neither of which needs a leader;
@@ -124,7 +123,7 @@ to try the next one: it has given the answer the whole cluster would give.
 A node that **reaches** etcd and finds nobody registered there but itself — or
 one that has not reached etcd since it started, and so has no membership to keep
 — puts itself in the list, and a membership of one is a node that takes itself
-to hold every key. It holds only its share, so with `ASYNCDB_SERVE_UNLED=false`:
+to hold every key. It holds only its share, so:
 
 - a read or a scan is answered `503 node_alone`, rather than a `404` for a
   record another node has. A request another node forwards is still answered,
@@ -250,7 +249,7 @@ Reads never wait for a leader, which is why this presents as a write-only outage
 | Sums to 256 | Settled. Every partition is led |
 | Sums to less, and rising | A cold cluster still claiming. 64 per node per pass, and each claim starts a pass on every node — seconds at most |
 | `0` everywhere, not rising | No node can write to etcd. Claims are transactions, so a read-only etcd claims nothing |
-| `0` on a node whose `nodes` names only itself | etcd names nobody else, or this node has never reached it, and `ASYNCDB_SERVE_UNLED=false` refuses a write nothing ordered. It is [a node alone](#a-node-alone) |
+| `0` on a node whose `nodes` names only itself | etcd names nobody else, or this node has never reached it, and a write nothing ordered is refused. It is [a node alone](#a-node-alone) |
 | Sums to 256 but a write still says `no_leader` | The leader of that partition is a node this one cannot reach, or the two disagree about the membership |
 | Sums to 256, and a node that just joined leads none of it | The nodes the membership stopped naming have not given those claims up yet. A tick after they first noticed, so seconds — longer, and they cannot write to etcd |
 | Sums to 256, and one node leads far more of it than the others | The membership those nodes read does not agree. `leads` is worked out from the same hashing on every node, so an even split is what agreement looks like |

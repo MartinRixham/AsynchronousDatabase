@@ -188,13 +188,24 @@ void cluster::fake_cluster::applied(const std::string &key, int64_t term)
 	refused[key] = term;
 }
 
-// A key nothing was said about is a cluster with no leadership at all, which is how every test
-// that is not about leadership writes.
-std::optional<cluster::leadership> cluster::fake_cluster::leader(const std::string &key)
+// A key nothing was said about is led here in no term, which is what an instance that was never
+// clustered answers for every key.
+cluster::leadership cluster::fake_cluster::leader(const std::string &key)
 {
 	auto led = leaders.find(key);
 
-	return led == leaders.end() ? std::optional<leadership>() : led->second;
+	if (led != leaders.end())
+	{
+		return led->second;
+	}
+
+	leadership own;
+
+	own.known = true;
+	own.local = true;
+	own.node = self;
+
+	return own;
 }
 
 void cluster::fake_cluster::unled()

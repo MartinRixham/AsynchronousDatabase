@@ -240,28 +240,27 @@ commas, tried in turn and sticky on whichever answered), `ASYNCDB_NODE` (this no
 reach it, the API port and not the nginx in front of it) and `ASYNCDB_ZONE` (the availability zone
 this node is in). **Set none and nothing changes**: no thread is started, nothing is registered, and
 the instance owns the whole keyspace, which is what every test that is not `cluster_test` runs as.
-Set the first two and the instance joins. **`ASYNCDB_SERVE_UNLED` is the fourth**, and the only one
-of them that is not about joining: false is a node taking a write only where a leader claimed in etcd
-ordered it — a table create or delete included, since the tables are led as well — so a membership
-too small to claim anything, or one etcd has stopped answering for, answers `no_leader` rather than
-writing what nobody ordered; and a node with no membership but itself answers a client's read or scan
-`node_alone` (503), because it takes itself to hold every key and holds only its share. **A
-membership etcd did not answer for is kept as it was last read** — `etcd::client::range` answers
+Set the first two and the instance joins. **An instance that was never clustered leads every key
+itself, in term 0**: it races with nobody and holds the only copy there is, so it claims nothing in
+etcd and carries a write to nobody. **A node of a cluster takes a write only where a leader claimed
+in etcd ordered it** — a table create or delete included, since the tables are led as well — so a
+membership too small to claim anything, or one etcd has stopped answering for, answers `no_leader`
+rather than writing what nobody ordered; and a node with no membership but itself answers a client's
+read or scan `node_alone` (503), because it takes itself to hold every key and holds only its share.
+**A membership etcd did not answer for is kept as it was last read** — `etcd::client::range` answers
 `std::nullopt` rather than an empty map — so a node cut off from etcd goes on routing reads to the
 copies that have the key, and `cluster::is_alone()` is only a node etcd names alone or one that has
-not reached etcd since it started. It defaults to true, which is the lone instance every test and
-`cmk run` serve, and the `Dockerfile` sets it false, because a container is a node of a cluster and
-one on its own there has lost the others. **It is also what takes such a node out of the load
-balancer**: `cluster::is_unled()` is that same node having been unable to order a write for longer
-than a lease, and `/health` reports it as `unled` and answers `503` rather than `200` — the document
+not reached etcd since it started. **Such a node is taken out of the load balancer**:
+`cluster::is_unled()` is a node of a cluster having been unable to order a write for longer than a
+lease, and `/health` reports it as `unled` and answers `503` rather than `200` — the document
 unchanged, because the status is for the load balancer and the fields are for whoever is reading the
 node. A lease is what makes it a state and not a moment, a membership that just went unanswered
 being a slow answer from etcd as often as a node that has lost the others. Nothing replaces the instance
 over it, the group's health check being `EC2`; and a target group with nothing healthy left in it is
 one the load balancer sends to all of them, so etcd lost altogether is a cluster that goes on
-serving what it holds. The four are read in one place,
+serving what it holds. The three are read in one place,
 `cluster::from_environment()` in `cluster/etcd_cluster.h`, which fills a `cluster::config`: the
-endpoints, this node and its zone, that flag, and beside them the tunables nothing sets from
+endpoints, this node and its zone, and beside them the tunables nothing sets from
 outside — a ten second membership lease, the `/asyncdb/node/` and `/asyncdb/leader/` prefixes,
 `claims_per_refresh`, and four timeouts (two seconds to connect at all, five for what was sent to
 go unacknowledged — a node gone from the network, kept under the load balancer's fifteen second idle
@@ -416,8 +415,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   is the one place a documented error code is mapped to a status. **`route()` answers an
   awaitable, and only a record asking one node waits in it**: `route_record` decides on the thread
   serving it — reading the store and asking the membership included — and what it asks that one node,
-  a copy it reads or the leader it hands a write to, is a coroutine of its own taking what it needs
-  by value, the call that started it having returned before it runs. That split is also what keeps
+  a copy it reads or the leader `order_write` hands a write to, is a coroutine of its own taking what
+  it needs by value, the call that started it having returned before it runs. A write the leader
+  carried here never reaches `route_record`: `route()` hands it to `apply_write`, which asks nobody
+  and is not awaitable at all. That split is also what keeps
   each frame small: GCC reports an Asio coroutine frame much over a kibibyte as a mismatched delete.
   Every other route — the leader carrying a write to its copies included — is answered where it is
   called, blocking as it always has, and handed back already done. **Two writes of one key are not ordered against each
@@ -745,7 +746,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   forgets nothing. A partition
   nothing leads yet answers `no_leader` (503) to a write and serves reads as normal. **The term is
   what tells the two write hops apart**: a write *to* the leader carries none, a write *from* it
-  carries the term.
+  carries the term — and so `route()` sends a write with a term to `apply_write` and one without
+  through `route_record` to `order_write`, with no route of its own for either. It holds because nothing carries a
+  write in term 0: that is the term of an instance that was never clustered, which has nowhere to
+  carry one.
 - `DEBUG(...)` from `src/log.h` compiles to nothing unless the `LOG` define is `1`; `recipe.json` sets
   `"LOG": "echo 1"` (the define values are shell commands that Cheesemake evaluates).
 

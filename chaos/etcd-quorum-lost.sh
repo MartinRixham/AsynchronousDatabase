@@ -88,8 +88,7 @@ await '.etcd.registered == false and (.nodes | length) == 6' "$settle" \
 	"every node lost its registration and kept the membership it last read"
 
 # The half that would diverge the data, and does not: a membership etcd is not answering for orders
-# no write, and the image sets ASYNCDB_SERVE_UNLED=false, so the write is refused rather than
-# written where no leader ordered it.
+# no write, so the write is refused rather than written where no leader ordered it.
 refuse_writes 10 503 \
 	"a node etcd is not answering refuses every write with no_leader, rather than taking it unled"
 

@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include <pthread.h>
@@ -23,13 +24,6 @@ namespace
 		const char *value = getenv(name);
 
 		return value == nullptr ? "" : value;
-	}
-
-	// A flag is turned off only by saying so: unset, empty and anything else is the default it
-	// carries in the config, because a misspelt value must not quietly change what a node does.
-	bool reads_false(const std::string &configured)
-	{
-		return configured == "false" || configured == "0";
 	}
 
 	std::vector<std::string> read_endpoints(const std::string &configured)
@@ -81,7 +75,6 @@ cluster::config cluster::from_environment()
 	config.endpoints = read_endpoints(environment("ASYNCDB_ETCD"));
 	config.node = environment("ASYNCDB_NODE");
 	config.zone = environment("ASYNCDB_ZONE");
-	config.serve_unled = !reads_false(environment("ASYNCDB_SERVE_UNLED"));
 
 	return config;
 }
@@ -369,20 +362,26 @@ std::vector<std::string> cluster::etcd_cluster::peers() const
 	return peers;
 }
 
-std::optional<cluster::leadership> cluster::etcd_cluster::leader(const std::string &key)
+cluster::leadership cluster::etcd_cluster::leader(const std::string &key)
 {
+	if (!configuration.is_clustered())
+	{
+		leadership led;
+
+		led.known = true;
+		led.local = true;
+		led.node = configuration.node;
+
+		return led;
+	}
+
 	membership registered = snapshot();
 
+	// A membership this small claims nothing, and one etcd did not answer for was read under
+	// leases that may have run out since, so the leader it names may have been replaced by a node
+	// this one cannot hear about.
 	if (!answered || registered->size() < 2)
 	{
-		if (configuration.serve_unled)
-		{
-			return std::nullopt;
-		}
-
-		// A membership this small claims nothing, and one etcd did not answer for was read under
-		// leases that may have run out since, so a deployment that writes only where a leader says
-		// so is answered a leader it has not got rather than no leadership at all.
 		return leadership();
 	}
 
@@ -492,7 +491,7 @@ bool cluster::etcd_cluster::is_unled() const
 {
 	std::chrono::steady_clock::time_point since = unled_since.load();
 
-	if (configuration.serve_unled || since == std::chrono::steady_clock::time_point())
+	if (!configuration.is_clustered() || since == std::chrono::steady_clock::time_point())
 	{
 		return false;
 	}
@@ -502,7 +501,7 @@ bool cluster::etcd_cluster::is_unled() const
 
 bool cluster::etcd_cluster::is_alone() const
 {
-	return !configuration.serve_unled && configuration.is_clustered() && snapshot()->size() < 2;
+	return configuration.is_clustered() && snapshot()->size() < 2;
 }
 
 cluster::etcd_registration cluster::etcd_cluster::registration() const

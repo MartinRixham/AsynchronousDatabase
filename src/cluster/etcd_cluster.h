@@ -30,15 +30,6 @@ namespace cluster
 
 		std::string zone;
 
-		// Whether a node leading nothing serves anyway. A node standing alone claims no partition,
-		// because it races with nobody, so true is the lone instance that owns the whole keyspace
-		// serving as it always has. False is a deployment where a write is only ever ordered by a
-		// leader claimed in etcd, so a node that reaches no etcd, or stands in a membership too
-		// small to claim anything, refuses the write rather than taking one nothing ordered — and
-		// a node with no membership but itself refuses a read, because what it holds is a share of
-		// the keyspace and not the whole of it.
-		bool serve_unled = true;
-
 		// How long the membership of a node outlives the node itself.
 		int64_t lease_seconds = 10;
 
@@ -181,7 +172,7 @@ namespace cluster
 
 		std::vector<std::vector<std::string>> zones() const override;
 
-		[[nodiscard]] std::optional<leadership> leader(const std::string &key) override;
+		[[nodiscard]] leadership leader(const std::string &key) override;
 
 		size_t leads() const override;
 

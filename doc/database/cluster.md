@@ -355,15 +355,16 @@ membership that names it. **Reads
 are not in either window** — they are answered by a copy and never wait for a
 leader.
 
-An instance standing alone, or a cluster with no zones, orders nothing: there is
-one copy and nobody to race with, so a write is written where it always was.
+An instance that was never clustered — no `ASYNCDB_ETCD` or no `ASYNCDB_NODE` —
+races with nobody and holds the only copy there is, so it orders its own writes
+and claims nothing in etcd.
 
-Unless it is told otherwise. `ASYNCDB_SERVE_UNLED=false` is a deployment where
-a write is taken only where a leader claimed in etcd ordered it, so an instance
-whose membership is too small to claim anything, and one etcd has stopped
-answering, answers `503 no_leader` to every write instead of taking one nothing
-ordered. A node etcd has stopped answering keeps the membership it last read, so
-its reads are untouched, as they are in every other window a leader leaves.
+A node of a cluster takes a write only where a leader claimed in etcd ordered it,
+so a node whose membership is too small to claim anything, and one etcd has
+stopped answering, answers `503 no_leader` to every write instead of taking one
+nothing ordered. A node etcd has stopped answering keeps the membership it last
+read, so its reads are untouched, as they are in every other window a leader
+leaves.
 
 A node with **no membership but itself** is the exception — the only node
 registered in etcd, or one that has not reached etcd since it started. It takes
@@ -372,11 +373,9 @@ with `503 node_alone` rather than a `404` for a record another node has. A
 request another node forwards is still answered, because what that asks is what
 this store holds.
 
-**The image sets it**, because a container is a node of a cluster: a node there
-that is alone has lost the others rather than been meant to stand by itself, and
-a write it takes on its own is one the other copies of the key never hear about.
-The binary's own default is the other way, which is the lone instance a
-`cmk run` or a test serves.
+A node of a cluster that is alone has lost the others rather than been meant to
+stand by itself, and a write it took on its own would be one the other copies of
+the key never hear about.
 
 A record is read from **one** copy: this node's own when it holds one, and
 otherwise the copy in this node's own zone, which is the near one. A copy that

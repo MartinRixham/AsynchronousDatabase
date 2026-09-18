@@ -163,6 +163,13 @@ bool router::router::is_incomplete() const
 	return (nodes.holdings() & ~nodes.vouched()).any();
 }
 
+// A node that came up short of its share is a node whose tables may be the ones it never read, so
+// what it does not hold is unknown to it rather than absent.
+router::response router::router::missing_table(const std::string &name) const
+{
+	return is_incomplete() ? node_incomplete() : table_not_found(name);
+}
+
 bool router::router::is_short_of(size_t partition) const
 {
 	return nodes.holdings().test(partition) && !nodes.vouched().test(partition);
@@ -306,17 +313,21 @@ boost::asio::awaitable<router::response> router::router::route(const request &re
 		return answered(route_range(request, path[1]));
 	}
 
-	if (path.size() == 4)
+	if (path.size() != 4 && path.size() != 5)
 	{
-		return route_record(request, path[1], path[3], "");
+		return answered(not_found("route for this path"));
 	}
 
-	if (path.size() == 5)
+	std::string sort = path.size() == 5 ? path[4] : "";
+
+	// Nothing orders a write in no term and carries it to another node, so a term is the leader
+	// having ordered this one already and anything without one is a client's.
+	if (request.method == boost::beast::http::verb::put && request.term != 0)
 	{
-		return route_record(request, path[1], path[3], path[4]);
+		return answered(apply_write(request, path[1], path[3], sort));
 	}
 
-	return answered(not_found("route for this path"));
+	return route_record(request, path[1], path[3], sort);
 }
 
 router::response router::router::route_tables(const request &request)
@@ -509,67 +520,17 @@ boost::asio::awaitable<router::response> router::router::route_record(
 		return answered(node_alone());
 	}
 
-	// A node that came up short of its share is a node whose tables may be the ones it never
-	// read, so what it does not hold is unknown to it rather than absent.
 	if (!repository.has_table(name))
 	{
-		return answered(is_incomplete() ? node_incomplete() : table_not_found(name));
+		return answered(missing_table(name));
 	}
-
-	cluster::placement where = request.forwarded ? cluster::placement() : nodes.replicas(record.key);
 
 	if (request.method == boost::beast::http::verb::put)
 	{
-		if (request.term != 0)
-		{
-			if (!nodes.accept(record.key, request.term))
-			{
-				return answered(error_response(
-					error::code::stale_leader, "This key is led in a later term than the one that ordered this write."));
-			}
-
-			// The version the leader stamped, applied as it was given rather than made again here:
-			// the copies of one write are the same record and have to say so.
-			record.stamp = record::version { request.term, request.count };
-
-			return answered(write_record(request, name, record, where));
-		}
-
-		std::optional<cluster::leadership> lead = nodes.leader(record.key);
-
-		if (!lead)
-		{
-			// Nothing leads, so there is one copy and nobody to order it against. The count still
-			// rises, because a node that joins a cluster later is one whose records are compared
-			// with another node's.
-			record.stamp = record::version { 0, repository.next_count() };
-
-			return answered(write_record(request, name, record, where));
-		}
-
-		if (!lead->known)
-		{
-			return answered(error_response(error::code::no_leader, "No node is leading this key's partition yet."));
-		}
-
-		if (!lead->local)
-		{
-			if (request.forwarded)
-			{
-				return answered(error_response(error::code::no_leader, "This node does not lead this key's partition."));
-			}
-
-			return forward_to_leader(request, std::move(*lead));
-		}
-
-		record.stamp = record::version { lead->term, repository.next_count() };
-
-		return answered(write_record(
-			carried(request, lead->term, record.stamp.count),
-			name,
-			record,
-			replicas_of(request, where, record.key)));
+		return order_write(request, name, std::move(record));
 	}
+
+	cluster::placement where = request.forwarded ? cluster::placement() : nodes.replicas(record.key);
 
 	if (!where.local)
 	{
@@ -598,12 +559,68 @@ boost::asio::awaitable<router::response> router::router::route_record(
 	return answered(empty_response(boost::beast::http::status::not_found));
 }
 
-cluster::placement router::router::replicas_of(
+router::response router::router::apply_write(
 	const request &request,
-	const cluster::placement &known,
-	const std::string &key)
+	const std::string &name,
+	const std::string &partition,
+	const std::string &sort)
 {
-	return request.forwarded ? nodes.replicas(key) : known;
+	record::record record = record::parse_record(record::compose_key(partition, sort), request.body);
+
+	if (!record.is_valid)
+	{
+		return error_response(record.code, record.message);
+	}
+
+	if (!repository.has_table(name))
+	{
+		return missing_table(name);
+	}
+
+	if (!nodes.accept(record.key, request.term))
+	{
+		return error_response(
+			error::code::stale_leader, "This key is led in a later term than the one that ordered this write.");
+	}
+
+	// The version the leader stamped, applied as it was given rather than made again here: the
+	// copies of one write are the same record and have to say so.
+	record.stamp = record::version { request.term, request.count };
+
+	repository.write_record(name, record);
+
+	return empty_response(boost::beast::http::status::no_content);
+}
+
+boost::asio::awaitable<router::response> router::router::order_write(
+	const request &request,
+	const std::string &name,
+	record::record record)
+{
+	cluster::leadership lead = nodes.leader(record.key);
+
+	if (!lead.known)
+	{
+		return answered(error_response(error::code::no_leader, "No node is leading this key's partition yet."));
+	}
+
+	if (!lead.local)
+	{
+		if (request.forwarded)
+		{
+			return answered(error_response(error::code::no_leader, "This node does not lead this key's partition."));
+		}
+
+		return forward_to_leader(request, std::move(lead));
+	}
+
+	record.stamp = record::version { lead.term, repository.next_count() };
+
+	return answered(write_record(
+		carried(request, lead.term, record.stamp.count),
+		name,
+		record,
+		nodes.replicas(record.key)));
 }
 
 router::response router::router::write_record(
@@ -683,32 +700,24 @@ router::router::ordering router::router::order_schema(const request &request)
 		return ordering { std::nullopt, {}, 0, true };
 	}
 
-	std::optional<cluster::leadership> lead = nodes.leader(cluster::table_key);
+	cluster::leadership lead = nodes.leader(cluster::table_key);
 
-	// No leadership at all is an instance that owns the whole keyspace, and it carries its own
-	// tables the way it always has.
-	if (!lead)
-	{
-		return ordering {
-			std::nullopt, request.forwarded ? std::vector<std::string>() : nodes.peers(), 0, request.forwarded };
-	}
-
-	if (!lead->known)
+	if (!lead.known)
 	{
 		return ordering { error_response(error::code::no_leader, "No node is leading the tables yet."), {}, 0 };
 	}
 
-	if (!lead->local)
+	if (!lead.local)
 	{
 		if (request.forwarded)
 		{
 			return ordering { error_response(error::code::no_leader, "This node does not lead the tables."), {}, 0 };
 		}
 
-		return ordering { forwarding.forward(lead->node, request), {}, 0 };
+		return ordering { forwarding.forward(lead.node, request), {}, 0 };
 	}
 
-	return ordering { std::nullopt, nodes.peers(), lead->term };
+	return ordering { std::nullopt, nodes.peers(), lead.term };
 }
 
 // A schema operation is stamped by the node that orders it, exactly as a write to a record is, and

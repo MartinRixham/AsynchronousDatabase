@@ -1055,8 +1055,8 @@ TEST(router_cluster_test, write_a_record_to_the_node_that_owns_the_key)
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 }
 
-// The node that was sent the request is the node that answers it, whatever it makes of the
-// membership, so two nodes that disagree for a moment cannot bounce a request between them.
+// The node a leader carried a write to is the node that writes it, whatever it makes of the
+// membership, so two nodes that disagree for a moment cannot bounce a write between them.
 TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
 {
 	repository::fake_repository repository;
@@ -1071,6 +1071,7 @@ TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
 	router::request forwarded = put("/table/account/key/4821", "a value");
 
 	forwarded.forwarded = true;
+	forwarded.term = 41;
 
 	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
 	EXPECT_TRUE(forwarding.sent().empty());
@@ -1563,9 +1564,9 @@ TEST(router_cluster_test, keep_the_later_of_two_writes_handed_over_out_of_order)
 	EXPECT_EQ(stamp_of(repository, "account", "4821").count, 8u);
 }
 
-// An instance nothing leads writes where it always has, and still counts: a store that joins a
-// cluster later is one whose records are weighed against another node's.
-TEST(router_test, count_a_write_no_leader_ordered)
+// An instance that was never clustered orders its own writes in no term, and still counts: a store
+// that joins a cluster later is one whose records are weighed against another node's.
+TEST(router_test, count_a_write_on_an_instance_that_was_never_clustered)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster alone = lone_node();
@@ -1817,22 +1818,6 @@ TEST(router_cluster_test, fail_to_create_a_table_a_node_refuses)
 	EXPECT_EQ(error_code(response), "table_exists");
 }
 
-TEST(router_cluster_test, create_a_forwarded_table_without_passing_it_on)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	cluster::fake_forwarder forwarding;
-	router::router router(repository, nodes, forwarding);
-
-	router::request forwarded = put("/table/account", "{}");
-
-	forwarded.forwarded = true;
-
-	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::created);
-	EXPECT_TRUE(forwarding.sent().empty());
-	EXPECT_TRUE(repository.has_table("account"));
-}
-
 TEST(router_cluster_test, delete_a_table_on_every_node)
 {
 	repository::fake_repository repository;
@@ -1851,24 +1836,7 @@ TEST(router_cluster_test, delete_a_table_on_every_node)
 }
 
 // A node that never had the table has nothing to say about a deletion the rest of the cluster is
-// carrying out, so it agrees rather than answering that it is not there.
-TEST(router_cluster_test, agree_to_a_forwarded_deletion_of_a_table_that_is_not_there)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	cluster::fake_forwarder nobody;
-	router::router router(repository, nodes, nobody);
-
-	router::request forwarded = del("/table/account");
-
-	forwarded.forwarded = true;
-
-	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
-	EXPECT_EQ(router::routed(router, del("/table/account")).status, boost::beast::http::status::not_found);
-}
-
-// And it writes the tombstone down. A node agreeing to a delete of a table it never had may be a
-// node that missed the create, and the name being gone as of this version is what stops it taking
+// carrying out, so it agrees and writes the tombstone down. It may be a node that missed the create, and the name being gone as of this version is what stops it taking
 // the table back from a peer on the next pass.
 TEST(router_cluster_test, write_down_a_forwarded_deletion_of_a_table_that_is_not_there)
 {
@@ -1893,28 +1861,6 @@ TEST(router_cluster_test, write_down_a_forwarded_deletion_of_a_table_that_is_not
 	EXPECT_FALSE(gone->live);
 	EXPECT_EQ(gone->stamp.term, 41);
 	EXPECT_EQ(gone->stamp.count, 7u);
-}
-
-// A cluster that leads nothing stamps the create once all the same, on the node that took it, and
-// the count travels without a term — which a node with no leadership to claim cannot issue. Without
-// it every node would stamp the same create itself and one table would stand at a version apiece.
-TEST(router_cluster_test, carry_the_version_of_a_create_that_no_leader_ordered)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = two_nodes();
-	cluster::fake_forwarder forwarding;
-	router::router router(repository, nodes, forwarding);
-
-	EXPECT_EQ(router::routed(router, put("/table/account", "{}")).status, boost::beast::http::status::created);
-
-	std::optional<table::entry> made = repository.read_schema().read_entry("account");
-
-	ASSERT_TRUE(made.has_value());
-	EXPECT_EQ(made->stamp.term, 0);
-
-	ASSERT_EQ(forwarding.sent().size(), 1u);
-	EXPECT_EQ(forwarding.sent()[0].second.term, 0);
-	EXPECT_EQ(forwarding.sent()[0].second.count, made->stamp.count);
 }
 
 // The stamp a create is ordered in travels to every node, so one create is one version across the

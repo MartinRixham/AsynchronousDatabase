@@ -121,7 +121,7 @@ namespace cluster
 
 		std::vector<std::vector<std::string>> zones() const override;
 
-		std::optional<leadership> leader(const std::string &key) override;
+		leadership leader(const std::string &key) override;
 
 		size_t leads() const override;
 

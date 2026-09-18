@@ -684,19 +684,6 @@ TEST_F(cluster_test, a_write_ordered_in_a_term_that_has_passed_is_refused)
 	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
 }
 
-// A cluster with no leadership at all — no zones, or no etcd to elect through — writes from
-// wherever the write landed to every copy.
-TEST_F(cluster_test, a_write_is_unordered_when_no_node_leads_anything)
-{
-	zone_the_cluster();
-
-	request(first, "PUT", "/table/account", "{}");
-
-	EXPECT_EQ(request(first, "PUT", "/table/account/key/4821", "a value").code, 204);
-	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
-	EXPECT_EQ(request(second, "GET", "/table/account/key/4821", "", true).body, "a value");
-}
-
 // The membership moved, so the records whose owner moved with it move too. Both halves are one
 // pass: a node fetches what it has been handed and gives up what has been taken from it, and the
 // second is gated on the first having happened somewhere else.
@@ -705,10 +692,11 @@ TEST_F(cluster_test, a_node_gives_up_a_record_it_no_longer_owns)
 {
 	request(first, "PUT", "/table/account", "{}");
 
-	// Written where it stands rather than where it belongs, so that both nodes hold a key one of
-	// them owns. That is the state a cluster is left in by a node joining the zone.
-	request(first, "PUT", "/table/account/key/4821", "a value", true);
-	request(second, "PUT", "/table/account/key/4821", "a value", true);
+	// Carried as a leader carries it, so written where it stands rather than where it belongs and
+	// both nodes hold a key one of them owns. That is the state a cluster is left in by a node
+	// joining the zone.
+	request(first, "PUT", "/table/account/key/4821", "a value", true, 1);
+	request(second, "PUT", "/table/account/key/4821", "a value", true, 1);
 
 	ASSERT_TRUE(holds(owner("4821"), "4821"));
 	ASSERT_TRUE(holds(stranger("4821"), "4821"));
@@ -727,7 +715,7 @@ TEST_F(cluster_test, a_record_moves_to_the_node_that_owns_it_and_then_off_the_on
 {
 	request(first, "PUT", "/table/account", "{}");
 
-	request(stranger("4821"), "PUT", "/table/account/key/4821", "a value", true);
+	request(stranger("4821"), "PUT", "/table/account/key/4821", "a value", true, 1);
 
 	ASSERT_FALSE(holds(owner("4821"), "4821"));
 
@@ -749,7 +737,7 @@ TEST_F(cluster_test, a_node_fetches_a_record_it_owns_and_holds_nothing_for)
 
 	// One zone holds the record and the other does not, which is a copy short: every zone holds
 	// one node that owns this key, and here one of them has nothing behind it.
-	request(second, "PUT", "/table/account/key/4821", "a value", true);
+	request(second, "PUT", "/table/account/key/4821", "a value", true, 1);
 
 	ASSERT_FALSE(holds(first, "4821"));
 

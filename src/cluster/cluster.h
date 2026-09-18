@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -128,7 +127,7 @@ namespace cluster
 		virtual std::vector<std::vector<std::string>> zones() const = 0;
 
 		// Not const: a partition nothing claims is claimed here by the node the membership names.
-		[[nodiscard]] virtual std::optional<leadership> leader(const std::string &key) = 0;
+		[[nodiscard]] virtual leadership leader(const std::string &key) = 0;
 
 		virtual size_t leads() const = 0;
 

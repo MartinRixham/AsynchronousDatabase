@@ -600,13 +600,10 @@ namespace
 
 		std::string previous_node;
 
-		std::string previous_serve_unled;
-
 	public:
 		environment():
 			previous_etcd(getenv("ASYNCDB_ETCD") == nullptr ? "" : getenv("ASYNCDB_ETCD")),
-			previous_node(getenv("ASYNCDB_NODE") == nullptr ? "" : getenv("ASYNCDB_NODE")),
-			previous_serve_unled(getenv("ASYNCDB_SERVE_UNLED") == nullptr ? "" : getenv("ASYNCDB_SERVE_UNLED"))
+			previous_node(getenv("ASYNCDB_NODE") == nullptr ? "" : getenv("ASYNCDB_NODE"))
 		{
 		}
 
@@ -614,7 +611,6 @@ namespace
 		{
 			set("ASYNCDB_ETCD", previous_etcd);
 			set("ASYNCDB_NODE", previous_node);
-			set("ASYNCDB_SERVE_UNLED", previous_serve_unled);
 		}
 
 		environment(const environment &) = delete;
@@ -697,35 +693,6 @@ TEST(etcd_cluster_test, stand_alone_when_only_etcd_is_named)
 	EXPECT_FALSE(cluster::from_environment().is_clustered());
 }
 
-TEST(etcd_cluster_test, serve_unled_when_the_environment_says_nothing)
-{
-	environment environment;
-
-	environment.set("ASYNCDB_SERVE_UNLED", "");
-
-	EXPECT_TRUE(cluster::from_environment().serve_unled);
-}
-
-TEST(etcd_cluster_test, refuse_to_serve_unled_when_the_environment_says_so)
-{
-	environment environment;
-
-	environment.set("ASYNCDB_SERVE_UNLED", "false");
-
-	EXPECT_FALSE(cluster::from_environment().serve_unled);
-}
-
-// A value that is not one this understands is a deployment that has said nothing rather than one
-// that has turned the flag off.
-TEST(etcd_cluster_test, serve_unled_when_the_environment_says_something_else)
-{
-	environment environment;
-
-	environment.set("ASYNCDB_SERVE_UNLED", "no");
-
-	EXPECT_TRUE(cluster::from_environment().serve_unled);
-}
-
 // A node claims the partitions the membership names it to lead, and the one that created the key
 // leads.
 TEST(etcd_cluster_test, claim_the_partitions_this_node_leads)
@@ -751,13 +718,12 @@ TEST(etcd_cluster_test, claim_the_partitions_this_node_leads)
 	EXPECT_FALSE(claimed(http).empty());
 	EXPECT_LT(claimed(http).size(), cluster::partition_count);
 
-	std::optional<cluster::leadership> led = cluster.leader(key_led_by(members, one));
+	cluster::leadership led = cluster.leader(key_led_by(members, one));
 
-	ASSERT_TRUE(led.has_value());
-	EXPECT_TRUE(led->known);
-	EXPECT_TRUE(led->local);
-	EXPECT_EQ(led->node, one);
-	EXPECT_EQ(led->term, 41);
+	EXPECT_TRUE(led.known);
+	EXPECT_TRUE(led.local);
+	EXPECT_EQ(led.node, one);
+	EXPECT_EQ(led.term, 41);
 
 	cluster.stop();
 }
@@ -793,18 +759,16 @@ TEST(etcd_cluster_test, name_the_node_that_leads_a_partition)
 
 	cluster.start();
 
-	std::optional<cluster::leadership> led = cluster.leader(key_led_by(members, one));
+	cluster::leadership led = cluster.leader(key_led_by(members, one));
 
-	ASSERT_TRUE(led.has_value());
-	EXPECT_TRUE(led->known);
-	EXPECT_FALSE(led->local);
-	EXPECT_EQ(led->node, two);
+	EXPECT_TRUE(led.known);
+	EXPECT_FALSE(led.local);
+	EXPECT_EQ(led.node, two);
 
 	cluster.stop();
 }
 
-// One instance races with nobody, so there is nothing to order and no leader to wait for.
-TEST(etcd_cluster_test, lead_nothing_when_the_instance_stands_alone)
+TEST(etcd_cluster_test, lead_every_key_in_no_term_without_claiming_it_when_never_clustered)
 {
 	http::fake_client http;
 	cluster::config config;
@@ -815,28 +779,29 @@ TEST(etcd_cluster_test, lead_nothing_when_the_instance_stands_alone)
 
 	cluster.start();
 
-	EXPECT_FALSE(cluster.leader("4821").has_value());
+	cluster::leadership led = cluster.leader("4821");
+
+	EXPECT_TRUE(led.known);
+	EXPECT_TRUE(led.local);
+	EXPECT_EQ(led.term, 0);
 	EXPECT_TRUE(http.sent_to("/v3/kv/txn").empty());
 }
 
-// The flag the image carries: an instance that stands alone claims nothing, so a deployment that
-// orders every write is one where it has no leader rather than no leadership to wait for.
-TEST(etcd_cluster_test, lead_nobody_when_the_instance_stands_alone_and_a_write_must_be_led)
+// A node of a cluster that etcd names alone has lost the others rather than been meant to stand by
+// itself: a write it ordered alone is one no other copy of the key ever hears about.
+TEST(etcd_cluster_test, lead_nobody_when_etcd_names_this_node_and_no_other)
 {
 	http::fake_client http;
-	cluster::config config;
 
-	config.node = one;
-	config.serve_unled = false;
+	answer_etcd(&http, { cluster::member { one, "a" } });
 
-	cluster::etcd_cluster cluster(config, http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 
 	cluster.start();
 
-	std::optional<cluster::leadership> led = cluster.leader("4821");
+	EXPECT_FALSE(cluster.leader("4821").known);
 
-	ASSERT_TRUE(led.has_value());
-	EXPECT_FALSE(led->known);
+	cluster.stop();
 }
 
 // What the load balancer is told, and the whole reason it is told anything: a node refusing every
@@ -845,17 +810,19 @@ TEST(etcd_cluster_test, lead_nobody_when_the_instance_stands_alone_and_a_write_m
 TEST(etcd_cluster_test, report_itself_unled_once_it_has_stood_alone_for_a_lease)
 {
 	http::fake_client http;
-	cluster::config config;
+	cluster::config config = configuration(one, "a");
 
-	config.node = one;
-	config.serve_unled = false;
 	config.lease_seconds = 0;
+
+	answer_etcd(&http, { cluster::member { one, "a" } });
 
 	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
 	EXPECT_TRUE(cluster.is_unled());
+
+	cluster.stop();
 }
 
 // The lease is what makes it a state rather than a moment: a membership that fell to one on the
@@ -864,16 +831,16 @@ TEST(etcd_cluster_test, report_itself_unled_once_it_has_stood_alone_for_a_lease)
 TEST(etcd_cluster_test, report_itself_led_until_it_has_stood_alone_for_a_lease)
 {
 	http::fake_client http;
-	cluster::config config;
 
-	config.node = one;
-	config.serve_unled = false;
+	answer_etcd(&http, { cluster::member { one, "a" } });
 
-	cluster::etcd_cluster cluster(config, http);
+	cluster::etcd_cluster cluster(configuration(one, "a"), http);
 
 	cluster.start();
 
 	EXPECT_FALSE(cluster.is_unled());
+
+	cluster.stop();
 }
 
 TEST(etcd_cluster_test, report_itself_led_while_it_stands_in_a_membership)
@@ -881,7 +848,6 @@ TEST(etcd_cluster_test, report_itself_led_while_it_stands_in_a_membership)
 	http::fake_client http;
 	cluster::config config = configuration(one, "a");
 
-	config.serve_unled = false;
 	config.lease_seconds = 0;
 
 	answer_etcd(&http, { cluster::member { one, "a" }, cluster::member { two, "b" } });
@@ -897,7 +863,7 @@ TEST(etcd_cluster_test, report_itself_led_while_it_stands_in_a_membership)
 
 // The lone instance every test and `cmk run` serve: it takes the writes it is given, so there is
 // nothing for it to be taken out of the load balancer for.
-TEST(etcd_cluster_test, report_itself_led_when_a_write_needs_no_leader)
+TEST(etcd_cluster_test, report_itself_led_when_never_clustered)
 {
 	http::fake_client http;
 	cluster::config config;
@@ -924,7 +890,6 @@ TEST(etcd_cluster_test, keep_the_membership_it_last_read_when_etcd_stops_answeri
 
 	cluster::config config = configuration(one, "a");
 
-	config.serve_unled = false;
 	config.lease_seconds = 1;
 
 	cluster::etcd_cluster cluster(config, http);
@@ -956,15 +921,13 @@ TEST(etcd_cluster_test, lead_nothing_while_etcd_does_not_answer_for_the_membersh
 
 	cluster::config config = configuration(one, "a");
 
-	config.serve_unled = false;
 	config.lease_seconds = 1;
 
 	cluster::etcd_cluster cluster(config, http);
 
 	cluster.start();
 
-	ASSERT_TRUE(cluster.leader(key).has_value());
-	ASSERT_TRUE(cluster.leader(key)->known);
+	ASSERT_TRUE(cluster.leader(key).known);
 
 	size_t before = passes(http);
 
@@ -974,41 +937,9 @@ TEST(etcd_cluster_test, lead_nothing_while_etcd_does_not_answer_for_the_membersh
 
 	ASSERT_TRUE(wait_for_passes(http, before + 2));
 
-	std::optional<cluster::leadership> led = cluster.leader(key);
+	cluster::leadership led = cluster.leader(key);
 
-	ASSERT_TRUE(led.has_value());
-	EXPECT_FALSE(led->known);
-
-	cluster.stop();
-}
-
-TEST(etcd_cluster_test, take_a_write_no_leader_ordered_while_etcd_does_not_answer_when_serving_unled)
-{
-	http::fake_client http;
-	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
-	std::string key = key_led_by(members, one);
-
-	answer_leaders(&http, { { cluster::partition_of(key), one } });
-	answer_etcd(&http, members);
-
-	cluster::config config = configuration(one, "a");
-
-	config.lease_seconds = 1;
-
-	cluster::etcd_cluster cluster(config, http);
-
-	cluster.start();
-
-	ASSERT_TRUE(cluster.leader(key).has_value());
-
-	size_t before = passes(http);
-
-	http.forget("/v3/kv/range");
-	answer_leaders(&http, { { cluster::partition_of(key), one } });
-
-	ASSERT_TRUE(wait_for_passes(http, before + 2));
-
-	EXPECT_FALSE(cluster.leader(key).has_value());
+	EXPECT_FALSE(led.known);
 
 	cluster.stop();
 }
@@ -1022,7 +953,6 @@ TEST(etcd_cluster_test, report_itself_unled_once_etcd_has_not_answered_for_a_lea
 
 	cluster::config config = configuration(one, "a");
 
-	config.serve_unled = false;
 	config.lease_seconds = 0;
 
 	cluster::etcd_cluster cluster(config, http);
@@ -1047,7 +977,6 @@ TEST(etcd_cluster_test, stand_alone_when_etcd_names_this_node_and_no_other)
 	http::fake_client http;
 	cluster::config config = configuration(one, "a");
 
-	config.serve_unled = false;
 
 	answer_etcd(&http, { cluster::member { one, "a" } });
 
@@ -1067,7 +996,6 @@ TEST(etcd_cluster_test, stand_alone_when_etcd_has_never_answered)
 	http::fake_client http;
 	cluster::config config = configuration(one, "a");
 
-	config.serve_unled = false;
 
 	cluster::etcd_cluster cluster(config, http);
 
@@ -1079,21 +1007,6 @@ TEST(etcd_cluster_test, stand_alone_when_etcd_has_never_answered)
 	cluster.stop();
 }
 
-TEST(etcd_cluster_test, stand_alone_and_serve_when_serving_unled)
-{
-	http::fake_client http;
-
-	answer_etcd(&http, { cluster::member { one, "a" } });
-
-	cluster::etcd_cluster cluster(configuration(one, "a"), http);
-
-	cluster.start();
-
-	EXPECT_FALSE(cluster.is_alone());
-
-	cluster.stop();
-}
-
 // An instance that was never clustered owns the whole keyspace, so there is no share to be short of.
 TEST(etcd_cluster_test, never_stand_alone_when_never_clustered)
 {
@@ -1101,7 +1014,6 @@ TEST(etcd_cluster_test, never_stand_alone_when_never_clustered)
 	cluster::config config;
 
 	config.node = one;
-	config.serve_unled = false;
 
 	cluster::etcd_cluster cluster(config, http);
 
@@ -1170,11 +1082,10 @@ TEST(etcd_cluster_test, lead_nothing_that_etcd_does_not_answer_for)
 
 	cluster.start();
 
-	std::optional<cluster::leadership> led =
+	cluster::leadership led =
 		cluster.leader(key_led_by({ cluster::member { one, "a" }, cluster::member { two, "b" } }, one));
 
-	ASSERT_TRUE(led.has_value());
-	EXPECT_FALSE(led->known);
+	EXPECT_FALSE(led.known);
 
 	cluster.stop();
 }
@@ -1198,12 +1109,11 @@ TEST(etcd_cluster_test, claim_a_partition_nothing_claims_when_a_write_asks_who_l
 
 	ASSERT_TRUE(claimed(http).empty());
 
-	std::optional<cluster::leadership> led = cluster.leader(key);
+	cluster::leadership led = cluster.leader(key);
 
-	ASSERT_TRUE(led.has_value());
-	EXPECT_TRUE(led->known);
-	EXPECT_TRUE(led->local);
-	EXPECT_EQ(led->term, 77);
+	EXPECT_TRUE(led.known);
+	EXPECT_TRUE(led.local);
+	EXPECT_EQ(led.term, 77);
 	EXPECT_EQ(
 		claimed(http), (std::set<std::string> { "/asyncdb/leader/" + std::to_string(cluster::partition_of(key)) }));
 	EXPECT_TRUE(cluster.accept(key, 77));
@@ -1227,12 +1137,11 @@ TEST(etcd_cluster_test, name_the_node_the_membership_names_for_a_partition_nothi
 
 	cluster.start();
 
-	std::optional<cluster::leadership> led = cluster.leader(key_led_by(members, two));
+	cluster::leadership led = cluster.leader(key_led_by(members, two));
 
-	ASSERT_TRUE(led.has_value());
-	EXPECT_TRUE(led->known);
-	EXPECT_FALSE(led->local);
-	EXPECT_EQ(led->node, two);
+	EXPECT_TRUE(led.known);
+	EXPECT_FALSE(led.local);
+	EXPECT_EQ(led.node, two);
 	EXPECT_TRUE(claimed(http).empty());
 
 	cluster.stop();
@@ -1262,12 +1171,11 @@ TEST(etcd_cluster_test, name_the_leader_etcd_holds_for_a_partition_the_leaders_r
 
 	cluster.start();
 
-	std::optional<cluster::leadership> led = cluster.leader(key);
+	cluster::leadership led = cluster.leader(key);
 
-	ASSERT_TRUE(led.has_value());
-	EXPECT_TRUE(led->known);
-	EXPECT_FALSE(led->local);
-	EXPECT_EQ(led->node, two);
+	EXPECT_TRUE(led.known);
+	EXPECT_FALSE(led.local);
+	EXPECT_EQ(led.node, two);
 
 	cluster.stop();
 }

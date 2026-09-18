@@ -70,10 +70,19 @@ namespace router
 			const std::string &partition,
 			const std::string &sort);
 
-		// Where the copies of the key are, for a request that has not already worked it out. A
-		// forwarded request is served where it lands and asks nothing of the membership, so the
-		// leader of a forwarded write is the one caller that has to ask.
-		cluster::placement replicas_of(const request &request, const cluster::placement &known, const std::string &key);
+		// A write the leader ordered, which the copy it was carried to writes and sends nowhere.
+		response apply_write(
+			const request &request,
+			const std::string &name,
+			const std::string &partition,
+			const std::string &sort);
+
+		// A client's write: sent to the leader of its partition, or stamped and carried to every
+		// copy by this node when it is the leader.
+		boost::asio::awaitable<response> order_write(
+			const request &request,
+			const std::string &name,
+			record::record record);
 
 		response write_record(
 			const request &request,
@@ -100,6 +109,9 @@ namespace router
 		// Whether this node holds the partition and cannot vouch for it. One it does not hold is
 		// answered out of what its store has, because a forwarded request is served where it lands.
 		bool is_short_of(size_t partition) const;
+
+		// The answer for a table this node does not have.
+		response missing_table(const std::string &name) const;
 
 		// Whether this node carries a schema operation out, and what it does with it once it has.
 		// A table is not a record of any partition, so what orders one is the leader of
