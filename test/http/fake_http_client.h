@@ -2,6 +2,7 @@
 
 #include <condition_variable>
 #include <deque>
+#include <expected>
 #include <map>
 #include <mutex>
 #include <string>
@@ -55,13 +56,17 @@ namespace http
 
 		void push(const std::string &url, const std::string &piece);
 
-		response send(const request &request, long timeout_seconds) const override;
+		std::expected<response, std::string> send(const request &request, long timeout_seconds) const override;
 
-		std::vector<response> send_all(const std::vector<request> &request_list, long timeout_seconds) const override;
+		std::vector<std::expected<response, std::string>> send_all(
+			const std::vector<request> &request_list,
+			long timeout_seconds) const override;
 
-		boost::asio::awaitable<response> async_send(const request &request, long timeout_seconds) const override;
+		boost::asio::awaitable<std::expected<response, std::string>> async_send(
+			const request &request,
+			long timeout_seconds) const override;
 
-		response stream(
+		std::expected<response, std::string> stream(
 			const request &request,
 			const std::function<bool(std::string_view)> &receive,
 			const std::stop_token &stop) const override;

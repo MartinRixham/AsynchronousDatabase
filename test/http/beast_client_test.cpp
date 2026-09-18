@@ -1,4 +1,5 @@
 #include <chrono>
+#include <expected>
 #include <filesystem>
 #include <memory>
 #include <sstream>
@@ -124,14 +125,15 @@ protected:
 
 	// What an awaited request answers, run on the io_context named, which is whose connections it
 	// takes and hands back.
-	http::response awaited(boost::asio::io_context &context, const http::request &request)
+	std::expected<http::response, std::string> awaited(boost::asio::io_context &context, const http::request &request)
 	{
-		http::response answered;
+		std::expected<http::response, std::string> answered;
 
 		boost::asio::co_spawn(
 			context,
 			client.async_send(request, 30),
-			[&answered](const std::exception_ptr &, http::response response) { answered = std::move(response); });
+			[&answered](const std::exception_ptr &, std::expected<http::response, std::string> response)
+			{ answered = std::move(response); });
 
 		context.restart();
 		context.run();
@@ -142,21 +144,21 @@ protected:
 
 TEST_F(beast_client_test, answer_a_request)
 {
-	http::response response = client.send(get("/health"), 30);
+	std::expected<http::response, std::string> response = client.send(get("/health"), 30);
 
-	EXPECT_TRUE(response.is_valid);
-	EXPECT_EQ(response.status, 200);
-	EXPECT_EQ(response.content_type, "application/json");
-	EXPECT_NE(response.body.find("\"status\":\"ok\""), std::string::npos);
+	EXPECT_TRUE(response);
+	EXPECT_EQ((*response).status, 200);
+	EXPECT_EQ((*response).content_type, "application/json");
+	EXPECT_NE((*response).body.find("\"status\":\"ok\""), std::string::npos);
 }
 
 // The point of holding the connections for the life of a thread: a node talks to the same
 // neighbours over and over, and the second request is not another three way handshake.
 TEST_F(beast_client_test, keep_the_connection_between_requests)
 {
-	EXPECT_FALSE(client.send(get("/health"), 30).reused);
-	EXPECT_TRUE(client.send(get("/health"), 30).reused);
-	EXPECT_TRUE(client.send(get("/health"), 30).reused);
+	EXPECT_FALSE((*client.send(get("/health"), 30)).reused);
+	EXPECT_TRUE((*client.send(get("/health"), 30)).reused);
+	EXPECT_TRUE((*client.send(get("/health"), 30)).reused);
 }
 
 // A connection out of the pool may have been closed at the other end while nothing was going on
@@ -174,15 +176,15 @@ TEST_F(beast_client_test, make_a_request_again_on_a_connection_the_node_closed)
 
 	asked.url = "http://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/health";
 
-	EXPECT_EQ(client.send(asked, 30).body, "ok");
+	EXPECT_EQ((*client.send(asked, 30)).body, "ok");
 
-	http::response again = client.send(asked, 30);
+	std::expected<http::response, std::string> again = client.send(asked, 30);
 
 	answering.join();
 
-	EXPECT_TRUE(again.is_valid);
-	EXPECT_EQ(again.body, "ok");
-	EXPECT_FALSE(again.reused);
+	EXPECT_TRUE(again);
+	EXPECT_EQ((*again).body, "ok");
+	EXPECT_FALSE((*again).reused);
 }
 
 // A connection that is used again carries the request it was given and nothing of the one before
@@ -193,12 +195,12 @@ TEST_F(beast_client_test, forget_the_request_before)
 
 	head.method = "HEAD";
 
-	EXPECT_TRUE(client.send(head, 30).body.empty());
+	EXPECT_TRUE((*client.send(head, 30)).body.empty());
 
-	http::response response = client.send(get("/health"), 30);
+	std::expected<http::response, std::string> response = client.send(get("/health"), 30);
 
-	EXPECT_EQ(response.status, 200);
-	EXPECT_FALSE(response.body.empty());
+	EXPECT_EQ((*response).status, 200);
+	EXPECT_FALSE((*response).body.empty());
 }
 
 // What makes a HEAD worth sending as a HEAD: the node answers how large the value is and sends
@@ -209,11 +211,11 @@ TEST_F(beast_client_test, answer_the_length_of_a_body_a_head_left_out)
 
 	head.method = "HEAD";
 
-	http::response response = client.send(head, 30);
+	std::expected<http::response, std::string> response = client.send(head, 30);
 
-	EXPECT_EQ(response.status, 200);
-	EXPECT_TRUE(response.body.empty());
-	EXPECT_GT(response.content_length, 0);
+	EXPECT_EQ((*response).status, 200);
+	EXPECT_TRUE((*response).body.empty());
+	EXPECT_GT((*response).content_length, 0);
 }
 
 TEST_F(beast_client_test, answer_that_there_was_no_answer)
@@ -223,17 +225,17 @@ TEST_F(beast_client_test, answer_that_there_was_no_answer)
 	// A port nothing listens on, which is a node that is gone rather than a node that refused.
 	request.url = "http://localhost:1/health";
 
-	http::response response = client.send(request, 30);
+	std::expected<http::response, std::string> response = client.send(request, 30);
 
-	EXPECT_FALSE(response.is_valid);
-	EXPECT_FALSE(response.message.empty());
+	EXPECT_FALSE(response);
+	EXPECT_FALSE(response.error().empty());
 }
 
 // The other side of keeping connections: a connection nobody is using still belongs to a server
 // that is trying to stop, and shutting down waits for connections rather than for their timeouts.
 TEST_F(beast_client_test, a_connection_that_is_kept_does_not_hold_the_server_open)
 {
-	EXPECT_TRUE(client.send(get("/health"), 30).is_valid);
+	EXPECT_TRUE(client.send(get("/health"), 30));
 
 	std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 
@@ -249,19 +251,19 @@ TEST_F(beast_client_test, a_connection_that_is_kept_does_not_hold_the_server_ope
 // belongs to the request it was asked for whatever order the transfers finished in.
 TEST_F(beast_client_test, answer_every_request_of_a_fan_out)
 {
-	std::vector<http::response> responses =
+	std::vector<std::expected<http::response, std::string>> responses =
 		client.send_all({ get("/health"), get("/table/nothing"), get("/table") }, 30);
 
 	ASSERT_EQ(responses.size(), 3u);
 
-	EXPECT_EQ(responses[0].status, 200);
-	EXPECT_NE(responses[0].body.find("\"status\":\"ok\""), std::string::npos);
+	EXPECT_EQ((*responses[0]).status, 200);
+	EXPECT_NE((*responses[0]).body.find("\"status\":\"ok\""), std::string::npos);
 
-	EXPECT_EQ(responses[1].status, 404);
-	EXPECT_NE(responses[1].body.find("table_not_found"), std::string::npos);
+	EXPECT_EQ((*responses[1]).status, 404);
+	EXPECT_NE((*responses[1]).body.find("table_not_found"), std::string::npos);
 
-	EXPECT_EQ(responses[2].status, 200);
-	EXPECT_NE(responses[2].body.find("\"tables\""), std::string::npos);
+	EXPECT_EQ((*responses[2]).status, 200);
+	EXPECT_NE((*responses[2]).body.find("\"tables\""), std::string::npos);
 }
 
 // The body of a request is not copied into the message it is sent as, so a fan out has to hold
@@ -273,7 +275,7 @@ TEST_F(beast_client_test, carry_the_body_of_every_request_of_a_fan_out)
 	table.method = "PUT";
 	table.body = "{}";
 
-	ASSERT_EQ(client.send(table, 30).status, 201);
+	ASSERT_EQ((*client.send(table, 30)).status, 201);
 
 	http::request first = get("/table/account/key/1");
 	http::request second = get("/table/account/key/2");
@@ -283,14 +285,14 @@ TEST_F(beast_client_test, carry_the_body_of_every_request_of_a_fan_out)
 	second.method = "PUT";
 	second.body = "the second value";
 
-	std::vector<http::response> written = client.send_all({ first, second }, 30);
+	std::vector<std::expected<http::response, std::string>> written = client.send_all({ first, second }, 30);
 
 	ASSERT_EQ(written.size(), 2u);
-	EXPECT_EQ(written[0].status, 204);
-	EXPECT_EQ(written[1].status, 204);
+	EXPECT_EQ((*written[0]).status, 204);
+	EXPECT_EQ((*written[1]).status, 204);
 
-	EXPECT_EQ(client.send(get("/table/account/key/1"), 30).body, "the first value");
-	EXPECT_EQ(client.send(get("/table/account/key/2"), 30).body, "the second value");
+	EXPECT_EQ((*client.send(get("/table/account/key/1"), 30)).body, "the first value");
+	EXPECT_EQ((*client.send(get("/table/account/key/2"), 30)).body, "the second value");
 }
 
 // A node of a fan out that is not there is answered against on its own, and the nodes that did
@@ -302,15 +304,15 @@ TEST_F(beast_client_test, answer_that_a_node_of_a_fan_out_did_not_answer)
 	// A port nothing listens on, which is a node that is gone rather than a node that refused.
 	gone.url = "http://localhost:1/health";
 
-	std::vector<http::response> responses = client.send_all({ gone, get("/health") }, 30);
+	std::vector<std::expected<http::response, std::string>> responses = client.send_all({ gone, get("/health") }, 30);
 
 	ASSERT_EQ(responses.size(), 2u);
 
-	EXPECT_FALSE(responses[0].is_valid);
-	EXPECT_FALSE(responses[0].message.empty());
+	EXPECT_FALSE(responses[0]);
+	EXPECT_FALSE(responses[0].error().empty());
 
-	EXPECT_TRUE(responses[1].is_valid);
-	EXPECT_EQ(responses[1].status, 200);
+	ASSERT_TRUE(responses[1]);
+	EXPECT_EQ((*responses[1]).status, 200);
 }
 
 // A fan out is a connection for each request in it, and every one of them is kept for the reason
@@ -319,30 +321,30 @@ TEST_F(beast_client_test, keep_the_connections_of_a_fan_out_between_them)
 {
 	std::vector<http::request> requests { get("/health"), get("/table") };
 
-	std::vector<http::response> first = client.send_all(requests, 30);
+	std::vector<std::expected<http::response, std::string>> first = client.send_all(requests, 30);
 
 	ASSERT_EQ(first.size(), 2u);
-	EXPECT_FALSE(first[0].reused);
-	EXPECT_FALSE(first[1].reused);
+	EXPECT_FALSE((*first[0]).reused);
+	EXPECT_FALSE((*first[1]).reused);
 
-	std::vector<http::response> second = client.send_all(requests, 30);
+	std::vector<std::expected<http::response, std::string>> second = client.send_all(requests, 30);
 
 	ASSERT_EQ(second.size(), 2u);
-	EXPECT_TRUE(second[0].reused);
-	EXPECT_TRUE(second[1].reused);
+	EXPECT_TRUE((*second[0]).reused);
+	EXPECT_TRUE((*second[1]).reused);
 }
 
 // One request has nothing to overlap with, and takes the connection this thread already holds
 // rather than opening one of its own.
 TEST_F(beast_client_test, answer_a_fan_out_of_one_on_a_connection_of_the_thread)
 {
-	EXPECT_EQ(client.send(get("/health"), 30).status, 200);
+	EXPECT_EQ((*client.send(get("/health"), 30)).status, 200);
 
-	std::vector<http::response> responses = client.send_all({ get("/health") }, 30);
+	std::vector<std::expected<http::response, std::string>> responses = client.send_all({ get("/health") }, 30);
 
 	ASSERT_EQ(responses.size(), 1u);
-	EXPECT_EQ(responses[0].status, 200);
-	EXPECT_TRUE(responses[0].reused);
+	EXPECT_EQ((*responses[0]).status, 200);
+	EXPECT_TRUE((*responses[0]).reused);
 }
 
 TEST_F(beast_client_test, answer_a_fan_out_of_nothing)
@@ -362,21 +364,20 @@ TEST_F(beast_client_test, keeps_a_connection_to_more_nodes_than_a_cluster_has)
 	{
 		http::request asked = get("/health");
 
-		asked.url =
-			"http://127.0.0." + std::to_string(i) + ":" + std::to_string(database_server->port()) + "/health";
+		asked.url = "http://127.0.0." + std::to_string(i) + ":" + std::to_string(database_server->port()) + "/health";
 
 		nodes.push_back(asked);
 	}
 
 	for (const auto &node : nodes)
 	{
-		EXPECT_FALSE(client.send(node, 30).reused) << node.url;
+		EXPECT_FALSE((*client.send(node, 30)).reused) << node.url;
 	}
 
 	// Every one of them again, and not one was dropped to make room for the others.
 	for (const auto &target : nodes)
 	{
-		EXPECT_TRUE(client.send(target, 30).reused) << target.url;
+		EXPECT_TRUE((*client.send(target, 30)).reused) << target.url;
 	}
 }
 
@@ -397,7 +398,7 @@ TEST_F(beast_client_test, hand_on_a_stream_as_it_arrives_until_it_is_stopped)
 	watch.url = "http://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/v3/watch";
 	watch.body = "{}";
 
-	http::response response = client.stream(
+	std::expected<http::response, std::string> response = client.stream(
 		watch,
 		[&received, &stop](std::string_view piece)
 		{
@@ -411,7 +412,7 @@ TEST_F(beast_client_test, hand_on_a_stream_as_it_arrives_until_it_is_stopped)
 	streaming.join();
 
 	EXPECT_EQ(received, "{\"result\":{}}\n");
-	EXPECT_FALSE(response.is_valid);
+	EXPECT_FALSE(response);
 }
 
 TEST_F(beast_client_test, end_a_stream_the_receiver_is_done_with)
@@ -427,23 +428,23 @@ TEST_F(beast_client_test, end_a_stream_the_receiver_is_done_with)
 
 	watch.url = "http://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/v3/watch";
 
-	http::response response =
+	std::expected<http::response, std::string> response =
 		client.stream(watch, [](std::string_view) { return false; }, stop.get_token());
 
 	streaming.join();
 
-	EXPECT_FALSE(response.is_valid);
+	EXPECT_FALSE(response);
 	EXPECT_FALSE(stop.stop_requested());
 }
 
 TEST_F(beast_client_test, answer_an_awaited_request)
 {
 	boost::asio::io_context context;
-	http::response answered = awaited(context, get("/health"));
+	std::expected<http::response, std::string> answered = awaited(context, get("/health"));
 
-	EXPECT_TRUE(answered.is_valid);
-	EXPECT_EQ(answered.status, 200);
-	EXPECT_NE(answered.body.find("\"status\":\"ok\""), std::string::npos);
+	ASSERT_TRUE(answered);
+	EXPECT_EQ((*answered).status, 200);
+	EXPECT_NE((*answered).body.find("\"status\":\"ok\""), std::string::npos);
 }
 
 TEST_F(beast_client_test, answer_that_a_node_asked_by_an_awaited_request_did_not_answer)
@@ -453,10 +454,10 @@ TEST_F(beast_client_test, answer_that_a_node_asked_by_an_awaited_request_did_not
 
 	gone.url = "http://localhost:1/health";
 
-	http::response answered = awaited(context, gone);
+	std::expected<http::response, std::string> answered = awaited(context, gone);
 
-	EXPECT_FALSE(answered.is_valid);
-	EXPECT_FALSE(answered.message.empty());
+	EXPECT_FALSE(answered);
+	EXPECT_FALSE(answered.error().empty());
 }
 
 TEST_F(beast_client_test, answer_that_an_awaited_request_is_not_to_a_url)
@@ -466,10 +467,10 @@ TEST_F(beast_client_test, answer_that_an_awaited_request_is_not_to_a_url)
 
 	nowhere.url = "ftp://localhost/health";
 
-	http::response answered = awaited(context, nowhere);
+	std::expected<http::response, std::string> answered = awaited(context, nowhere);
 
-	EXPECT_FALSE(answered.is_valid);
-	EXPECT_FALSE(answered.message.empty());
+	EXPECT_FALSE(answered);
+	EXPECT_FALSE(answered.error().empty());
 }
 
 // The connection of an awaited request is the io_context's and not the thread's, so whichever
@@ -478,10 +479,10 @@ TEST_F(beast_client_test, keep_the_connection_of_an_awaited_request_on_its_io_co
 {
 	boost::asio::io_context context;
 
-	EXPECT_FALSE(awaited(context, get("/health")).reused);
-	EXPECT_TRUE(awaited(context, get("/table")).reused);
+	EXPECT_FALSE((*awaited(context, get("/health"))).reused);
+	EXPECT_TRUE((*awaited(context, get("/table"))).reused);
 
 	boost::asio::io_context another;
 
-	EXPECT_FALSE(awaited(another, get("/health")).reused);
+	EXPECT_FALSE((*awaited(another, get("/health"))).reused);
 }

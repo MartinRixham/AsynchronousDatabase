@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <expected>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -184,7 +185,7 @@ namespace
 		std::string_view name(field.name_string().data(), field.name_string().size());
 
 		return name.size() >= std::strlen(http::header_prefix) &&
-			strncasecmp(name.data(), http::header_prefix, std::strlen(http::header_prefix)) == 0;
+			   strncasecmp(name.data(), http::header_prefix, std::strlen(http::header_prefix)) == 0;
 	}
 
 	std::pair<std::string, std::string> named(const boost::beast::http::fields::value_type &field)
@@ -247,7 +248,7 @@ namespace
 
 	// One request and the answer to it, on the io_context the connection belongs to. A timeout of
 	// none bounds nothing but connecting.
-	boost::asio::awaitable<http::response> exchange(
+	boost::asio::awaitable<std::expected<http::response, std::string>> exchange(
 		http::connection &link,
 		const http::request &sent,
 		long timeout_seconds,
@@ -321,7 +322,6 @@ namespace
 				take_headers(parser.get(), answer);
 
 				answer.body = std::move(parser.get().body());
-				answer.is_valid = true;
 
 				// A timer left armed on a connection nobody is using is the next request on it
 				// timing out before it was sent.
@@ -342,11 +342,9 @@ namespace
 			// that failed. Only once, and only while nothing of the answer has been read.
 			if (!answer.reused || parser.got_some())
 			{
-				answer.message = failed.message();
+				DEBUG("Request to " + sent.url + " failed: " + failed.message());
 
-				DEBUG("Request to " + sent.url + " failed: " + answer.message);
-
-				co_return answer;
+				co_return std::unexpected(failed.message());
 			}
 
 			answer.reused = false;
@@ -356,7 +354,7 @@ namespace
 	// An answer that does not end on its own. Each piece of the body is handed to the receiver as
 	// it arrives rather than kept, so there is no timeout but connecting. What stops a feed is its
 	// connection closed under it, and the token only says that was asked for rather than failed.
-	boost::asio::awaitable<http::response> feed(
+	boost::asio::awaitable<std::expected<http::response, std::string>> feed(
 		http::connection &link,
 		const http::request &sent,
 		const std::function<bool(std::string_view)> &receive,
@@ -412,9 +410,7 @@ namespace
 
 				if (taken > 0 && !receive(std::string_view(piece.data(), taken)))
 				{
-					answer.message = "The receiver ended the stream.";
-
-					co_return answer;
+					co_return std::unexpected("The receiver ended the stream.");
 				}
 
 				// The body buffer being full is a read that got somewhere rather than one that
@@ -424,24 +420,24 @@ namespace
 					throw boost::system::system_error(failed);
 				}
 			}
-
-			answer.is_valid = true;
 		}
 		catch (const boost::system::system_error &error)
 		{
-			answer.message = stop.stop_requested() ? "The stream was stopped." : error.code().message();
+			std::string ended = stop.stop_requested() ? "The stream was stopped." : error.code().message();
 
-			DEBUG("Stream of " + sent.url + " ended: " + answer.message);
+			DEBUG("Stream of " + sent.url + " ended: " + ended);
+
+			co_return std::unexpected(ended);
 		}
 
 		co_return answer;
 	}
 
 	// What a transfer answered, put where the caller keeps it. A transfer answers every failure of
-	// the network's as a response, so what it throws is the caller's and is thrown on out of run().
-	auto answer_into(http::response &kept)
+	// the network's as its error, so what it throws is the caller's and is thrown on out of run().
+	auto answer_into(std::expected<http::response, std::string> &kept)
 	{
-		return [&kept](const std::exception_ptr &thrown, http::response answered)
+		return [&kept](const std::exception_ptr &thrown, std::expected<http::response, std::string> answered)
 		{
 			if (thrown)
 			{
@@ -455,13 +451,13 @@ namespace
 	// Every request at once, on this thread's io_context, so a node writing a record to its copies
 	// waits for the slowest rather than for one after another — which is what keeps the thread it
 	// is serving on free.
-	std::vector<http::response> fan_out(
+	std::vector<std::expected<http::response, std::string>> fan_out(
 		std::span<const http::request> requests,
 		long timeout_seconds,
 		long connect_timeout_seconds,
 		long unacknowledged_timeout_seconds)
 	{
-		std::vector<http::response> responses(requests.size());
+		std::vector<std::expected<http::response, std::string>> responses(requests.size());
 		http::pool &held = thread_pool();
 		std::vector<std::unique_ptr<http::connection>> links;
 
@@ -471,7 +467,7 @@ namespace
 
 			if (!where)
 			{
-				responses[i].message = not_a_url(requests[i].url);
+				responses[i] = std::unexpected(not_a_url(requests[i].url));
 
 				continue;
 			}
@@ -506,31 +502,30 @@ http::beast_client::beast_client(long connect_timeout, long unacknowledged_timeo
 {
 }
 
-http::response http::beast_client::send(const request &request, long timeout_seconds) const
+std::expected<http::response, std::string> http::beast_client::send(const request &request, long timeout_seconds) const
 {
 	return fan_out(std::span(&request, 1), timeout_seconds, connect_timeout_seconds, unacknowledged_timeout_seconds)
 		.front();
 }
 
-std::vector<http::response> http::beast_client::send_all(const std::vector<request> &requests, long timeout_seconds)
-	const
+std::vector<std::expected<http::response, std::string>> http::beast_client::send_all(
+	const std::vector<request> &requests,
+	long timeout_seconds) const
 {
 	return fan_out(requests, timeout_seconds, connect_timeout_seconds, unacknowledged_timeout_seconds);
 }
 
 // On the connections the io_context of the coroutine awaiting it holds rather than the thread's,
 // because that coroutine may resume on any thread of it.
-boost::asio::awaitable<http::response> http::beast_client::async_send(const request &request, long timeout_seconds)
-	const
+boost::asio::awaitable<std::expected<http::response, std::string>> http::beast_client::async_send(
+	const request &request,
+	long timeout_seconds) const
 {
-	response answer;
 	std::optional<location> where = locate(request.url);
 
 	if (!where)
 	{
-		answer.message = not_a_url(request.url);
-
-		co_return answer;
+		co_return std::unexpected(not_a_url(request.url));
 	}
 
 	boost::asio::any_io_executor executor = co_await boost::asio::this_coro::executor;
@@ -538,8 +533,8 @@ boost::asio::awaitable<http::response> http::beast_client::async_send(const requ
 		boost::asio::use_service<shared_pool>(boost::asio::query(executor, boost::asio::execution::context));
 	std::unique_ptr<connection> link = held.take(executor, where->host, where->port);
 
-	answer = co_await exchange(
-		*link, request, timeout_seconds, connect_timeout_seconds, unacknowledged_timeout_seconds);
+	std::expected<response, std::string> answer =
+		co_await exchange(*link, request, timeout_seconds, connect_timeout_seconds, unacknowledged_timeout_seconds);
 
 	held.keep(std::move(link));
 
@@ -547,19 +542,17 @@ boost::asio::awaitable<http::response> http::beast_client::async_send(const requ
 }
 
 // On a connection of its own: an answer still coming down one is nothing to hand back to a pool.
-http::response http::beast_client::stream(
+std::expected<http::response, std::string> http::beast_client::stream(
 	const request &request,
 	const std::function<bool(std::string_view)> &receive,
 	const std::stop_token &stop) const
 {
-	response answer;
+	std::expected<response, std::string> answer;
 	std::optional<location> where = locate(request.url);
 
 	if (!where)
 	{
-		answer.message = not_a_url(request.url);
-
-		return answer;
+		return std::unexpected(not_a_url(request.url));
 	}
 
 	boost::asio::io_context io;

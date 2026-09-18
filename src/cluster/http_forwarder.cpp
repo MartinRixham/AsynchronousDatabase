@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <expected>
 #include <iterator>
 #include <utility>
 
@@ -63,8 +64,7 @@ namespace
 	{
 		router::transfer file;
 
-		boost::conversion::try_lexical_convert(
-			http::header_of(answer, router::records_header), file.records);
+		boost::conversion::try_lexical_convert(http::header_of(answer, router::records_header), file.records);
 
 		file.next = http::header_of(answer, router::next_header);
 
@@ -105,18 +105,18 @@ namespace
 		return router::json_response(status, value.as_object());
 	}
 
-	router::response to_response(const std::string &node, http::response answer, bool head)
+	router::response to_response(const std::string &node, std::expected<http::response, std::string> answer, bool head)
 	{
-		if (!answer.is_valid)
+		if (!answer)
 		{
 			return router::error_response(
 				error::code::storage_error,
-				"Node \"" + node + "\" did not answer: " + answer.message + ".");
+				"Node \"" + node + "\" did not answer: " + answer.error() + ".");
 		}
 
-		router::response response = body_of(node, answer, head);
+		router::response response = body_of(node, *answer, head);
 
-		response.file = transfer_of(answer);
+		response.file = transfer_of(*answer);
 
 		return response;
 	}
@@ -150,7 +150,7 @@ namespace
 	// refusal belongs to is the node it is reported against.
 	std::vector<router::response> responses_of(
 		const std::vector<std::string> &nodes,
-		std::vector<http::response> answers,
+		std::vector<std::expected<http::response, std::string>> answers,
 		const router::request &request)
 	{
 		std::vector<router::response> responses;
@@ -182,7 +182,7 @@ boost::asio::awaitable<router::response> cluster::http_forwarder::async_forward(
 	const router::request &request) const
 {
 	http::request forwarded = forwarded_to(node, request);
-	http::response answer = co_await http_client.async_send(forwarded, timeout_seconds);
+	std::expected<http::response, std::string> answer = co_await http_client.async_send(forwarded, timeout_seconds);
 
 	co_return to_response(node, std::move(answer), is_head(request));
 }
@@ -196,7 +196,7 @@ std::vector<router::response> cluster::http_forwarder::forward_each(const std::v
 		std::back_inserter(forwarded),
 		[](const enquiry &asked) { return forwarded_to(asked.node, asked.request); });
 
-	std::vector<http::response> answers = http_client.send_all(forwarded, timeout_seconds);
+	std::vector<std::expected<http::response, std::string>> answers = http_client.send_all(forwarded, timeout_seconds);
 	std::vector<router::response> responses;
 
 	for (size_t i = 0; i < enquiries.size() && i < answers.size(); i++)

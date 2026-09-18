@@ -525,15 +525,15 @@ TEST_F(server_test, a_file_of_records_says_what_it_carries_in_a_header)
 		std::vector<std::string>()
 	};
 
-	http::response answered = sending.send(asked, 5);
+	std::expected<http::response, std::string> answered = sending.send(asked, 5);
 
-	ASSERT_TRUE(answered.is_valid);
-	EXPECT_EQ(200, answered.status);
-	EXPECT_EQ("1", http::header_of(answered, router::records_header));
+	ASSERT_TRUE(answered);
+	EXPECT_EQ(200, (*answered).status);
+	EXPECT_EQ("1", http::header_of(*answered, router::records_header));
 
 	// Nothing to resume at, because the walk reached the end of the table.
-	EXPECT_TRUE(http::header_of(answered, router::next_header).empty());
-	EXPECT_FALSE(answered.body.empty());
+	EXPECT_TRUE(http::header_of(*answered, router::next_header).empty());
+	EXPECT_FALSE((*answered).body.empty());
 }
 
 // A file is sent from the disk the store wrote it to rather than read back into memory, so what
@@ -557,10 +557,10 @@ TEST_F(server_test, a_file_of_records_arrives_whole_and_leaves_nothing_behind)
 		std::vector<std::string>()
 	};
 
-	http::response answered = sending.send(asked, 5);
+	std::expected<http::response, std::string> answered = sending.send(asked, 5);
 
-	ASSERT_TRUE(answered.is_valid);
-	EXPECT_EQ(200, answered.status);
+	ASSERT_TRUE(answered);
+	EXPECT_EQ(200, (*answered).status);
 	EXPECT_TRUE(std::filesystem::is_empty(test_directory("asyncdb") + "/transfer"));
 
 	std::filesystem::remove_all(test_directory("asyncdb-other"));
@@ -569,7 +569,7 @@ TEST_F(server_test, a_file_of_records_arrives_whole_and_leaves_nothing_behind)
 
 	other.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
-	EXPECT_EQ(2u, other.import_records("account", answered.body));
+	EXPECT_EQ(2u, other.import_records("account", (*answered).body));
 }
 
 // A node that comes back to a store it was left with has a share on whichever node took it over

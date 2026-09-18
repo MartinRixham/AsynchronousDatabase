@@ -1,5 +1,6 @@
 #pragma once
 
+#include <expected>
 #include <functional>
 #include <stop_token>
 #include <string_view>
@@ -25,16 +26,18 @@ namespace http
 	public:
 		beast_client(long connect_timeout, long unacknowledged_timeout);
 
-		[[nodiscard]] response send(const request &request, long timeout_seconds) const override;
+		[[nodiscard]] std::expected<response, std::string> send(const request &request, long timeout_seconds)
+			const override;
 
-		[[nodiscard]] std::vector<response> send_all(
+		[[nodiscard]] std::vector<std::expected<response, std::string>> send_all(
 			const std::vector<request> &requests,
 			long timeout_seconds) const override;
 
-		[[nodiscard]] boost::asio::awaitable<response> async_send(const request &request, long timeout_seconds)
-			const override;
+		[[nodiscard]] boost::asio::awaitable<std::expected<response, std::string>> async_send(
+			const request &request,
+			long timeout_seconds) const override;
 
-		[[nodiscard]] response stream(
+		[[nodiscard]] std::expected<response, std::string> stream(
 			const request &request,
 			const std::function<bool(std::string_view)> &receive,
 			const std::stop_token &stop) const override;

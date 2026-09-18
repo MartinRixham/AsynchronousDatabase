@@ -79,10 +79,10 @@ namespace
 		}
 
 		return !answer.contains("result") ||
-			!answer.at("result").is_object() ||
-			!answer.at("result").as_object().contains("canceled") ||
-			!answer.at("result").as_object().at("canceled").is_bool() ||
-			!answer.at("result").as_object().at("canceled").as_bool();
+			   !answer.at("result").is_object() ||
+			   !answer.at("result").as_object().contains("canceled") ||
+			   !answer.at("result").as_object().at("canceled").is_bool() ||
+			   !answer.at("result").as_object().at("canceled").as_bool();
 	}
 
 	std::optional<etcd::claim> read_claim(const boost::json::object &response)
@@ -247,9 +247,9 @@ bool etcd::client::remove(const std::string &key, const std::string &value) cons
 	std::optional<boost::json::object> response = call("kv/txn", request, true);
 
 	return response &&
-		response->contains("succeeded") &&
-		response->at("succeeded").is_bool() &&
-		response->at("succeeded").as_bool();
+		   response->contains("succeeded") &&
+		   response->at("succeeded").is_bool() &&
+		   response->at("succeeded").as_bool();
 }
 
 std::optional<std::map<std::string, std::string>> etcd::client::range(const std::string &prefix) const
@@ -325,10 +325,8 @@ bool etcd::client::revoke(int64_t lease) const
 	return call("lease/revoke", request, false).has_value();
 }
 
-void etcd::client::watch(
-	const std::string &prefix,
-	const std::function<void()> &changed,
-	const std::stop_token &stop) const
+void etcd::client::watch(const std::string &prefix, const std::function<void()> &changed, const std::stop_token &stop)
+	const
 {
 	if (endpoints.empty())
 	{
@@ -347,7 +345,7 @@ void etcd::client::watch(
 	// network cut it.
 	std::string partial;
 
-	http::response response = http_client.stream(
+	std::expected<http::response, std::string> response = http_client.stream(
 		request,
 		[&partial, &changed](std::string_view piece)
 		{
@@ -380,9 +378,9 @@ void etcd::client::watch(
 		},
 		stop);
 
-	if (!response.is_valid)
+	if (!response)
 	{
-		DEBUG("etcd watch at " + request.url + " ended: " + response.message);
+		DEBUG("etcd watch at " + request.url + " ended: " + response.error());
 	}
 }
 
@@ -415,14 +413,16 @@ std::optional<boost::json::object> etcd::client::call(
 								document,
 								{ "Content-Type: application/json" } };
 
-		http::response response = http_client.send(request, timeout_seconds);
+		std::expected<http::response, std::string> expected_response = http_client.send(request, timeout_seconds);
 
-		if (!response.is_valid)
+		if (!expected_response)
 		{
-			DEBUG("etcd " + method + " to " + endpoints[member] + " failed: " + response.message);
+			DEBUG("etcd " + method + " to " + endpoints[member] + " failed: " + expected_response.error());
 
 			continue;
 		}
+
+		http::response response = *expected_response;
 
 		if (response.status >= 500)
 		{

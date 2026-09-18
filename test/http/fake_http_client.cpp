@@ -24,7 +24,7 @@ void http::fake_client::forget(const std::string &url)
 	std::erase_if(answers, [&url](const reply &answered) { return answered.url == url; });
 }
 
-http::response http::fake_client::send(const request &request, long) const
+std::expected<http::response, std::string> http::fake_client::send(const request &request, long) const
 {
 	std::lock_guard<std::mutex> lock(mutex);
 
@@ -35,7 +35,7 @@ http::response http::fake_client::send(const request &request, long) const
 		[&request](const reply &told)
 		{
 			return request.url.find(told.url) != std::string::npos &&
-				(told.body.empty() || request.body.find(told.body) != std::string::npos);
+				   (told.body.empty() || request.body.find(told.body) != std::string::npos);
 		});
 
 	if (canned != answers.end())
@@ -44,18 +44,15 @@ http::response http::fake_client::send(const request &request, long) const
 	}
 
 	// Nothing was said about this URL, so it is a node that is not there.
-	response response;
-
-	response.message = "Nothing answers at " + request.url;
-
-	return response;
+	return std::unexpected("Nothing answers at " + request.url);
 }
 
 // A fake with nothing to run at once runs them one after another.
-std::vector<http::response> http::fake_client::send_all(const std::vector<request> &request_list, long timeout_seconds)
-	const
+std::vector<std::expected<http::response, std::string>> http::fake_client::send_all(
+	const std::vector<request> &request_list,
+	long timeout_seconds) const
 {
-	std::vector<response> responses;
+	std::vector<std::expected<response, std::string>> responses;
 
 	std::ranges::transform(
 		request_list,
@@ -66,8 +63,9 @@ std::vector<http::response> http::fake_client::send_all(const std::vector<reques
 }
 
 // Nothing here waits on a network, so an awaited request is answered where it is asked.
-boost::asio::awaitable<http::response> http::fake_client::async_send(const request &request, long timeout_seconds)
-	const
+boost::asio::awaitable<std::expected<http::response, std::string>> http::fake_client::async_send(
+	const request &request,
+	long timeout_seconds) const
 {
 	co_return send(request, timeout_seconds);
 }
@@ -90,7 +88,7 @@ void http::fake_client::push(const std::string &url, const std::string &piece)
 	pushed.notify_all();
 }
 
-http::response http::fake_client::stream(
+std::expected<http::response, std::string> http::fake_client::stream(
 	const request &request,
 	const std::function<bool(std::string_view)> &receive,
 	const std::stop_token &stop) const
@@ -105,11 +103,7 @@ http::response http::fake_client::stream(
 
 	if (streaming == streams.end())
 	{
-		response response;
-
-		response.message = "Nothing answers at " + request.url;
-
-		return response;
+		return std::unexpected("Nothing answers at " + request.url);
 	}
 
 	std::deque<std::string> &waiting = streaming->second;
@@ -159,7 +153,6 @@ http::response http::answer(long status, const std::string &content_type, const 
 {
 	response response;
 
-	response.is_valid = true;
 	response.status = status;
 	response.content_type = content_type;
 	response.body = body;
@@ -172,7 +165,6 @@ http::response http::head_answer(long status, const std::string &content_type, l
 {
 	response response;
 
-	response.is_valid = true;
 	response.status = status;
 	response.content_type = content_type;
 	response.content_length = content_length;

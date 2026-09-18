@@ -1,6 +1,6 @@
 {
 	"name": "asyncdb",
-	"compiler": "g++ -O2 -g -Wall -Wextra -Wshadow -Werror -std=c++20",
+	"compiler": "g++ -O2 -g -Wall -Wextra -Wshadow -Werror -std=c++23",
 	"packaging": "executable",
 	"modules": [],
 	"test":
