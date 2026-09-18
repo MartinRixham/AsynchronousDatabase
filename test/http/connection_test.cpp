@@ -25,7 +25,7 @@ TEST(connection_test, give_up_connecting_at_the_time_named)
 
 	filling.connect(acceptor.local_endpoint());
 
-	http::connection link(context, "127.0.0.1", std::to_string(acceptor.local_endpoint().port()));
+	http::connection link(context.get_executor(), "127.0.0.1", std::to_string(acceptor.local_endpoint().port()));
 	std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 	std::exception_ptr thrown;
 
@@ -55,7 +55,7 @@ TEST(connection_test, give_up_connecting_at_the_time_named)
 TEST(connection_test, keep_room_for_a_whole_read)
 {
 	boost::asio::io_context context;
-	http::connection link(context, "127.0.0.1", "80");
+	http::connection link(context.get_executor(), "127.0.0.1", "80");
 
 	EXPECT_GE(link.buffer().capacity(), 64 * 1024);
 

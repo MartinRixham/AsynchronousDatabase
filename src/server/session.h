@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 
+#include <boost/asio/awaitable.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 
@@ -47,7 +48,11 @@ namespace server
 	private:
 		void read();
 
-		boost::beast::http::response<boost::beast::http::string_body> handle_request() const;
+		void write(boost::beast::http::response<boost::beast::http::string_body> &&answer);
+
+		// On the connection's strand, which is where it resumes whatever thread the other nodes
+		// answer on.
+		boost::asio::awaitable<boost::beast::http::response<boost::beast::http::string_body>> handle_request() const;
 
 		void close();
 	};

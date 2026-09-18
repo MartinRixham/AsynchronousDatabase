@@ -23,7 +23,7 @@ std::unique_ptr<http::connection> http::pool::take(const std::string &host, cons
 
 	if (held == idle.end())
 	{
-		return std::make_unique<connection>(io, host, port);
+		return std::make_unique<connection>(io.get_executor(), host, port);
 	}
 
 	std::unique_ptr<connection> taken = std::move(*held);

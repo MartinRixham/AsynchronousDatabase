@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <iterator>
+
 #include <boost/json.hpp>
 #include <boost/lexical_cast/try_lexical_convert.hpp>
 
@@ -121,6 +124,48 @@ namespace
 
 		return response;
 	}
+
+	http::request forwarded_to(const std::string &node, const router::request &request)
+	{
+		http::request forwarded { method_of(request), target(node, request), request.body, headers_of(request) };
+
+		DEBUG("Forwarding " + forwarded.method + " " + forwarded.url + ".");
+
+		return forwarded;
+	}
+
+	std::vector<http::request> forwarded_to_all(const std::vector<std::string> &nodes, const router::request &request)
+	{
+		std::vector<std::string> headers = headers_of(request);
+		std::vector<http::request> forwarded;
+
+		for (const auto &destination : nodes)
+		{
+			forwarded.push_back(
+				http::request { method_of(request), target(destination, request), request.body, headers });
+
+			DEBUG("Forwarding " + forwarded.back().method + " " + forwarded.back().url + ".");
+		}
+
+		return forwarded;
+	}
+
+	// One answer for each node asked, whatever the client made of them, so that the node a
+	// refusal belongs to is the node it is reported against.
+	std::vector<router::response> responses_of(
+		const std::vector<std::string> &nodes,
+		const std::vector<http::response> &answers,
+		const router::request &request)
+	{
+		std::vector<router::response> responses;
+
+		for (size_t i = 0; i < nodes.size() && i < answers.size(); i++)
+		{
+			responses.push_back(to_response(nodes[i], answers[i], is_head(request)));
+		}
+
+		return responses;
+	}
 }
 
 cluster::http_forwarder::http_forwarder(const http::client &http, long timeout):
@@ -131,28 +176,29 @@ cluster::http_forwarder::http_forwarder(const http::client &http, long timeout):
 
 router::response cluster::http_forwarder::forward(const std::string &node, const router::request &request) const
 {
-	http::request forwarded { method_of(request), target(node, request), request.body, headers_of(request) };
-
-	DEBUG("Forwarding " + forwarded.method + " " + forwarded.url + ".");
+	http::request forwarded = forwarded_to(node, request);
 
 	return to_response(node, http_client.send(forwarded, timeout_seconds), is_head(request));
+}
+
+boost::asio::awaitable<router::response> cluster::http_forwarder::async_forward(
+	const std::string &node,
+	const router::request &request) const
+{
+	http::request forwarded = forwarded_to(node, request);
+	http::response answer = co_await http_client.async_send(forwarded, timeout_seconds);
+
+	co_return to_response(node, answer, is_head(request));
 }
 
 std::vector<router::response> cluster::http_forwarder::forward_each(const std::vector<enquiry> &enquiries) const
 {
 	std::vector<http::request> forwarded;
 
-	for (const auto &enquiry : enquiries)
-	{
-		forwarded.push_back(http::request {
-			method_of(enquiry.request),
-			target(enquiry.node, enquiry.request),
-			enquiry.request.body,
-			headers_of(enquiry.request)
-		});
-
-		DEBUG("Forwarding " + forwarded.back().method + " " + forwarded.back().url + ".");
-	}
+	std::ranges::transform(
+		enquiries,
+		std::back_inserter(forwarded),
+		[](const enquiry &asked) { return forwarded_to(asked.node, asked.request); });
 
 	std::vector<http::response> answers = http_client.send_all(forwarded, timeout_seconds);
 	std::vector<router::response> responses;
@@ -169,25 +215,17 @@ std::vector<router::response> cluster::http_forwarder::forward_all(
 	const std::vector<std::string> &nodes,
 	const router::request &request) const
 {
-	std::vector<std::string> headers = headers_of(request);
-	std::vector<http::request> forwarded;
+	std::vector<http::request> forwarded = forwarded_to_all(nodes, request);
 
-	for (const auto &destination : nodes)
-	{
-		forwarded.push_back(http::request { method_of(request), target(destination, request), request.body, headers });
+	return responses_of(nodes, http_client.send_all(forwarded, timeout_seconds), request);
+}
 
-		DEBUG("Forwarding " + forwarded.back().method + " " + forwarded.back().url + ".");
-	}
+boost::asio::awaitable<std::vector<router::response>> cluster::http_forwarder::async_forward_all(
+	const std::vector<std::string> &nodes,
+	const router::request &request) const
+{
+	std::vector<http::request> forwarded = forwarded_to_all(nodes, request);
+	std::vector<http::response> answers = co_await http_client.async_send_all(forwarded, timeout_seconds);
 
-	std::vector<http::response> answers = http_client.send_all(forwarded, timeout_seconds);
-	std::vector<router::response> responses;
-
-	// One answer for each node asked, whatever the client made of them, so that the node a
-	// refusal belongs to is the node it is reported against.
-	for (size_t i = 0; i < nodes.size() && i < answers.size(); i++)
-	{
-		responses.push_back(to_response(nodes[i], answers[i], is_head(request)));
-	}
-
-	return responses;
+	co_return responses_of(nodes, answers, request);
 }

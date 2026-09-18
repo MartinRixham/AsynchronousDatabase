@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include <boost/asio/awaitable.hpp>
+
 namespace http
 {
 	// The only response headers read back off an answer. Everything this API says in a header of
@@ -57,6 +59,16 @@ namespace http
 		// The fan out: the caller waits for the slowest of the requests rather than for the sum
 		// of them, so a client that can run them at once runs them at once.
 		[[nodiscard]] virtual std::vector<response> send_all(
+			const std::vector<request> &requests,
+			long timeout_seconds) const = 0;
+
+		// The same two on the executor of the coroutine awaiting them, which holds no thread while
+		// it waits. The requests have to outlive the wait, as they do the call above.
+		[[nodiscard]] virtual boost::asio::awaitable<response> async_send(
+			const request &request,
+			long timeout_seconds) const = 0;
+
+		[[nodiscard]] virtual boost::asio::awaitable<std::vector<response>> async_send_all(
 			const std::vector<request> &requests,
 			long timeout_seconds) const = 0;
 

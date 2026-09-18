@@ -17,6 +17,7 @@
 #include "cluster/fake_forwarder.h"
 #include "repository/fake_repository.h"
 #include "router/router.h"
+#include "router/routed.h"
 #include "table/schema.h"
 #include "url/url.h"
 
@@ -49,12 +50,12 @@ namespace
 
 	void create_table(router::router &router, const std::string &name)
 	{
-		router.route(put("/table/" + name, "{}"));
+		router::routed(router, put("/table/" + name, "{}"));
 	}
 
 	void write_record(router::router &router, const std::string &name, const std::string &key, const std::string &value)
 	{
-		router.route(put("/table/" + name + "/key/" + key, value));
+		router::routed(router, put("/table/" + name + "/key/" + key, value));
 	}
 
 	const std::string here = "http://asyncdb-1:8080";
@@ -141,7 +142,7 @@ TEST(router_test, nonsense)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(get("/wibble"));
+	router::response response = router::routed(router, get("/wibble"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
 	EXPECT_EQ(error_code(response), "not_found");
@@ -154,7 +155,7 @@ TEST(router_test, health_says_whether_writes_are_stalled)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(get("/health"));
+	router::response response = router::routed(router, get("/health"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.json.at("status"), "ok");
@@ -162,7 +163,7 @@ TEST(router_test, health_says_whether_writes_are_stalled)
 
 	repository.stall();
 
-	EXPECT_EQ(router.route(get("/health")).json.at("write_stalled"), true);
+	EXPECT_EQ(router::routed(router, get("/health")).json.at("write_stalled"), true);
 }
 
 // A node holding less than it owns still serves what it has, so it answers health rather than
@@ -174,11 +175,11 @@ TEST(router_test, health_says_whether_this_node_holds_less_than_it_owns)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	EXPECT_EQ(router.route(get("/health")).json.at("incomplete"), false);
+	EXPECT_EQ(router::routed(router, get("/health")).json.at("incomplete"), false);
 
 	alone.unvouched();
 
-	router::response response = router.route(get("/health"));
+	router::response response = router::routed(router, get("/health"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.json.at("status"), "ok");
@@ -195,12 +196,12 @@ TEST(router_test, health_refuses_the_check_of_a_node_that_can_order_no_write)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	EXPECT_EQ(router.route(get("/health")).json.at("unled"), false);
-	EXPECT_EQ(router.route(get("/health")).status, boost::beast::http::status::ok);
+	EXPECT_EQ(router::routed(router, get("/health")).json.at("unled"), false);
+	EXPECT_EQ(router::routed(router, get("/health")).status, boost::beast::http::status::ok);
 
 	alone.unled();
 
-	router::response response = router.route(get("/health"));
+	router::response response = router::routed(router, get("/health"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
 	EXPECT_EQ(response.json.at("unled"), true);
@@ -218,16 +219,16 @@ TEST(router_test, health_refuses_the_check_of_a_draining_node_and_serves_everyth
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	EXPECT_EQ(router.route(get("/health")).json.at("draining"), false);
+	EXPECT_EQ(router::routed(router, get("/health")).json.at("draining"), false);
 
 	router.is_draining(true);
 
-	router::response response = router.route(get("/health"));
+	router::response response = router::routed(router, get("/health"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
 	EXPECT_EQ(response.json.at("draining"), true);
 	EXPECT_EQ(response.json.at("status"), "ok");
-	EXPECT_EQ(router.route(get("/table")).status, boost::beast::http::status::ok);
+	EXPECT_EQ(router::routed(router, get("/table")).status, boost::beast::http::status::ok);
 }
 
 // A node with no membership but itself takes itself to hold every key and holds only its share, so a
@@ -244,15 +245,17 @@ TEST(router_test, refuse_a_read_on_a_node_with_no_membership_but_itself)
 
 	node.alone();
 
-	router::response read = router.route(get("/table/account/key/4821"));
+	router::response read = router::routed(router, get("/table/account/key/4821"));
 
 	EXPECT_EQ(read.status, boost::beast::http::status::service_unavailable);
 	EXPECT_EQ(error_code(read), "node_alone");
 	EXPECT_EQ(
-		error_code(router.route(request(boost::beast::http::verb::head, "/table/account/key/4821", ""))),
+		error_code(router::routed(router, request(boost::beast::http::verb::head, "/table/account/key/4821", ""))),
 		"node_alone");
 	EXPECT_EQ(
-		error_code(router.route(get("/table/account/key?partition=" + std::to_string(cluster::partition_of("4821"))))),
+		error_code(router::routed(
+			router,
+			get("/table/account/key?partition=" + std::to_string(cluster::partition_of("4821"))))),
 		"node_alone");
 
 	// A peer asking is asking what this store holds, which it can still say.
@@ -260,7 +263,7 @@ TEST(router_test, refuse_a_read_on_a_node_with_no_membership_but_itself)
 
 	forwarded.forwarded = true;
 
-	router::response answered = router.route(forwarded);
+	router::response answered = router::routed(router, forwarded);
 
 	EXPECT_EQ(answered.status, boost::beast::http::status::ok);
 	EXPECT_EQ(answered.text, "a value");
@@ -273,7 +276,7 @@ TEST(router_test, list_no_tables)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(get("/table"));
+	router::response response = router::routed(router, get("/table"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.json.at("tables").as_array().size(), 0);
@@ -286,7 +289,7 @@ TEST(router_test, create_a_table)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(put("/table/account", "{}"));
+	router::response response = router::routed(router, put("/table/account", "{}"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::created);
 	EXPECT_EQ(response.json.at("name"), "account");
@@ -300,7 +303,7 @@ TEST(router_test, create_a_table_with_no_body_at_all)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(put("/table/account", ""));
+	router::response response = router::routed(router, put("/table/account", ""));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::created);
 	EXPECT_EQ(response.json.at("dependencies").as_array().size(), 0);
@@ -313,9 +316,9 @@ TEST(router_test, creating_the_same_table_again_changes_nothing)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router.route(put("/table/account", "{}"));
+	router::routed(router, put("/table/account", "{}"));
 
-	router::response response = router.route(put("/table/account", "{\"dependencies\":[]}"));
+	router::response response = router::routed(router, put("/table/account", "{\"dependencies\":[]}"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.json.at("name"), "account");
@@ -330,7 +333,7 @@ TEST(router_test, fail_to_create_a_table_that_exists_with_different_options)
 
 	create_table(router, "account");
 
-	router::response response = router.route(put("/table/account", "{\"dependencies\":[\"account\"]}"));
+	router::response response = router::routed(router, put("/table/account", "{\"dependencies\":[\"account\"]}"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::conflict);
 	EXPECT_EQ(error_code(response), "table_exists");
@@ -343,7 +346,7 @@ TEST(router_test, fail_to_create_a_table_with_an_invalid_name)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(put("/table/An%2FAccount", "{}"));
+	router::response response = router::routed(router, put("/table/An%2FAccount", "{}"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
 	EXPECT_EQ(error_code(response), "invalid_table_name");
@@ -357,7 +360,7 @@ TEST(router_test, fail_to_create_a_table_from_a_body_that_is_not_json)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(put("/table/account", "not json"));
+	router::response response = router::routed(router, put("/table/account", "not json"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
 	EXPECT_EQ(error_code(response), "invalid_body");
@@ -371,7 +374,7 @@ TEST(router_test, fail_to_create_a_table_from_a_body_that_is_not_an_object)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(put("/table/account", "[]"));
+	router::response response = router::routed(router, put("/table/account", "[]"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
 	EXPECT_EQ(error_code(response), "invalid_body");
@@ -385,7 +388,7 @@ TEST(router_test, fail_to_create_a_table_that_depends_on_one_that_is_not_there)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(put("/table/transaction", "{\"dependencies\":[\"account\"]}"));
+	router::response response = router::routed(router, put("/table/transaction", "{\"dependencies\":[\"account\"]}"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
 	EXPECT_EQ(error_code(response), "dependency_not_found");
@@ -400,9 +403,9 @@ TEST(router_test, list_the_tables_and_their_dependencies)
 	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
-	router.route(put("/table/transaction", "{\"dependencies\":[\"account\"]}"));
+	router::routed(router, put("/table/transaction", "{\"dependencies\":[\"account\"]}"));
 
-	router::response response = router.route(get("/table"));
+	router::response response = router::routed(router, get("/table"));
 
 	boost::json::array tables = response.json.at("tables").as_array();
 
@@ -421,7 +424,7 @@ TEST(router_test, inspect_a_table)
 
 	create_table(router, "account");
 
-	router::response response = router.route(get("/table/account"));
+	router::response response = router::routed(router, get("/table/account"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.json.at("name"), "account");
@@ -435,7 +438,7 @@ TEST(router_test, fail_to_inspect_a_table_that_is_not_there)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(get("/table/account"));
+	router::response response = router::routed(router, get("/table/account"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
 	EXPECT_EQ(error_code(response), "table_not_found");
@@ -451,7 +454,7 @@ TEST(router_test, delete_a_table_and_its_data)
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
 
-	router::response response = router.route(del("/table/account"));
+	router::response response = router::routed(router, del("/table/account"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 	EXPECT_EQ(response.content_type, "");
@@ -460,7 +463,7 @@ TEST(router_test, delete_a_table_and_its_data)
 	create_table(router, "account");
 
 	EXPECT_EQ(
-		router.route(get("/table/account/key?key=4821")).json.at("records").as_array().size(),
+		router::routed(router, get("/table/account/key?key=4821")).json.at("records").as_array().size(),
 		0);
 }
 
@@ -471,7 +474,7 @@ TEST(router_test, fail_to_delete_a_table_that_is_not_there)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(del("/table/account"));
+	router::response response = router::routed(router, del("/table/account"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
 	EXPECT_EQ(error_code(response), "table_not_found");
@@ -486,11 +489,11 @@ TEST(router_test, write_then_read_a_record)
 
 	create_table(router, "account");
 
-	router::response written = router.route(put("/table/account/key/4821", "Eleanor Whitmore"));
+	router::response written = router::routed(router, put("/table/account/key/4821", "Eleanor Whitmore"));
 
 	EXPECT_EQ(written.status, boost::beast::http::status::no_content);
 
-	router::response response = router.route(get("/table/account/key/4821"));
+	router::response response = router::routed(router, get("/table/account/key/4821"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.content_type, "text/plain; charset=utf-8");
@@ -507,12 +510,12 @@ TEST(router_test, a_missing_key_and_an_empty_value_are_told_apart_by_the_status)
 	create_table(router, "account");
 	write_record(router, "account", "4821", "");
 
-	router::response empty = router.route(get("/table/account/key/4821"));
+	router::response empty = router::routed(router, get("/table/account/key/4821"));
 
 	EXPECT_EQ(empty.status, boost::beast::http::status::ok);
 	EXPECT_EQ(empty.text, "");
 
-	router::response missing = router.route(get("/table/account/key/7203"));
+	router::response missing = router::routed(router, get("/table/account/key/7203"));
 
 	EXPECT_EQ(missing.status, boost::beast::http::status::not_found);
 	EXPECT_EQ(missing.content_type, "");
@@ -528,7 +531,7 @@ TEST(router_test, a_value_is_kept_as_the_bytes_it_was_given)
 	create_table(router, "account");
 	write_record(router, "account", "4821", "{\"firstName\":\"Eleanor\"");
 
-	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "{\"firstName\":\"Eleanor\"");
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821")).text, "{\"firstName\":\"Eleanor\"");
 }
 
 TEST(router_test, refuse_to_delete_a_record)
@@ -541,11 +544,11 @@ TEST(router_test, refuse_to_delete_a_record)
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
 
-	router::response response = router.route(del("/table/account/key/4821"));
+	router::response response = router::routed(router, del("/table/account/key/4821"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::method_not_allowed);
 	EXPECT_EQ(error_code(response), "method_not_allowed");
-	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "Eleanor Whitmore");
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821")).text, "Eleanor Whitmore");
 }
 
 TEST(router_test, overwrite_a_record)
@@ -559,7 +562,7 @@ TEST(router_test, overwrite_a_record)
 	write_record(router, "account", "4821", "Eleanor Whitmore");
 	write_record(router, "account", "4821", "Eleanor Ashby");
 
-	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "Eleanor Ashby");
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821")).text, "Eleanor Ashby");
 }
 
 TEST(router_test, fail_to_read_a_record_of_a_table_that_is_not_there)
@@ -569,7 +572,7 @@ TEST(router_test, fail_to_read_a_record_of_a_table_that_is_not_there)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(get("/table/account/key/4821"));
+	router::response response = router::routed(router, get("/table/account/key/4821"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
 	EXPECT_EQ(error_code(response), "table_not_found");
@@ -584,7 +587,7 @@ TEST(router_test, fail_to_read_a_key_that_is_not_valid_utf8)
 
 	create_table(router, "account");
 
-	router::response response = router.route(get("/table/account/key/%C3%28"));
+	router::response response = router::routed(router, get("/table/account/key/%C3%28"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
 	EXPECT_EQ(error_code(response), "invalid_key_encoding");
@@ -600,7 +603,7 @@ TEST(router_test, fail_to_write_a_key_that_is_too_large)
 	create_table(router, "account");
 
 	router::response response =
-		router.route(put("/table/account/key/" + std::string(record::max_key_size + 1, 'k'), "a value"));
+		router::routed(router, put("/table/account/key/" + std::string(record::max_key_size + 1, 'k'), "a value"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::payload_too_large);
 	EXPECT_EQ(error_code(response), "key_too_large");
@@ -616,7 +619,7 @@ TEST(router_test, fail_to_write_a_value_that_is_too_large)
 	create_table(router, "account");
 
 	router::response response =
-		router.route(put("/table/account/key/4821", std::string(record::max_value_size + 1, 'v')));
+		router::routed(router, put("/table/account/key/4821", std::string(record::max_value_size + 1, 'v')));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::payload_too_large);
 	EXPECT_EQ(error_code(response), "value_too_large");
@@ -637,7 +640,7 @@ TEST(router_test, scan_a_partition_in_key_order)
 	write_record(router, "account", "user/4821", "Eleanor Whitmore");
 	write_record(router, "account", "order/1", "an order");
 
-	router::response response = router.route(get("/table/account/key?key=user"));
+	router::response response = router::routed(router, get("/table/account/key?key=user"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(sorts(response), (std::vector<std::string> { "4821", "7203" }));
@@ -657,9 +660,9 @@ TEST(router_test, scan_the_partition_a_key_is_in)
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
 
-	router::response named = router.route(get("/table/account/key?key=4821"));
+	router::response named = router::routed(router, get("/table/account/key?key=4821"));
 	router::response numbered =
-		router.route(get("/table/account/key?partition=" + std::to_string(cluster::partition_of("4821"))));
+		router::routed(router, get("/table/account/key?partition=" + std::to_string(cluster::partition_of("4821"))));
 
 	EXPECT_EQ(keys(named), (std::vector<std::string> { "4821" }));
 	EXPECT_EQ(keys(numbered), keys(named));
@@ -683,7 +686,7 @@ TEST(router_test, a_table_is_walked_one_partition_at_a_time)
 	for (size_t partition = 0; partition < cluster::partition_count; partition++)
 	{
 		router::response answer =
-			router.route(get("/table/account/key?partition=" + std::to_string(partition)));
+			router::routed(router, get("/table/account/key?partition=" + std::to_string(partition)));
 
 		ASSERT_EQ(answer.status, boost::beast::http::status::ok);
 
@@ -711,7 +714,7 @@ TEST(router_test, scan_a_prefix)
 
 	// The prefix is of the composed key, so a prefix inside a partition key carries the separator:
 	// "user", a zero byte, and the sort keys that begin "20".
-	router::response response = router.route(get("/table/account/key?key=user&prefix=user%0020"));
+	router::response response = router::routed(router, get("/table/account/key?key=user&prefix=user%0020"));
 
 	EXPECT_EQ(sorts(response), (std::vector<std::string> { "2019", "2020" }));
 }
@@ -728,7 +731,7 @@ TEST(router_test, scan_backwards)
 	write_record(router, "account", "n/2", "two");
 	write_record(router, "account", "n/3", "three");
 
-	router::response response = router.route(get("/table/account/key?key=n&reverse=true"));
+	router::response response = router::routed(router, get("/table/account/key?key=n&reverse=true"));
 
 	EXPECT_EQ(sorts(response), (std::vector<std::string> { "3", "2", "1" }));
 }
@@ -743,7 +746,7 @@ TEST(router_test, scan_keys_only)
 	create_table(router, "account");
 	write_record(router, "account", "4821", "Eleanor Whitmore");
 
-	router::response response = router.route(get("/table/account/key?key=4821&values=false"));
+	router::response response = router::routed(router, get("/table/account/key?key=4821&values=false"));
 
 	boost::json::object record = response.json.at("records").as_array()[0].as_object();
 
@@ -763,13 +766,13 @@ TEST(router_test, page_through_a_scan_with_a_cursor)
 	write_record(router, "account", "n/2", "two");
 	write_record(router, "account", "n/3", "three");
 
-	router::response first = router.route(get("/table/account/key?key=n&limit=2"));
+	router::response first = router::routed(router, get("/table/account/key?key=n&limit=2"));
 
 	EXPECT_EQ(sorts(first), (std::vector<std::string> { "1", "2" }));
 	EXPECT_TRUE(first.json.contains("next"));
 
 	std::string cursor = std::string(first.json.at("next").as_string());
-	router::response second = router.route(get("/table/account/key?key=n&limit=2&cursor=" + cursor));
+	router::response second = router::routed(router, get("/table/account/key?key=n&limit=2&cursor=" + cursor));
 
 	EXPECT_EQ(sorts(second), (std::vector<std::string> { "3" }));
 
@@ -789,13 +792,13 @@ TEST(router_test, page_backwards_through_a_scan)
 	write_record(router, "account", "n/2", "two");
 	write_record(router, "account", "n/3", "three");
 
-	router::response first = router.route(get("/table/account/key?key=n&limit=2&reverse=true"));
+	router::response first = router::routed(router, get("/table/account/key?key=n&limit=2&reverse=true"));
 
 	EXPECT_EQ(sorts(first), (std::vector<std::string> { "3", "2" }));
 
 	std::string cursor = std::string(first.json.at("next").as_string());
 	router::response second =
-		router.route(get("/table/account/key?key=n&limit=2&reverse=true&cursor=" + cursor));
+		router::routed(router, get("/table/account/key?key=n&limit=2&reverse=true&cursor=" + cursor));
 
 	EXPECT_EQ(sorts(second), (std::vector<std::string> { "1" }));
 }
@@ -818,13 +821,13 @@ TEST(router_test, page_through_a_scan_of_values_too_large_to_send_at_once)
 		write_record(router, "account", "big/" + std::to_string(i), value);
 	}
 
-	router::response first = router.route(get("/table/account/key?key=big"));
+	router::response first = router::routed(router, get("/table/account/key?key=big"));
 
 	EXPECT_EQ(sorts(first), (std::vector<std::string> { "0", "1", "2" }));
 	EXPECT_TRUE(first.json.contains("next"));
 
 	std::string cursor = std::string(first.json.at("next").as_string());
-	router::response second = router.route(get("/table/account/key?key=big&cursor=" + cursor));
+	router::response second = router::routed(router, get("/table/account/key?key=big&cursor=" + cursor));
 
 	EXPECT_EQ(sorts(second), (std::vector<std::string> { "3", "4", "5" }));
 	EXPECT_FALSE(second.json.contains("next"));
@@ -839,7 +842,7 @@ TEST(router_test, fail_to_scan_with_a_cursor_this_instance_did_not_issue)
 
 	create_table(router, "account");
 
-	router::response response = router.route(
+	router::response response = router::routed(router, 
 		get("/table/account/key?partition=7&cursor=" + scan::encode_cursor("1", "another instance", 7)));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
@@ -855,7 +858,7 @@ TEST(router_test, fail_to_scan_a_range_that_is_not_below_its_end)
 
 	create_table(router, "account");
 
-	router::response response = router.route(get("/table/account/key?partition=7&from=b&to=a"));
+	router::response response = router::routed(router, get("/table/account/key?partition=7&from=b&to=a"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
 	EXPECT_EQ(error_code(response), "invalid_range");
@@ -870,7 +873,7 @@ TEST(router_test, fail_to_scan_without_naming_a_partition)
 
 	create_table(router, "account");
 
-	router::response response = router.route(get("/table/account/key"));
+	router::response response = router::routed(router, get("/table/account/key"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::bad_request);
 	EXPECT_EQ(error_code(response), "invalid_partition");
@@ -883,7 +886,7 @@ TEST(router_test, fail_to_scan_a_table_that_is_not_there)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	EXPECT_EQ(error_code(router.route(get("/table/account/key?partition=7"))), "table_not_found");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/key?partition=7"))), "table_not_found");
 }
 
 TEST(router_test, refuse_to_delete_a_range)
@@ -897,11 +900,11 @@ TEST(router_test, refuse_to_delete_a_range)
 	write_record(router, "account", "user/2019", "a user");
 	write_record(router, "account", "user/2020", "another user");
 
-	router::response response = router.route(del("/table/account/key?key=user"));
+	router::response response = router::routed(router, del("/table/account/key?key=user"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::method_not_allowed);
 	EXPECT_EQ(error_code(response), "method_not_allowed");
-	EXPECT_EQ(keys(router.route(get("/table/account/key?key=user"))).size(), 2);
+	EXPECT_EQ(keys(router::routed(router, get("/table/account/key?key=user"))).size(), 2);
 }
 
 TEST(router_test, a_method_that_is_not_a_method_of_the_route)
@@ -913,7 +916,7 @@ TEST(router_test, a_method_that_is_not_a_method_of_the_route)
 
 	create_table(router, "account");
 
-	router::response response = router.route(request(boost::beast::http::verb::post, "/table/account", "{}"));
+	router::response response = router::routed(router, request(boost::beast::http::verb::post, "/table/account", "{}"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::method_not_allowed);
 	EXPECT_EQ(error_code(response), "method_not_allowed");
@@ -928,8 +931,8 @@ TEST(router_test, a_path_below_a_key_is_not_a_route)
 
 	create_table(router, "account");
 
-	EXPECT_EQ(router.route(get("/table/account/key/4821/name")).status, boost::beast::http::status::not_found);
-	EXPECT_EQ(router.route(get("/table/account/wibble")).status, boost::beast::http::status::not_found);
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821/name")).status, boost::beast::http::status::not_found);
+	EXPECT_EQ(router::routed(router, get("/table/account/wibble")).status, boost::beast::http::status::not_found);
 }
 
 namespace
@@ -1004,7 +1007,7 @@ TEST(router_cluster_test, read_a_record_from_the_node_that_owns_the_key)
 	nodes.owns("4821", there);
 	forwarding.answer(there, router::text_response(boost::beast::http::status::ok, "a value"));
 
-	router::response response = router.route(get("/table/account/key/4821"));
+	router::response response = router::routed(router, get("/table/account/key/4821"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.text, "a value");
@@ -1027,7 +1030,7 @@ TEST(router_cluster_test, read_a_record_this_node_owns_without_a_hop)
 	write_record(router, "account", "4821", "a value");
 	forwarding.forget();
 
-	router::response response = router.route(get("/table/account/key/4821"));
+	router::response response = router::routed(router, get("/table/account/key/4821"));
 
 	EXPECT_EQ(response.text, "a value");
 	EXPECT_TRUE(forwarding.sent().empty());
@@ -1044,7 +1047,7 @@ TEST(router_cluster_test, write_a_record_to_the_node_that_owns_the_key)
 	forwarding.forget();
 	nodes.owns("4821", there);
 
-	router::response response = router.route(put("/table/account/key/4821", "a value"));
+	router::response response = router::routed(router, put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 	ASSERT_EQ(forwarding.sent().size(), 1u);
@@ -1069,7 +1072,7 @@ TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
 
 	forwarded.forwarded = true;
 
-	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
 	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
 }
@@ -1083,7 +1086,7 @@ TEST(router_cluster_test, fail_to_write_to_a_table_that_is_not_there_without_a_h
 
 	nodes.owns("4821", there);
 
-	router::response response = router.route(put("/table/account/key/4821", "a value"));
+	router::response response = router::routed(router, put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(error_code(response), "table_not_found");
 	EXPECT_TRUE(forwarding.sent().empty());
@@ -1102,7 +1105,7 @@ TEST(router_cluster_test, write_a_record_to_every_node_that_holds_a_copy)
 	forwarding.forget();
 	nodes.copies("4821", { here, there, elsewhere });
 
-	router::response response = router.route(put("/table/account/key/4821", "a value"));
+	router::response response = router::routed(router, put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
@@ -1125,7 +1128,7 @@ TEST(router_cluster_test, write_a_record_to_every_copy_when_this_node_holds_none
 	forwarding.forget();
 	nodes.copies("4821", { there, elsewhere });
 
-	router::response response = router.route(put("/table/account/key/4821", "a value"));
+	router::response response = router::routed(router, put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
@@ -1146,7 +1149,7 @@ TEST(router_cluster_test, fail_to_write_a_record_a_copy_refuses)
 	nodes.copies("4821", { here, there, elsewhere });
 	forwarding.answer(there, router::error_response(error::code::write_stalled, "Writes are stalled."));
 
-	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "a value"))), "write_stalled");
+	EXPECT_EQ(error_code(router::routed(router, put("/table/account/key/4821", "a value"))), "write_stalled");
 
 	// The copies are asked at once, so the zone behind the one that refused was asked as well.
 	// That is a request that need not have been sent rather than a wrong answer: the client is
@@ -1170,7 +1173,7 @@ TEST(router_cluster_test, report_the_first_copy_to_refuse_a_write)
 	forwarding.answer(there, router::error_response(error::code::write_stalled, "Writes are stalled."));
 	forwarding.answer(elsewhere, router::error_response(error::code::storage_error, "The store failed."));
 
-	EXPECT_EQ(error_code(router.route(put("/table/account/key/4821", "a value"))), "write_stalled");
+	EXPECT_EQ(error_code(router::routed(router, put("/table/account/key/4821", "a value"))), "write_stalled");
 	EXPECT_EQ(forwarding.sent().size(), 2u);
 }
 
@@ -1190,7 +1193,7 @@ TEST(router_cluster_test, read_a_record_from_the_next_copy_when_a_node_does_not_
 		router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
 	forwarding.answer(elsewhere, router::text_response(boost::beast::http::status::ok, "a value"));
 
-	router::response response = router.route(get("/table/account/key/4821"));
+	router::response response = router::routed(router, get("/table/account/key/4821"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.text, "a value");
@@ -1211,7 +1214,7 @@ TEST(router_cluster_test, take_a_missing_key_from_the_first_copy_that_answers)
 	nodes.copies("4821", { there, elsewhere });
 	forwarding.answer(there, router::empty_response(boost::beast::http::status::not_found));
 
-	EXPECT_EQ(router.route(get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
 	EXPECT_EQ(forwarding.sent().size(), 1u);
 }
 
@@ -1230,7 +1233,7 @@ TEST(router_cluster_test, read_a_record_from_another_zone_when_this_node_has_non
 	nodes.copies("4821", { here, there });
 	forwarding.answer(there, router::text_response(boost::beast::http::status::ok, "a value"));
 
-	router::response response = router.route(get("/table/account/key/4821"));
+	router::response response = router::routed(router, get("/table/account/key/4821"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.text, "a value");
@@ -1249,7 +1252,7 @@ TEST(router_cluster_test, answer_a_key_no_zone_holds_as_missing)
 	nodes.copies("4821", { here, there });
 	forwarding.answer(there, router::empty_response(boost::beast::http::status::not_found));
 
-	EXPECT_EQ(router.route(get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821")).status, boost::beast::http::status::not_found);
 }
 
 // A forwarded read is served where it stands, so a node that was asked because it holds a copy
@@ -1269,7 +1272,7 @@ TEST(router_cluster_test, answer_a_forwarded_read_of_a_key_this_node_has_none_of
 
 	forwarded.forwarded = true;
 
-	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::not_found);
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::not_found);
 	EXPECT_TRUE(forwarding.sent().empty());
 }
 
@@ -1293,7 +1296,7 @@ TEST(router_cluster_test, refuse_to_call_a_key_missing_when_this_node_holds_less
 
 	nodes.unvouched("4821");
 
-	router::response response = router.route(forwarded);
+	router::response response = router::routed(router, forwarded);
 
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
 	EXPECT_EQ(error_code(response), "node_incomplete");
@@ -1324,7 +1327,7 @@ TEST(router_cluster_test, call_a_key_missing_in_a_partition_this_node_holds_the_
 
 	forwarded.forwarded = true;
 
-	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::not_found);
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::not_found);
 }
 
 // The copy a read reaches first may be the one that has just been handed the partition, and what
@@ -1342,7 +1345,7 @@ TEST(router_cluster_test, read_a_key_from_the_next_copy_when_the_first_cannot_sa
 	forwarding.answer(there, router::error_response(error::code::node_incomplete, "Not filled yet."));
 	forwarding.answer(elsewhere, router::text_response(boost::beast::http::status::ok, "Robert"));
 
-	router::response response = router.route(get("/table/account/key/4821"));
+	router::response response = router::routed(router, get("/table/account/key/4821"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.text, "Robert");
@@ -1359,7 +1362,7 @@ TEST(router_cluster_test, refuse_to_call_a_table_missing_when_this_node_holds_le
 
 	nodes.unvouched();
 
-	EXPECT_EQ(error_code(router.route(get("/table/account/key/4821"))), "node_incomplete");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/key/4821"))), "node_incomplete");
 }
 
 // The record is here, so nothing about the rest of the share bears on it.
@@ -1381,7 +1384,7 @@ TEST(router_cluster_test, answer_a_key_this_node_holds_while_it_holds_less_than_
 
 	nodes.unvouched();
 
-	router::response response = router.route(forwarded);
+	router::response response = router::routed(router, forwarded);
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.text, "Robert");
@@ -1404,7 +1407,7 @@ TEST(router_cluster_test, fail_to_read_a_record_no_copy_of_which_answers)
 		elsewhere,
 		router::error_response(error::code::storage_error, "Node \"" + elsewhere + "\" did not answer."));
 
-	EXPECT_EQ(error_code(router.route(get("/table/account/key/4821"))), "storage_error");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/key/4821"))), "storage_error");
 	EXPECT_EQ(forwarding.sent().size(), 2u);
 }
 
@@ -1422,7 +1425,7 @@ TEST(router_cluster_test, write_a_record_through_the_node_that_leads_its_partiti
 	nodes.copies("4821", { here, partner, there });
 	nodes.led_by("4821", there, 41);
 
-	router::response response = router.route(put("/table/account/key/4821", "a value"));
+	router::response response = router::routed(router, put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 
@@ -1448,7 +1451,7 @@ TEST(router_cluster_test, order_a_write_of_a_partition_this_node_leads)
 	nodes.copies("4821", { here, partner });
 	nodes.led_by("4821", here, 41);
 
-	router::response response = router.route(put("/table/account/key/4821", "a value"));
+	router::response response = router::routed(router, put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
@@ -1472,7 +1475,7 @@ TEST(router_cluster_test, stamp_a_write_with_the_version_it_was_ordered_in)
 	nodes.copies("4821", { here, partner });
 	nodes.led_by("4821", here, 41);
 
-	router.route(put("/table/account/key/4821", "a value"));
+	router::routed(router, put("/table/account/key/4821", "a value"));
 
 	record::version stamped = stamp_of(repository, "account", "4821");
 
@@ -1497,11 +1500,11 @@ TEST(router_cluster_test, count_a_write_after_the_one_before_it)
 	nodes.copies("4821", { here, partner });
 	nodes.led_by("4821", here, 41);
 
-	router.route(put("/table/account/key/4821", "one"));
+	router::routed(router, put("/table/account/key/4821", "one"));
 
 	uint64_t first = stamp_of(repository, "account", "4821").count;
 
-	router.route(put("/table/account/key/4821", "two"));
+	router::routed(router, put("/table/account/key/4821", "two"));
 
 	EXPECT_GT(stamp_of(repository, "account", "4821").count, first);
 }
@@ -1524,7 +1527,7 @@ TEST(router_cluster_test, apply_the_version_a_forwarded_write_was_ordered_in)
 	forwarded.term = 60;
 	forwarded.count = 7;
 
-	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
 
 	record::version stamped = stamp_of(repository, "account", "4821");
 
@@ -1543,7 +1546,7 @@ TEST(router_test, count_a_write_no_leader_ordered)
 
 	create_table(router, "account");
 
-	router.route(put("/table/account/key/4821", "a value"));
+	router::routed(router, put("/table/account/key/4821", "a value"));
 
 	record::version stamped = stamp_of(repository, "account", "4821");
 
@@ -1564,7 +1567,7 @@ TEST(router_cluster_test, refuse_a_write_of_a_partition_nothing_leads)
 	forwarding.forget();
 	nodes.led_by_nobody("4821");
 
-	router::response response = router.route(put("/table/account/key/4821", "a value"));
+	router::response response = router::routed(router, put("/table/account/key/4821", "a value"));
 
 	EXPECT_EQ(error_code(response), "no_leader");
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
@@ -1590,7 +1593,7 @@ TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_that_has_pa
 	forwarded.forwarded = true;
 	forwarded.term = 41;
 
-	router::response response = router.route(forwarded);
+	router::response response = router::routed(router, forwarded);
 
 	EXPECT_EQ(error_code(response), "stale_leader");
 	EXPECT_EQ(response.status, boost::beast::http::status::conflict);
@@ -1615,7 +1618,7 @@ TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_older_than_
 		newer.forwarded = true;
 		newer.term = 60;
 
-		EXPECT_EQ(router.route(newer).status, boost::beast::http::status::no_content);
+		EXPECT_EQ(router::routed(router, newer).status, boost::beast::http::status::no_content);
 	}
 
 	cluster::fake_cluster after = paired_zones();
@@ -1625,7 +1628,7 @@ TEST(router_cluster_test, refuse_a_forwarded_write_ordered_in_a_term_older_than_
 	older.forwarded = true;
 	older.term = 41;
 
-	EXPECT_EQ(error_code(restarted.route(older)), "stale_leader");
+	EXPECT_EQ(error_code(router::routed(restarted, older)), "stale_leader");
 	EXPECT_EQ(repository.read_record("account", "4821"), "newer");
 }
 
@@ -1646,7 +1649,7 @@ TEST(router_cluster_test, refuse_a_write_sent_here_to_be_ordered_that_this_node_
 
 	forwarded.forwarded = true;
 
-	EXPECT_EQ(error_code(router.route(forwarded)), "no_leader");
+	EXPECT_EQ(error_code(router::routed(router, forwarded)), "no_leader");
 	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
 }
@@ -1667,15 +1670,15 @@ TEST(router_cluster_test, apply_a_forwarded_write_ordered_in_the_term_that_stand
 	forwarded.forwarded = true;
 	forwarded.term = 60;
 
-	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
 	EXPECT_TRUE(forwarding.sent().empty());
 }
 
 namespace
 {
-	// A fan out slow enough to be caught overlapping another, and a count of the most writes that
-	// were ever inside one at once.
+	// A fan out slow enough to be caught overlapping another, and a count of the most that were ever
+	// inside one at once.
 	class counting_forwarder final : public cluster::fake_forwarder
 	{
 		mutable std::mutex counting;
@@ -1700,8 +1703,8 @@ namespace
 		}
 
 	public:
-		// The fan out the ordering lock is held across, which is the whole of what these tests
-		// watch. It answers for the nodes rather than recording what they were asked, because a
+		// The fan out the schema lock is held across, which is the whole of what this test
+		// watches. It answers for the nodes rather than recording what they were asked, because a
 		// fake_forwarder remembers that in a vector and two threads remembering at once is a race
 		// of the test's own making.
 		std::vector<router::response> forward_all(
@@ -1722,71 +1725,6 @@ namespace
 			return most;
 		}
 	};
-
-	void write_together(router::router &router, const std::vector<std::string> &keys)
-	{
-		std::vector<std::thread> writers;
-
-		std::ranges::transform(
-			keys,
-			std::back_inserter(writers),
-			[&router](const std::string &key)
-			{
-				return std::thread(write_record, std::ref(router), "account", key, "a value");
-			});
-
-		for (auto &writer : writers)
-		{
-			writer.join();
-		}
-	}
-}
-
-// Two clients writing one key at one leader are ordered by it: the fan out of the second does not
-// start until every copy has taken the first, so no copy is ever applying two writes of one key at
-// a time and they cannot settle in two orders.
-TEST(router_cluster_test, order_concurrent_writes_of_one_key)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = paired_zones();
-	counting_forwarder forwarding;
-	router::router router(repository, nodes, forwarding);
-
-	create_table(router, "account");
-	nodes.copies("4821", { here, partner });
-	nodes.led_by("4821", here, 41);
-
-	write_together(router, { "4821", "4821", "4821", "4821" });
-
-	EXPECT_EQ(forwarding.most_at_once(), 1u);
-	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
-}
-
-// The locks are striped and not one lock. Writes of different keys order against nothing and run
-// at once, which is what keeps every write on a node from queueing behind the busiest key on it.
-TEST(router_cluster_test, write_different_keys_at_once)
-{
-	repository::fake_repository repository;
-	cluster::fake_cluster nodes = paired_zones();
-	counting_forwarder forwarding;
-	router::router router(repository, nodes, forwarding);
-	std::vector<std::string> keys;
-
-	create_table(router, "account");
-
-	for (size_t i = 0; i < 8; i++)
-	{
-		keys.push_back("482" + std::to_string(i));
-
-		// A leader holding no copy of the key, so that a write fans out and touches no store:
-		// two threads writing one fake_repository is a race of the test's own making.
-		nodes.copies(keys.back(), { partner, there });
-		nodes.led_by(keys.back(), here, 41);
-	}
-
-	write_together(router, keys);
-
-	EXPECT_GT(forwarding.most_at_once(), 1u);
 }
 
 // A read is not ordered by anybody: it is answered by a copy, and the leader is not in its way.
@@ -1802,7 +1740,7 @@ TEST(router_cluster_test, read_a_record_without_asking_the_leader)
 	forwarding.forget();
 	nodes.led_by("4821", there, 41);
 
-	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "a value");
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821")).text, "a value");
 	EXPECT_TRUE(forwarding.sent().empty());
 }
 
@@ -1813,7 +1751,7 @@ TEST(router_cluster_test, create_a_table_on_every_node)
 	cluster::fake_forwarder forwarding;
 	router::router router(repository, nodes, forwarding);
 
-	router::response response = router.route(put("/table/account", "{}"));
+	router::response response = router::routed(router, put("/table/account", "{}"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::created);
 	ASSERT_EQ(forwarding.sent().size(), 1u);
@@ -1833,7 +1771,7 @@ TEST(router_cluster_test, list_the_tables_without_asking_another_node)
 	create_table(router, "account");
 	forwarding.forget();
 
-	EXPECT_EQ(router.route(get("/table")).json.at("tables").as_array().size(), 1u);
+	EXPECT_EQ(router::routed(router, get("/table")).json.at("tables").as_array().size(), 1u);
 	EXPECT_TRUE(forwarding.sent().empty());
 }
 
@@ -1846,7 +1784,7 @@ TEST(router_cluster_test, fail_to_create_a_table_a_node_refuses)
 
 	forwarding.answer(there, router::error_response(error::code::table_exists, "A table named \"account\" exists."));
 
-	router::response response = router.route(put("/table/account", "{}"));
+	router::response response = router::routed(router, put("/table/account", "{}"));
 
 	EXPECT_EQ(error_code(response), "table_exists");
 }
@@ -1862,7 +1800,7 @@ TEST(router_cluster_test, create_a_forwarded_table_without_passing_it_on)
 
 	forwarded.forwarded = true;
 
-	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::created);
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::created);
 	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_TRUE(repository.has_table("account"));
 }
@@ -1877,7 +1815,7 @@ TEST(router_cluster_test, delete_a_table_on_every_node)
 	create_table(router, "account");
 	forwarding.forget();
 
-	router::response response = router.route(del("/table/account"));
+	router::response response = router::routed(router, del("/table/account"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::no_content);
 	ASSERT_EQ(forwarding.sent().size(), 1u);
@@ -1897,8 +1835,8 @@ TEST(router_cluster_test, agree_to_a_forwarded_deletion_of_a_table_that_is_not_t
 
 	forwarded.forwarded = true;
 
-	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
-	EXPECT_EQ(router.route(del("/table/account")).status, boost::beast::http::status::not_found);
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router::routed(router, del("/table/account")).status, boost::beast::http::status::not_found);
 }
 
 // And it writes the tombstone down. A node agreeing to a delete of a table it never had may be a
@@ -1919,7 +1857,7 @@ TEST(router_cluster_test, write_down_a_forwarded_deletion_of_a_table_that_is_not
 
 	nodes.led_by(cluster::table_key, there, 41);
 
-	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
 
 	std::optional<table::entry> gone = repository.read_schema().read_entry("account");
 
@@ -1939,7 +1877,7 @@ TEST(router_cluster_test, carry_the_version_of_a_create_that_no_leader_ordered)
 	cluster::fake_forwarder forwarding;
 	router::router router(repository, nodes, forwarding);
 
-	EXPECT_EQ(router.route(put("/table/account", "{}")).status, boost::beast::http::status::created);
+	EXPECT_EQ(router::routed(router, put("/table/account", "{}")).status, boost::beast::http::status::created);
 
 	std::optional<table::entry> made = repository.read_schema().read_entry("account");
 
@@ -1962,7 +1900,7 @@ TEST(router_cluster_test, carry_the_version_a_table_was_created_in_to_the_other_
 
 	nodes.led_by(cluster::table_key, here, 41);
 
-	EXPECT_EQ(router.route(put("/table/account", "{}")).status, boost::beast::http::status::created);
+	EXPECT_EQ(router::routed(router, put("/table/account", "{}")).status, boost::beast::http::status::created);
 
 	std::optional<table::entry> made = repository.read_schema().read_entry("account");
 
@@ -1986,9 +1924,9 @@ TEST(router_test, answer_the_schema_a_node_holds)
 
 	create_table(router, "account");
 	create_table(router, "dropped");
-	router.route(del("/table/dropped"));
+	router::routed(router, del("/table/dropped"));
 
-	router::response response = router.route(get("/schema"));
+	router::response response = router::routed(router, get("/schema"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 
@@ -2000,7 +1938,7 @@ TEST(router_test, answer_the_schema_a_node_holds)
 	EXPECT_FALSE(answered.read_entry("dropped")->live);
 
 	// And the client's view carries only what is there.
-	boost::json::array listed = router.route(get("/table")).json.at("tables").as_array();
+	boost::json::array listed = router::routed(router, get("/table")).json.at("tables").as_array();
 
 	ASSERT_EQ(listed.size(), 1u);
 	EXPECT_EQ(listed[0].as_object().at("name").as_string(), "account");
@@ -2013,7 +1951,7 @@ TEST(router_test, refuse_a_method_the_schema_route_does_not_have)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	EXPECT_EQ(error_code(router.route(del("/schema"))), "method_not_allowed");
+	EXPECT_EQ(error_code(router::routed(router, del("/schema"))), "method_not_allowed");
 }
 
 // The client's own delete, forwarded to the node that leads the tables because it landed on one
@@ -2032,7 +1970,7 @@ TEST(router_cluster_test, refuse_a_deletion_forwarded_to_the_leader_of_a_table_t
 
 	forwarded.forwarded = true;
 
-	EXPECT_EQ(error_code(router.route(forwarded)), "table_not_found");
+	EXPECT_EQ(error_code(router::routed(router, forwarded)), "table_not_found");
 }
 
 // The leader deletes its own copy before it carries the order out, so a delete that one node
@@ -2048,7 +1986,7 @@ TEST(router_cluster_test, carry_a_delete_of_a_table_that_is_not_here_to_the_othe
 
 	nodes.led_by(cluster::table_key, here, 41);
 
-	EXPECT_EQ(error_code(router.route(del("/table/account"))), "table_not_found");
+	EXPECT_EQ(error_code(router::routed(router, del("/table/account"))), "table_not_found");
 
 	ASSERT_EQ(forwarding.sent().size(), 1u);
 	EXPECT_EQ(forwarding.sent()[0].first, there);
@@ -2070,7 +2008,7 @@ TEST(router_cluster_test, report_a_node_that_refuses_a_delete_of_a_table_that_is
 		there,
 		router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
 
-	EXPECT_EQ(error_code(router.route(del("/table/account"))), "storage_error");
+	EXPECT_EQ(error_code(router::routed(router, del("/table/account"))), "storage_error");
 }
 
 // A node that came up short of its share may hold none of the tables, and an absence it cannot
@@ -2085,7 +2023,7 @@ TEST(router_cluster_test, refuse_to_delete_a_table_this_node_cannot_say_is_missi
 	nodes.led_by(cluster::table_key, here, 41);
 	nodes.unvouched();
 
-	EXPECT_EQ(error_code(router.route(del("/table/account"))), "node_incomplete");
+	EXPECT_EQ(error_code(router::routed(router, del("/table/account"))), "node_incomplete");
 	EXPECT_TRUE(forwarding.sent().empty());
 }
 
@@ -2100,7 +2038,7 @@ TEST(router_cluster_test, create_a_table_through_the_node_that_leads_the_tables)
 
 	nodes.led_by(cluster::table_key, there, 41);
 
-	router.route(put("/table/account", "{}"));
+	router::routed(router, put("/table/account", "{}"));
 
 	ASSERT_EQ(forwarding.sent().size(), 1u);
 	EXPECT_EQ(forwarding.sent()[0].first, there);
@@ -2119,7 +2057,7 @@ TEST(router_cluster_test, order_a_table_create_this_node_leads)
 
 	nodes.led_by(cluster::table_key, here, 41);
 
-	EXPECT_EQ(router.route(put("/table/account", "{}")).status, boost::beast::http::status::created);
+	EXPECT_EQ(router::routed(router, put("/table/account", "{}")).status, boost::beast::http::status::created);
 	EXPECT_TRUE(repository.has_table("account"));
 
 	ASSERT_EQ(forwarding.sent().size(), 1u);
@@ -2138,7 +2076,7 @@ TEST(router_cluster_test, refuse_a_table_create_when_nothing_leads_the_tables)
 
 	nodes.led_by_nobody(cluster::table_key);
 
-	router::response response = router.route(put("/table/account", "{}"));
+	router::response response = router::routed(router, put("/table/account", "{}"));
 
 	EXPECT_EQ(error_code(response), "no_leader");
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
@@ -2160,7 +2098,7 @@ TEST(router_cluster_test, apply_a_table_create_the_leader_ordered)
 	forwarded.forwarded = true;
 	forwarded.term = 60;
 
-	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::created);
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::created);
 	EXPECT_TRUE(repository.has_table("account"));
 	EXPECT_TRUE(forwarding.sent().empty());
 }
@@ -2181,7 +2119,7 @@ TEST(router_cluster_test, refuse_a_table_create_ordered_in_a_term_that_has_passe
 	forwarded.forwarded = true;
 	forwarded.term = 41;
 
-	EXPECT_EQ(error_code(router.route(forwarded)), "stale_leader");
+	EXPECT_EQ(error_code(router::routed(router, forwarded)), "stale_leader");
 	EXPECT_FALSE(repository.has_table("account"));
 }
 
@@ -2200,7 +2138,7 @@ TEST(router_cluster_test, refuse_a_table_create_ordered_in_a_term_older_than_the
 	forwarded.forwarded = true;
 	forwarded.term = 41;
 
-	EXPECT_EQ(error_code(router.route(forwarded)), "stale_leader");
+	EXPECT_EQ(error_code(router::routed(router, forwarded)), "stale_leader");
 	EXPECT_FALSE(repository.has_table("ledger"));
 }
 
@@ -2218,7 +2156,7 @@ TEST(router_cluster_test, refuse_a_table_create_sent_here_to_be_ordered_that_thi
 
 	forwarded.forwarded = true;
 
-	EXPECT_EQ(error_code(router.route(forwarded)), "no_leader");
+	EXPECT_EQ(error_code(router::routed(router, forwarded)), "no_leader");
 	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_FALSE(repository.has_table("account"));
 }
@@ -2237,7 +2175,7 @@ TEST(router_cluster_test, delete_a_table_through_the_node_that_leads_the_tables)
 	create_table(router, "account");
 	forwarding.forget();
 
-	EXPECT_EQ(router.route(del("/table/account")).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router::routed(router, del("/table/account")).status, boost::beast::http::status::no_content);
 	EXPECT_FALSE(repository.has_table("account"));
 
 	ASSERT_EQ(forwarding.sent().size(), 1u);
@@ -2259,14 +2197,13 @@ TEST(router_cluster_test, delete_a_table_the_leader_ordered_without_passing_it_o
 	forwarded.forwarded = true;
 	forwarded.term = 60;
 
-	EXPECT_EQ(router.route(forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
 	EXPECT_TRUE(forwarding.sent().empty());
 }
 
-// Every schema operation takes one lock rather than the stripe its name falls in, because what a
-// create is valid against is every other table: two of them at once are two nodes disagreeing
-// about the graph, and a create validated against a table another node is dropping is the
-// dangling edge parse_table exists to refuse.
+// Every schema operation takes one lock, because what a create is valid against is every other
+// table: two of them at once are two nodes disagreeing about the graph, and a create validated
+// against a table another node is dropping is the dangling edge parse_table exists to refuse.
 TEST(router_cluster_test, order_concurrent_table_creates)
 {
 	repository::fake_repository repository;
@@ -2306,7 +2243,7 @@ TEST(router_cluster_test, scan_the_node_that_holds_the_partition)
 	nodes.owns("b", there);
 	forwarding.answer(there, page(boost::json::array { record_json("b", "2") }, false));
 
-	router::response response = router.route(get("/table/account/key?key=b"));
+	router::response response = router::routed(router, get("/table/account/key?key=b"));
 
 	EXPECT_EQ(keys(response), (std::vector<std::string> { "b" }));
 
@@ -2333,7 +2270,7 @@ TEST(router_cluster_test, forward_a_scan_carrying_a_cursor_this_node_did_not_iss
 	forwarding.answer(there, page(boost::json::array { record_json("b", "2") }, false));
 
 	std::string cursor = scan::encode_cursor("b", "another instance", cluster::partition_of("b"));
-	router::response response = router.route(get("/table/account/key?key=b&cursor=" + cursor));
+	router::response response = router::routed(router, get("/table/account/key?key=b&cursor=" + cursor));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	ASSERT_EQ(forwarding.sent().size(), 1u);
@@ -2351,7 +2288,7 @@ TEST(router_cluster_test, scan_this_node_s_own_store_when_it_holds_the_partition
 	write_record(router, "account", "a/1", "one");
 	forwarding.forget();
 
-	router::response response = router.route(get("/table/account/key?key=a"));
+	router::response response = router::routed(router, get("/table/account/key?key=a"));
 
 	EXPECT_EQ(sorts(response), (std::vector<std::string> { "1" }));
 	EXPECT_TRUE(forwarding.sent().empty());
@@ -2373,7 +2310,7 @@ TEST(router_cluster_test, serve_a_forwarded_scan_where_it_stands)
 
 	forwarded.forwarded = true;
 
-	EXPECT_EQ(keys(router.route(forwarded)), (std::vector<std::string> { "a" }));
+	EXPECT_EQ(keys(router::routed(router, forwarded)), (std::vector<std::string> { "a" }));
 	EXPECT_TRUE(forwarding.sent().empty());
 }
 
@@ -2394,7 +2331,7 @@ TEST(router_cluster_test, scan_the_next_copy_when_the_nearest_does_not_answer)
 		router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
 	forwarding.answer(elsewhere, page(boost::json::array { record_json("b", "2") }, false));
 
-	EXPECT_EQ(keys(router.route(get("/table/account/key?key=b"))), (std::vector<std::string> { "b" }));
+	EXPECT_EQ(keys(router::routed(router, get("/table/account/key?key=b"))), (std::vector<std::string> { "b" }));
 	ASSERT_EQ(forwarding.sent().size(), 2u);
 	EXPECT_EQ(forwarding.sent()[1].first, elsewhere);
 }
@@ -2413,7 +2350,7 @@ TEST(router_cluster_test, fail_to_scan_when_no_copy_answers)
 		router::error_response(error::code::storage_error, "Node \"" + there + "\" did not answer."));
 	forwarding.answer(elsewhere, router::error_response(error::code::storage_error, "Nor did this one."));
 
-	EXPECT_EQ(error_code(router.route(get("/table/account/key?key=b"))), "storage_error");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/key?key=b"))), "storage_error");
 }
 
 // A refusal is the answer and not a node to pass over: every copy would refuse a range that is not
@@ -2430,7 +2367,7 @@ TEST(router_cluster_test, take_a_refusal_of_a_scan_from_the_copy_that_gave_it)
 	nodes.copies("b", { there, elsewhere });
 	forwarding.answer(there, router::error_response(error::code::invalid_cursor, "Not this instance's cursor."));
 
-	EXPECT_EQ(error_code(router.route(get("/table/account/key?key=b"))), "invalid_cursor");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/key?key=b"))), "invalid_cursor");
 	EXPECT_EQ(forwarding.sent().size(), 1u);
 }
 
@@ -2450,7 +2387,7 @@ TEST(router_cluster_test, scan_a_copy_that_is_whole_rather_than_this_node_s_own_
 	forwarding.answer(there, page(boost::json::array { record_json("a", "1"), record_json("a", "2", "2") }, false));
 	nodes.unvouched("a");
 
-	EXPECT_EQ(keys(router.route(get("/table/account/key?key=a"))).size(), 2u);
+	EXPECT_EQ(keys(router::routed(router, get("/table/account/key?key=a"))).size(), 2u);
 	ASSERT_EQ(forwarding.sent().size(), 1u);
 	EXPECT_EQ(forwarding.sent()[0].first, there);
 }
@@ -2468,7 +2405,7 @@ TEST(router_cluster_test, answer_node_incomplete_to_a_scan_of_a_partition_no_oth
 	nodes.owns("a", here);
 	nodes.unvouched("a");
 
-	router::response response = router.route(get("/table/account/key?key=a"));
+	router::response response = router::routed(router, get("/table/account/key?key=a"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::service_unavailable);
 	EXPECT_EQ(error_code(response), "node_incomplete");
@@ -2482,7 +2419,7 @@ TEST(router_cluster_test, name_the_nodes_of_the_cluster_in_the_health_of_the_ins
 	cluster::fake_forwarder nobody;
 	router::router router(repository, nodes, nobody);
 
-	boost::json::array named = router.route(get("/health")).json.at("nodes").as_array();
+	boost::json::array named = router::routed(router, get("/health")).json.at("nodes").as_array();
 
 	ASSERT_EQ(named.size(), 2u);
 	EXPECT_EQ(named[0].as_string(), here);
@@ -2498,7 +2435,7 @@ TEST(router_cluster_test, name_the_zones_of_the_cluster_in_the_health_of_the_ins
 	cluster::fake_forwarder nobody;
 	router::router router(repository, nodes, nobody);
 
-	boost::json::object zones = router.route(get("/health")).json.at("zones").as_object();
+	boost::json::object zones = router::routed(router, get("/health")).json.at("zones").as_object();
 
 	ASSERT_EQ(zones.size(), 3u);
 	EXPECT_EQ(zones.at("a").as_array()[0].as_string(), here);
@@ -2514,12 +2451,12 @@ TEST(router_cluster_test, count_the_partitions_this_node_leads_in_the_health_of_
 	cluster::fake_forwarder nobody;
 	router::router router(repository, nodes, nobody);
 
-	EXPECT_EQ(router.route(get("/health")).json.at("leads").as_int64(), 0);
+	EXPECT_EQ(router::routed(router, get("/health")).json.at("leads").as_int64(), 0);
 
 	nodes.led_by("4821", here, 41);
 	nodes.led_by("4822", there, 41);
 
-	EXPECT_EQ(router.route(get("/health")).json.at("leads").as_int64(), 1);
+	EXPECT_EQ(router::routed(router, get("/health")).json.at("leads").as_int64(), 1);
 }
 
 // Where the membership comes from is the first question of a cluster that is wrong about itself,
@@ -2533,7 +2470,7 @@ TEST(router_cluster_test, name_the_etcd_this_node_reads_the_membership_from)
 
 	nodes.reads_etcd("http://etcd:2379");
 
-	boost::json::object etcd = router.route(get("/health")).json.at("etcd").as_object();
+	boost::json::object etcd = router::routed(router, get("/health")).json.at("etcd").as_object();
 
 	EXPECT_EQ(etcd.at("endpoint").as_string(), "http://etcd:2379");
 	EXPECT_EQ(etcd.at("registered"), true);
@@ -2551,7 +2488,7 @@ TEST(router_cluster_test, say_that_this_node_is_no_longer_registered_in_etcd)
 	nodes.reads_etcd("http://etcd:2379");
 	nodes.lost_etcd();
 
-	boost::json::object etcd = router.route(get("/health")).json.at("etcd").as_object();
+	boost::json::object etcd = router::routed(router, get("/health")).json.at("etcd").as_object();
 
 	EXPECT_EQ(etcd.at("registered"), false);
 	EXPECT_EQ(etcd.at("endpoint").as_string(), "http://etcd:2379");
@@ -2564,7 +2501,7 @@ TEST(router_cluster_test, name_no_etcd_when_the_instance_was_told_none)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	EXPECT_FALSE(router.route(get("/health")).json.contains("etcd"));
+	EXPECT_FALSE(router::routed(router, get("/health")).json.contains("etcd"));
 }
 
 TEST(router_cluster_test, name_no_zones_when_the_cluster_has_none)
@@ -2574,7 +2511,7 @@ TEST(router_cluster_test, name_no_zones_when_the_cluster_has_none)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, nodes, nobody);
 
-	router::response response = router.route(get("/health"));
+	router::response response = router::routed(router, get("/health"));
 
 	EXPECT_TRUE(response.json.contains("nodes"));
 	EXPECT_FALSE(response.json.contains("zones"));
@@ -2587,7 +2524,7 @@ TEST(router_cluster_test, name_no_nodes_when_the_instance_stands_alone)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	EXPECT_FALSE(router.route(get("/health")).json.contains("nodes"));
+	EXPECT_FALSE(router::routed(router, get("/health")).json.contains("nodes"));
 }
 
 // How a node's share of a table reaches another node. It is served out of this store alone and is
@@ -2606,7 +2543,7 @@ TEST(router_test, answers_a_file_of_the_records_of_the_partitions_asked_for)
 
 	taking.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
-	router::response response = router.route(get("/table/account/file?partitions=" + only("1")));
+	router::response response = router::routed(router, get("/table/account/file?partitions=" + only("1")));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 	EXPECT_EQ(response.content_type, router::file_content_type);
@@ -2625,7 +2562,7 @@ TEST(router_test, answers_no_file_of_a_table_that_is_not_there)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	router::response response = router.route(get("/table/account/file?partitions=" + every_partition()));
+	router::response response = router::routed(router, get("/table/account/file?partitions=" + every_partition()));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::not_found);
 	EXPECT_EQ(error_code(response), "table_not_found");
@@ -2642,8 +2579,8 @@ TEST(router_test, refuses_a_file_of_something_that_is_not_a_set_of_partitions)
 
 	create_table(router, "account");
 
-	EXPECT_EQ(error_code(router.route(get("/table/account/file"))), "invalid_partitions");
-	EXPECT_EQ(error_code(router.route(get("/table/account/file?partitions=ff"))), "invalid_partitions");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/file"))), "invalid_partitions");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/file?partitions=ff"))), "invalid_partitions");
 }
 
 TEST(router_test, refuses_a_file_resumed_at_something_that_is_not_a_cursor)
@@ -2655,7 +2592,7 @@ TEST(router_test, refuses_a_file_resumed_at_something_that_is_not_a_cursor)
 
 	create_table(router, "account");
 
-	router::response response = router.route(
+	router::response response = router::routed(router, 
 		get("/table/account/file?partitions=" + every_partition() + "&from=not%20base64"));
 
 	EXPECT_EQ(error_code(response), "invalid_cursor");
@@ -2670,7 +2607,7 @@ TEST(router_test, a_file_is_read_and_never_written)
 
 	create_table(router, "account");
 
-	router::response response = router.route(del("/table/account/file?partitions=" + every_partition()));
+	router::response response = router::routed(router, del("/table/account/file?partitions=" + every_partition()));
 
 	EXPECT_EQ(error_code(response), "method_not_allowed");
 }
@@ -2693,7 +2630,7 @@ TEST(router_test, answers_a_file_of_keys_alone_when_the_values_are_not_wanted)
 	giving.write_record("account", record::valid_record("2", "mine"));
 
 	router::response response =
-		router.route(get("/table/account/file?values=false&partitions=" + every_partition()));
+		router::routed(router, get("/table/account/file?values=false&partitions=" + every_partition()));
 
 	EXPECT_EQ(1u, response.file.records);
 
@@ -2719,7 +2656,7 @@ TEST(router_test, says_where_a_table_would_be_cut_up)
 		write_record(router, "account", std::to_string(10 + i), "a value");
 	}
 
-	router::response response = router.route(get("/table/account/split?ways=4"));
+	router::response response = router::routed(router, get("/table/account/split?ways=4"));
 
 	EXPECT_EQ(response.status, boost::beast::http::status::ok);
 
@@ -2744,7 +2681,7 @@ TEST(router_test, cuts_a_table_up_no_ways_when_it_is_asked_for_one_piece)
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
 
-	EXPECT_TRUE(router.route(get("/table/account/split?ways=1")).json.at("keys").as_array().empty());
+	EXPECT_TRUE(router::routed(router, get("/table/account/split?ways=1")).json.at("keys").as_array().empty());
 }
 
 TEST(router_test, refuses_a_split_of_a_table_that_is_not_there)
@@ -2754,7 +2691,7 @@ TEST(router_test, refuses_a_split_of_a_table_that_is_not_there)
 	cluster::fake_forwarder nobody;
 	router::router router(repository, alone, nobody);
 
-	EXPECT_EQ(error_code(router.route(get("/table/account/split?ways=4"))), "table_not_found");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/split?ways=4"))), "table_not_found");
 }
 
 TEST(router_test, refuses_a_split_into_something_that_is_not_a_number_of_ways)
@@ -2766,9 +2703,9 @@ TEST(router_test, refuses_a_split_into_something_that_is_not_a_number_of_ways)
 
 	create_table(router, "account");
 
-	EXPECT_EQ(error_code(router.route(get("/table/account/split"))), "invalid_range");
-	EXPECT_EQ(error_code(router.route(get("/table/account/split?ways=lots"))), "invalid_range");
-	EXPECT_EQ(error_code(router.route(get("/table/account/split?ways=0"))), "invalid_range");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/split"))), "invalid_range");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/split?ways=lots"))), "invalid_range");
+	EXPECT_EQ(error_code(router::routed(router, get("/table/account/split?ways=0"))), "invalid_range");
 }
 
 // The ends of a piece, which are what make the pieces of a split walk a cover: `to` is the last key
@@ -2788,7 +2725,7 @@ TEST(router_test, answers_a_file_that_ends_where_it_was_told_to)
 
 	taking.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
 
-	router::response response = router.route(
+	router::response response = router::routed(router, 
 		get("/table/account/file?partitions=" + every_partition() + "&to=" + url::encode(base64::encode("2"))));
 
 	EXPECT_EQ(2u, response.file.records);
@@ -2810,7 +2747,7 @@ TEST(router_test, answers_a_file_of_no_more_of_the_table_than_it_was_asked_for)
 	write_record(router, "account", "2", "two");
 
 	router::response response =
-		router.route(get("/table/account/file?bytes=1&partitions=" + every_partition()));
+		router::routed(router, get("/table/account/file?bytes=1&partitions=" + every_partition()));
 
 	EXPECT_EQ(1u, response.file.records);
 	EXPECT_FALSE(response.file.next.empty());
@@ -2825,10 +2762,10 @@ TEST(router_test, write_then_read_a_record_of_two_parts)
 
 	create_table(router, "account");
 
-	router::response written = router.route(put("/table/account/key/4821/2019", "Eleanor Whitmore"));
+	router::response written = router::routed(router, put("/table/account/key/4821/2019", "Eleanor Whitmore"));
 
 	EXPECT_EQ(written.status, boost::beast::http::status::no_content);
-	EXPECT_EQ(router.route(get("/table/account/key/4821/2019")).text, "Eleanor Whitmore");
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821/2019")).text, "Eleanor Whitmore");
 }
 
 // The sort key is part of what a record is, so a partition key of its own is a key of its own.
@@ -2840,11 +2777,11 @@ TEST(router_test, a_partition_key_and_a_key_sorting_under_it_are_different_recor
 	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
-	router.route(put("/table/account/key/4821", "the account"));
-	router.route(put("/table/account/key/4821/2019", "a year of it"));
+	router::routed(router, put("/table/account/key/4821", "the account"));
+	router::routed(router, put("/table/account/key/4821/2019", "a year of it"));
 
-	EXPECT_EQ(router.route(get("/table/account/key/4821")).text, "the account");
-	EXPECT_EQ(router.route(get("/table/account/key/4821/2019")).text, "a year of it");
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821")).text, "the account");
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821/2019")).text, "a year of it");
 }
 
 // The two halves are one key with a zero byte between them, so the two ways of writing it down
@@ -2857,9 +2794,9 @@ TEST(router_test, a_key_of_two_parts_is_the_key_carrying_a_zero_byte)
 	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
-	router.route(put("/table/account/key/4821/2019", "Eleanor Whitmore"));
+	router::routed(router, put("/table/account/key/4821/2019", "Eleanor Whitmore"));
 
-	EXPECT_EQ(router.route(get("/table/account/key/4821%002019")).text, "Eleanor Whitmore");
+	EXPECT_EQ(router::routed(router, get("/table/account/key/4821%002019")).text, "Eleanor Whitmore");
 }
 
 TEST(router_test, a_scan_says_which_half_of_a_key_is_which)
@@ -2870,10 +2807,10 @@ TEST(router_test, a_scan_says_which_half_of_a_key_is_which)
 	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
-	router.route(put("/table/account/key/4821/2019", "a year of it"));
+	router::routed(router, put("/table/account/key/4821/2019", "a year of it"));
 
 	boost::json::object record =
-		router.route(get("/table/account/key?key=4821")).json.at("records").as_array()[0].as_object();
+		router::routed(router, get("/table/account/key?key=4821")).json.at("records").as_array()[0].as_object();
 
 	EXPECT_EQ(record.at("key"), "4821");
 	EXPECT_EQ(record.at("sort"), "2019");
@@ -2891,7 +2828,7 @@ TEST(router_test, a_scan_of_keys_of_one_part_says_nothing_about_sorting)
 	write_record(router, "account", "4821", "Eleanor Whitmore");
 
 	boost::json::object record =
-		router.route(get("/table/account/key?key=4821")).json.at("records").as_array()[0].as_object();
+		router::routed(router, get("/table/account/key?key=4821")).json.at("records").as_array()[0].as_object();
 
 	EXPECT_EQ(record.at("key"), "4821");
 	EXPECT_FALSE(record.contains("sort"));
@@ -2908,14 +2845,14 @@ TEST(router_test, records_of_one_partition_key_scan_together_in_sort_key_order)
 	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
-	router.route(put("/table/account/key/48210", "another account"));
-	router.route(put("/table/account/key/4821/2020", "a later year"));
-	router.route(put("/table/account/key/4821/2019", "a year"));
-	router.route(put("/table/account/key/4821", "the account"));
+	router::routed(router, put("/table/account/key/48210", "another account"));
+	router::routed(router, put("/table/account/key/4821/2020", "a later year"));
+	router::routed(router, put("/table/account/key/4821/2019", "a year"));
+	router::routed(router, put("/table/account/key/4821", "the account"));
 
 	std::vector<std::string> values;
 	boost::json::array records =
-		router.route(get("/table/account/key?key=4821")).json.at("records").as_array();
+		router::routed(router, get("/table/account/key?key=4821")).json.at("records").as_array();
 
 	std::ranges::transform(
 		records,
@@ -2925,7 +2862,7 @@ TEST(router_test, records_of_one_partition_key_scan_together_in_sort_key_order)
 	EXPECT_EQ(values, (std::vector<std::string> { "the account", "a year", "a later year" }));
 
 	EXPECT_EQ(
-		keys(router.route(get("/table/account/key?key=48210"))),
+		keys(router::routed(router, get("/table/account/key?key=48210"))),
 		(std::vector<std::string> { "48210" }));
 }
 
@@ -2939,13 +2876,13 @@ TEST(router_test, a_partition_key_and_nothing_else_is_a_bounded_range)
 	router::router router(repository, alone, nobody);
 
 	create_table(router, "account");
-	router.route(put("/table/account/key/4821", "the account"));
-	router.route(put("/table/account/key/4821/2019", "a year"));
-	router.route(put("/table/account/key/4821/2020", "a later year"));
+	router::routed(router, put("/table/account/key/4821", "the account"));
+	router::routed(router, put("/table/account/key/4821/2019", "a year"));
+	router::routed(router, put("/table/account/key/4821/2020", "a later year"));
 
 	// A prefix of the partition key carries its own records and no more, because a prefix is a
 	// prefix of the bytes: it cannot tell the separator from a key that carries those bytes and
 	// more — and a key that does is in another partition anyway.
-	EXPECT_EQ(keys(router.route(get("/table/account/key?key=4821&from=4821&to=4821%01"))).size(), 3u);
-	EXPECT_EQ(keys(router.route(get("/table/account/key?key=4821&prefix=4821"))).size(), 3u);
+	EXPECT_EQ(keys(router::routed(router, get("/table/account/key?key=4821&from=4821&to=4821%01"))).size(), 3u);
+	EXPECT_EQ(keys(router::routed(router, get("/table/account/key?key=4821&prefix=4821"))).size(), 3u);
 }

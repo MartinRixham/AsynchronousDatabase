@@ -171,11 +171,13 @@ instance with no `ASYNCDB_ZONE` still behaves.
 
 ## One leader for each partition
 
-Copies alone do not say what happens when two clients write the same key at the
-same moment. Written to each copy independently, the copies can settle on
-different values and stay that way. So one of the three copies of a partition
-**leads** it, and every write of every key in that partition is ordered by that
-one node.
+One of the three copies of a partition **leads** it, and every write of every key
+in that partition goes through that one node, which stamps it with a version and
+carries it to every copy. It does not hold one write back behind another: two
+clients writing the same key at the same moment are two writes carried side by
+side, and the copies can take them in different orders and settle on different
+values. The version says which of the two is the later wherever something
+compares copies.
 
 **Which of the copies leads is decided by the membership, not by the race.** The
 leader of a partition is the node that wins it across the whole membership under
@@ -648,15 +650,16 @@ it ends.
   nowhere else, and a pass runs when the membership moves or a node starts on a
   store it did not fill.
 
-  **A leader orders writes; it does not replicate them.** Ordering is what stops
-  two clients diverging the copies. Catching a copy up is what a replication log
-  would do, and there is not one.
+  **A leader stamps writes; it neither orders nor replicates them.** Two writes of
+  one key at once can leave the copies disagreeing — each holds whichever of the
+  two reached it last — until a pass compares them. Catching a copy up is what a replication
+  log would do, and there is not one.
 - **A write needs a leader, and a leader needs etcd.** A partition whose leader
   has gone is unwritable until its lease runs out and the node the membership
   names next claims it — ten seconds at the outside — and a cluster that cannot reach etcd at all keeps
   the leaders it last read and elects no new ones. Reads never wait for any of
-  this. That is the trade leadership makes: writes are ordered, and they are
-  ordered by a node that has to be there.
+  this. That is the trade leadership makes: writes are stamped, and they are
+  stamped by a node that has to be there.
 - **A write is only as available as its least available zone.** Every copy has to
   take a write, so a zone that is down stops writes to the keys it holds while
   reads carry on from the zones that are up. Replication here is for reading

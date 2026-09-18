@@ -54,6 +54,13 @@ namespace cluster
 
 		std::vector<router::response> forward_each(const std::vector<enquiry> &enquiries) const override;
 
+		boost::asio::awaitable<router::response> async_forward(const std::string &node, const router::request &request)
+			const override;
+
+		boost::asio::awaitable<std::vector<router::response>> async_forward_all(
+			const std::vector<std::string> &nodes,
+			const router::request &request) const override;
+
 		const std::vector<std::pair<std::string, router::request>> &sent() const;
 
 		void forget();

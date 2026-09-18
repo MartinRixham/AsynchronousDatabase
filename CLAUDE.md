@@ -368,12 +368,14 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 
 - **`server::server`** owns the `io_context`, the acceptor and a thread pool sized by
   `server::thread_pool_size()` — `ASYNCDB_THREADS`, defaulting to eight threads a core, bounded to
-  between sixteen and a hundred and twenty-eight. **It is deliberately not `hardware_concurrency()`**: a thread here waits on
-  another node for most of a forwarded request, so the pool is a count of requests that can be in
-  flight rather than of cores, and two threads on a two core instance is a server that two waiting
-  requests fill — health check included, which is what has the instance replaced. Each thread keeps
-  its own connections and the `io_context` they run on, so the pool is how many connections a node
-  holds to each neighbour and three descriptors a thread besides.
+  between sixteen and a hundred and twenty-eight. **It is deliberately not `hardware_concurrency()`**: every request but a
+  record's holds its thread while it waits on another node, so the pool is a count of those that
+  can be in flight rather than of cores, and two threads on a two core instance is a server that two
+  waiting requests fill — health check included, which is what has the instance replaced. Each thread
+  keeps its own connections and the `io_context` they run on, so the pool is how many connections a
+  node holds to each neighbour and three descriptors a thread besides. **A request for a record is
+  the exception**: what it asks another node is awaited on the server's own `io_context`, and holds
+  no thread while it waits.
   It also owns the single `rocksdb_repository` and `router`, which are shared
   by reference across all sessions — anything reached from the router must be safe for concurrent use.
   Constructing with port `0` picks a free port and exposes it via `port()`; tests rely on this.
@@ -384,7 +386,8 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   instance out of the load balancer while it still answers: one that goes silent first costs every
   request sent to it a `504` the idle timeout later.
 - **`server::session`** is one connection: async read → `handle_request()` → async write, looping while
-  keep-alive. The server holds every live session weakly, because **closing the acceptor does not
+  keep-alive. `handle_request()` is a coroutine spawned on the connection's strand, which is where it
+  resumes whichever thread the node it was waiting on answered on. The server holds every live session weakly, because **closing the acceptor does not
   close the connections already made**: peers and the nginx upstream pool both keep theirs open, and
   a session waiting for a request that is not coming would hold `serve()` open until its 60 second
   timeout. `close()` therefore cuts the waiting sessions and lets the busy ones finish, answering
@@ -410,7 +413,16 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   `/table/{table}/file` and `/table/{table}/split` — and returns a
   `router::response` (status, content type, and either a `boost::json::object` or the raw text of a
   value). `router/api_error.cpp`
-  is the one place a documented error code is mapped to a status.
+  is the one place a documented error code is mapped to a status. **`route()` answers an
+  awaitable, and only a record waits in it**: `route_record` decides on the thread serving it —
+  reading the store and asking the membership included — and what it asks another node is a coroutine
+  of its own taking what it needs by value, the call that started it having returned before it runs.
+  That split is also what keeps each frame small: GCC reports an Asio coroutine frame much over a
+  kibibyte as a mismatched delete. Every other route is answered where it is called, blocking as it
+  always has, and handed back already done. **Two writes of one key are not ordered against each
+  other**: the leader stamps each and fans them out side by side, so the copies may take them in two
+  orders. A schema operation is, under `schema_lock`, because a create is validated against every
+  other table.
 - **`http::client`** is the seam over the network, and `beast_client` is Beast and Asio behind it.
   Each thread keeps a `http::pool` of its own — `thread_local` in `beast_client.cpp` — which is the
   `io_context` every transfer of that thread runs on and the connections it holds open, kept under
@@ -427,7 +439,11 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   call. **A connection out of the pool may have been closed at the other end while nothing was going
   on it**, and what says so is the request that fails on it: an exchange given a kept connection
   makes its request again on a connection of its own, once, and only while nothing of the answer has
-  been read. `feed` is the other shape, an answer that does not end on its own — the body is
+  been read. **`async_send` and `async_send_all` are the same exchanges awaited on the executor of
+  the coroutine asking**, which is the server's strand for a record: they take connections from an
+  `http::shared_pool` — a service of that io_context, so the sockets go before the io_context does —
+  rather than the thread's, and a connection made on one strand is safe to hand another because what
+  a transfer completes through is the asking coroutine's executor. `feed` is the other shape, an answer that does not end on its own — the body is
   handed to the receiver as it arrives, on a connection this call alone holds, and stopping one is
   posted to its `io_context` rather than done on the thread that asked for it, a socket closed under
   the read on it being a race. Connecting is bounded apart from the transfer, and `TCP_USER_TIMEOUT`
@@ -443,7 +459,9 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   and what came back into a `router::response`. `forward_all` is a **fan out** and answers one for
   one in the order the nodes were named; `cluster::refusal` is what a write does with that, the
   copies of a record being written beside each other rather than one behind another, and
-  `forward_each` is what a walk reading a share in several pieces at once asks with. **It is handed
+  `forward_each` is what a walk reading a share in several pieces at once asks with.
+  `async_forward` and `async_forward_all` are the first two awaited rather than called, which is
+  what a record asks with. **It is handed
   to the server and not to the cluster**: where a key lives and how to get there are two questions,
   so `main.cpp` builds one over the `http::client` and hands it to `server::server`, which passes it
   to the router and to the passes that move records — and a test names the nodes without standing
@@ -543,7 +561,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   makes every call site right without asking: the export walk, the reconcile pass and the leader
   claim all hand it a key out of the store. The cost is that **a partition key is never split**: it
   is the unit the cluster balances, so one with far more under it than the others is a node with
-  more of the table than the others. A write is ordered by the node
+  more of the table than the others. A write is stamped by the node
   **leading** the key's partition, which writes the copy in every zone and every one of them has to
   take it — all of them at once, so a copy that refuses is a copy the others were written beside
   rather than ahead of; a read goes to one copy — this node when it
@@ -566,7 +584,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   and carried to every node**: it is not a record of any partition, so what orders it is the leader
   of `cluster::table_key`, one constant, and from there it goes to every node because a record can
   only be written where its table is. `router::order_schema` is those two hops and the term fence,
-  and the leader holds `write_lock(cluster::table_key)` across the whole of one — the tables are
+  and the leader holds `schema_lock` across the whole of one — the tables are
   read, validated against and written under it, so a create is weighed against what the cluster
   held when it was carried out rather than when it arrived, and two creates of one name cannot be
   applied on two nodes at once. A scan names a partition, and **one node of a zone holds a
@@ -736,7 +754,8 @@ drives it with libcurl. `test/server/cluster_test.cpp` is the same thing twice o
 on two ports, each given a `cluster::test_cluster` naming the other — the production routing with the
 membership and the leader told to it rather than read from etcd — and both given the real
 `cluster::http_forwarder`, so forwarding, table fan-out and scans routed by partition are exercised
-over real sockets. Both have to stop
+over real sockets. `router::routed` (`test/router/routed.h`) runs `route()` to its end on an
+`io_context` of the test's own, which is how a unit test asks the router anything. Both have to stop
 the servers they start, and both wait on `server::wait_until_listening` (`test/server/listening.h`)
 first: a server binds in its constructor, which is what settles the port a test asks it for, and
 listens only in `serve()`, once the store is filled and the node has joined — so a test that started

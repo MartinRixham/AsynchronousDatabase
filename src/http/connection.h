@@ -3,15 +3,15 @@
 #include <chrono>
 #include <string>
 
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/beast/core/flat_buffer.hpp>
 #include <boost/beast/core/tcp_stream.hpp>
 
 namespace http
 {
-	// One connection to one node, kept open between the requests that go there. It belongs to the
-	// thread that made it and is never shared: two answers read into one buffer are neither.
+	// One connection to one node, kept open between the requests that go there. It belongs to one
+	// request at a time and is never shared: two answers read into one buffer are neither.
 	class connection
 	{
 		std::string host_name;
@@ -23,7 +23,7 @@ namespace http
 		boost::beast::flat_buffer received;
 
 	public:
-		connection(boost::asio::io_context &context, const std::string &host, const std::string &port);
+		connection(const boost::asio::any_io_executor &executor, const std::string &host, const std::string &port);
 
 		connection(const connection &) = delete;
 

@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include <boost/asio/awaitable.hpp>
+
 #include "api_error.h"
 #include "record/record.h"
 #include "scan/scan.h"
@@ -30,29 +32,20 @@ namespace router
 		// questions, and the router asks each of them of the seam that answers it.
 		const cluster::forwarder &forwarding;
 
-		// There are far more stripes than the pool has threads because a collision is not cheap:
-		// a stripe is held across the fan out, so the second key waits a round trip on the first.
-		static constexpr size_t write_stripes = 16384;
-
-		// A cache line each. Several mutexes to a line would have two threads holding *different*
-		// stripes writing the same line for the whole of both fan outs, which is the contention
-		// the striping is there to avoid. Written out rather than taken from
-		// hardware_destructive_interference_size, which GCC warns about using across a boundary.
-		static constexpr size_t cache_line = 64;
-
-		struct alignas(cache_line) write_stripe
-		{
-			std::mutex lock;
-		};
-
-		std::array<write_stripe, write_stripes> write_locks;
+		// What a schema operation is ordered under, so that a create is validated against the tables
+		// as they stand when it is carried out.
+		std::mutex schema_lock;
 
 		std::atomic<bool> draining = false;
 
 	public:
 		router(repository::repository &repo, cluster::cluster &nodes, const cluster::forwarder &forwarding);
 
-		response route(const request &request);
+		// Worked out as it is called, and awaited on the executor of the connection it arrived on for
+		// what it waits on. A request for a record asks the other nodes without holding a thread;
+		// everything else is answered on the thread serving it, the nodes it asks included. The
+		// request has to outlive the wait.
+		boost::asio::awaitable<response> route(const request &request);
 
 		// Whether this node is on its way out. It serves everything as normal and fails its health
 		// check, so that a load balancer has stopped choosing it by the time it stops answering.
@@ -71,28 +64,40 @@ namespace router
 
 		response route_split(const request &request, const std::string &name);
 
-		response route_record(
+		boost::asio::awaitable<response> route_record(
 			const request &request,
 			const std::string &name,
 			const std::string &partition,
 			const std::string &sort);
-
-		// The lock that orders writes to this key. Only the leader of the key's partition takes
-		// it: a copy applies the writes one leader sends it, in the order it is sent them.
-		std::mutex &write_lock(const std::string &key);
 
 		// Where the copies of the key are, for a request that has not already worked it out. A
 		// forwarded request is served where it lands and asks nothing of the membership, so the
 		// leader of a forwarded write is the one caller that has to ask.
 		cluster::placement replicas_of(const request &request, const cluster::placement &known, const std::string &key);
 
-		response write_record(
+		// What waits on another node takes what it needs by value, the call that started it having
+		// returned before it runs. GCC reports a coroutine frame much over a kibibyte as a
+		// mismatched delete, which is why the deciding is done before any of them is started.
+		boost::asio::awaitable<response> order_write(
 			const request &request,
-			const std::string &name,
-			const record::record &record,
-			const cluster::placement &where);
+			std::string name,
+			record::record record,
+			cluster::placement where,
+			int64_t term);
 
-		response read_record(const request &request, const std::vector<std::string> &replicas);
+		boost::asio::awaitable<response> write_record(
+			const request &request,
+			std::string name,
+			record::record record,
+			cluster::placement where);
+
+		boost::asio::awaitable<response> forward_to_leader(const request &request, cluster::leadership lead);
+
+		// The answer of the first copy that answered, passing over one that did not.
+		boost::asio::awaitable<response> read_record(const request &request, cluster::placement where);
+
+		// The same for a scan, asked on the thread serving it.
+		response read_copies(const request &request, const std::vector<std::string> &replicas);
 
 		// Whether any partition this node holds is one its store is not known to hold the whole
 		// of. A table is no partition's, so a table this node does not have is unknown to it while

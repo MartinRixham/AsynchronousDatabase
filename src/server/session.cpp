@@ -2,6 +2,7 @@
 #include <utility>
 #include <string>
 
+#include <boost/asio/co_spawn.hpp>
 #include <boost/beast/version.hpp>
 #include <boost/lexical_cast/try_lexical_convert.hpp>
 
@@ -153,7 +154,29 @@ void server::session::on_read(boost::beast::error_code error, std::size_t)
 
 	request = parser->release();
 
-	http_response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(handle_request());
+	boost::asio::co_spawn(
+		stream.get_executor(),
+		handle_request(),
+		[self = shared_from_this()](
+			const std::exception_ptr &thrown,
+			boost::beast::http::response<boost::beast::http::string_body> answer)
+		{
+			// Everything the router throws is answered, so what is left is a response that could
+			// not be built at all, and there is nothing to write.
+			if (thrown)
+			{
+				self->close();
+
+				return;
+			}
+
+			self->write(std::move(answer));
+		});
+}
+
+void server::session::write(boost::beast::http::response<boost::beast::http::string_body> &&answer)
+{
+	http_response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(std::move(answer));
 
 	boost::beast::http::async_write(
 		stream,
@@ -203,7 +226,8 @@ void server::session::read()
 		boost::beast::bind_front_handler(&session::on_read, shared_from_this()));
 }
 
-boost::beast::http::response<boost::beast::http::string_body> server::session::handle_request() const
+boost::asio::awaitable<boost::beast::http::response<boost::beast::http::string_body>> server::session::handle_request()
+	const
 {
 	bool head = request.method() == boost::beast::http::verb::head;
 	std::string target(request.target());
@@ -232,7 +256,7 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 
 		try
 		{
-			response = router.route(routed);
+			response = co_await router.route(routed);
 		}
 		catch (const repository::storage_error &error)
 		{
@@ -247,7 +271,7 @@ boost::beast::http::response<boost::beast::http::string_body> server::session::h
 
 	// A connection is not kept alive into a shutdown: the client is told to close, and finds
 	// another node or comes back to this one.
-	return make_response(request.version(), request.keep_alive() && !stopping, response, head);
+	co_return make_response(request.version(), request.keep_alive() && !stopping, response, head);
 }
 
 void server::session::close()

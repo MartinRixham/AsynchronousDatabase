@@ -18,8 +18,13 @@
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
+#include <boost/asio/deferred.hpp>
+#include <boost/asio/execution/context.hpp>
+#include <boost/asio/experimental/parallel_group.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/query.hpp>
+#include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/beast/core/span.hpp>
 #include <boost/beast/http/buffer_body.hpp>
@@ -35,6 +40,7 @@
 #include "log.h"
 #include "connection.h"
 #include "pool.h"
+#include "shared_pool.h"
 #include "beast_client.h"
 
 namespace
@@ -494,6 +500,77 @@ namespace
 
 		return responses;
 	}
+
+	// The same fan out on the executor of the coroutine awaiting it, with the connections its
+	// io_context holds rather than the thread's. Every exchange is started before any is waited for,
+	// and none of them holds a thread while it waits.
+	boost::asio::awaitable<std::vector<http::response>> shared_fan_out(
+		std::span<const http::request> requests,
+		long timeout_seconds,
+		long connect_timeout_seconds,
+		long unacknowledged_timeout_seconds)
+	{
+		boost::asio::any_io_executor executor = co_await boost::asio::this_coro::executor;
+		http::shared_pool &held = boost::asio::use_service<http::shared_pool>(
+			boost::asio::query(executor, boost::asio::execution::context));
+		std::vector<http::response> responses(requests.size());
+		std::vector<std::unique_ptr<http::connection>> links;
+
+		// Which response each exchange answers, a request that is no URL having none.
+		std::vector<size_t> asked;
+		std::vector<decltype(boost::asio::co_spawn(
+			executor,
+			std::declval<boost::asio::awaitable<http::response>>(),
+			boost::asio::deferred))> exchanges;
+
+		for (size_t i = 0; i < requests.size(); i++)
+		{
+			std::optional<location> where = locate(requests[i].url);
+
+			if (!where)
+			{
+				responses[i].message = not_a_url(requests[i].url);
+
+				continue;
+			}
+
+			links.push_back(held.take(executor, where->host, where->port));
+			asked.push_back(i);
+			exchanges.push_back(boost::asio::co_spawn(
+				executor,
+				exchange(
+					*links.back(),
+					requests[i],
+					timeout_seconds,
+					connect_timeout_seconds,
+					unacknowledged_timeout_seconds),
+				boost::asio::deferred));
+		}
+
+		if (!exchanges.empty())
+		{
+			auto group = boost::asio::experimental::make_parallel_group(std::move(exchanges));
+			auto [order, thrown, answers] =
+				co_await group.async_wait(boost::asio::experimental::wait_for_all(), boost::asio::use_awaitable);
+
+			for (size_t i = 0; i < asked.size(); i++)
+			{
+				if (thrown[i])
+				{
+					std::rethrow_exception(thrown[i]);
+				}
+
+				responses[asked[i]] = std::move(answers[i]);
+			}
+		}
+
+		for (auto &link : links)
+		{
+			held.keep(std::move(link));
+		}
+
+		co_return responses;
+	}
 }
 
 http::beast_client::beast_client(long connect_timeout, long unacknowledged_timeout):
@@ -514,6 +591,22 @@ std::vector<http::response> http::beast_client::send_all(const std::vector<reque
 	return fan_out(requests, timeout_seconds, connect_timeout_seconds, unacknowledged_timeout_seconds);
 }
 
+boost::asio::awaitable<http::response> http::beast_client::async_send(const request &request, long timeout_seconds)
+	const
+{
+	std::vector<response> answers = co_await shared_fan_out(
+		std::span(&request, 1), timeout_seconds, connect_timeout_seconds, unacknowledged_timeout_seconds);
+
+	co_return std::move(answers.front());
+}
+
+boost::asio::awaitable<std::vector<http::response>> http::beast_client::async_send_all(
+	const std::vector<request> &requests,
+	long timeout_seconds) const
+{
+	return shared_fan_out(requests, timeout_seconds, connect_timeout_seconds, unacknowledged_timeout_seconds);
+}
+
 // On a connection of its own: an answer still coming down one is nothing to hand back to a pool.
 http::response http::beast_client::stream(
 	const request &request,
@@ -531,7 +624,7 @@ http::response http::beast_client::stream(
 	}
 
 	boost::asio::io_context io;
-	http::connection link(io, where->host, where->port);
+	http::connection link(io.get_executor(), where->host, where->port);
 
 	boost::asio::co_spawn(
 		io,

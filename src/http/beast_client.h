@@ -31,6 +31,13 @@ namespace http
 			const std::vector<request> &requests,
 			long timeout_seconds) const override;
 
+		[[nodiscard]] boost::asio::awaitable<response> async_send(const request &request, long timeout_seconds)
+			const override;
+
+		[[nodiscard]] boost::asio::awaitable<std::vector<response>> async_send_all(
+			const std::vector<request> &requests,
+			long timeout_seconds) const override;
+
 		[[nodiscard]] response stream(
 			const request &request,
 			const std::function<bool(std::string_view)> &receive,

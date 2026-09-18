@@ -56,6 +56,12 @@ namespace
 			error::code::node_alone, "This node has no membership but itself, so it cannot say which node holds a key.");
 	}
 
+	// A route that waits on nothing, as the answer of one that does.
+	boost::asio::awaitable<router::response> answered(router::response answer)
+	{
+		co_return std::move(answer);
+	}
+
 	router::response method_not_allowed(const boost::beast::http::verb &method)
 	{
 		return router::error_response(
@@ -172,7 +178,7 @@ bool router::router::is_draining() const noexcept
 	return draining;
 }
 
-router::response router::router::route(const request &request)
+boost::asio::awaitable<router::response> router::router::route(const request &request)
 {
 	const std::vector<std::string> &path = request.path;
 
@@ -180,7 +186,7 @@ router::response router::router::route(const request &request)
 	{
 		if (request.method != boost::beast::http::verb::get && request.method != boost::beast::http::verb::head)
 		{
-			return method_not_allowed(request.method);
+			return answered(method_not_allowed(request.method));
 		}
 
 		bool unled = nodes.is_unled();
@@ -244,9 +250,9 @@ router::response router::router::route(const request &request)
 		// anything: a node that takes no writes is one a load balancer should stop choosing, and
 		// this is the only place it can be told. It goes on serving the keys it holds and
 		// answering its peers, which do not reach it this way.
-		return json_response(
+		return answered(json_response(
 			unled || leaving ? boost::beast::http::status::service_unavailable : boost::beast::http::status::ok,
-			health);
+			health));
 	}
 
 	// The whole schema, versions and tombstones and all, for a node filling a store or reconciling
@@ -256,25 +262,25 @@ router::response router::router::route(const request &request)
 	{
 		if (request.method != boost::beast::http::verb::get)
 		{
-			return method_not_allowed(request.method);
+			return answered(method_not_allowed(request.method));
 		}
 
-		return json_response(boost::beast::http::status::ok, repository.read_schema().json());
+		return answered(json_response(boost::beast::http::status::ok, repository.read_schema().json()));
 	}
 
 	if (path.empty() || path[0] != "table")
 	{
-		return not_found("route for this path");
+		return answered(not_found("route for this path"));
 	}
 
 	if (path.size() == 1)
 	{
-		return route_tables(request);
+		return answered(route_tables(request));
 	}
 
 	if (path.size() == 2)
 	{
-		return route_table(request, path[1]);
+		return answered(route_table(request, path[1]));
 	}
 
 	// A node asking this one for its share of a table, and where to cut a walk of it up. Both are
@@ -282,22 +288,22 @@ router::response router::router::route(const request &request)
 	// node holds, and no other node has it.
 	if (path.size() == 3 && path[2] == "file")
 	{
-		return route_file(request, path[1]);
+		return answered(route_file(request, path[1]));
 	}
 
 	if (path.size() == 3 && path[2] == "split")
 	{
-		return route_split(request, path[1]);
+		return answered(route_split(request, path[1]));
 	}
 
 	if (path[2] != "key")
 	{
-		return not_found("route for this path");
+		return answered(not_found("route for this path"));
 	}
 
 	if (path.size() == 3)
 	{
-		return route_range(request, path[1]);
+		return answered(route_range(request, path[1]));
 	}
 
 	if (path.size() == 4)
@@ -310,7 +316,7 @@ router::response router::router::route(const request &request)
 		return route_record(request, path[1], path[3], path[4]);
 	}
 
-	return not_found("route for this path");
+	return answered(not_found("route for this path"));
 }
 
 router::response router::router::route_tables(const request &request)
@@ -473,7 +479,7 @@ router::response router::router::route_split(const request &request, const std::
 	return json_response(boost::beast::http::status::ok, boost::json::object { { "keys", keys } });
 }
 
-router::response router::router::route_record(
+boost::asio::awaitable<router::response> router::router::route_record(
 	const request &request,
 	const std::string &name,
 	const std::string &partition,
@@ -482,7 +488,7 @@ router::response router::router::route_record(
 	if (request.method != boost::beast::http::verb::put && request.method != boost::beast::http::verb::get
 		&& request.method != boost::beast::http::verb::head)
 	{
-		return method_not_allowed(request.method);
+		return answered(method_not_allowed(request.method));
 	}
 
 	std::string key = record::compose_key(partition, sort);
@@ -492,7 +498,7 @@ router::response router::router::route_record(
 
 	if (!record.is_valid)
 	{
-		return error_response(record.code, record.message);
+		return answered(error_response(record.code, record.message));
 	}
 
 	// A node with no membership but itself answers every key out of a store holding its share, so
@@ -500,14 +506,14 @@ router::response router::router::route_record(
 	// which it can still say.
 	if (request.method != boost::beast::http::verb::put && !request.forwarded && nodes.is_alone())
 	{
-		return node_alone();
+		return answered(node_alone());
 	}
 
 	// A node that came up short of its share is a node whose tables may be the ones it never
 	// read, so what it does not hold is unknown to it rather than absent.
 	if (!repository.has_table(name))
 	{
-		return is_incomplete() ? node_incomplete() : table_not_found(name);
+		return answered(is_incomplete() ? node_incomplete() : table_not_found(name));
 	}
 
 	cluster::placement where = request.forwarded ? cluster::placement() : nodes.replicas(record.key);
@@ -518,15 +524,15 @@ router::response router::router::route_record(
 		{
 			if (!nodes.accept(record.key, request.term))
 			{
-				return error_response(
-					error::code::stale_leader, "This key is led in a later term than the one that ordered this write.");
+				return answered(error_response(
+					error::code::stale_leader, "This key is led in a later term than the one that ordered this write."));
 			}
 
 			// The version the leader stamped, applied as it was given rather than made again here:
 			// the copies of one write are the same record and have to say so.
 			record.stamp = record::version { request.term, request.count };
 
-			return write_record(request, name, record, where);
+			return write_record(request, name, std::move(record), std::move(where));
 		}
 
 		std::optional<cluster::leadership> lead = nodes.leader(record.key);
@@ -538,65 +544,52 @@ router::response router::router::route_record(
 			// with another node's.
 			record.stamp = record::version { 0, repository.next_count() };
 
-			return write_record(request, name, record, where);
+			return write_record(request, name, std::move(record), std::move(where));
 		}
 
 		if (!lead->known)
 		{
-			return error_response(error::code::no_leader, "No node is leading this key's partition yet.");
+			return answered(error_response(error::code::no_leader, "No node is leading this key's partition yet."));
 		}
 
 		if (!lead->local)
 		{
 			if (request.forwarded)
 			{
-				return error_response(error::code::no_leader, "This node does not lead this key's partition.");
+				return answered(error_response(error::code::no_leader, "This node does not lead this key's partition."));
 			}
 
-			return forwarding.forward(lead->node, request);
+			return forward_to_leader(request, std::move(*lead));
 		}
 
-		std::lock_guard<std::mutex> ordered(write_lock(record.key));
-
-		record.stamp = record::version { lead->term, repository.next_count() };
-
-		return write_record(
-			carried(request, lead->term, record.stamp.count),
-			name,
-			record,
-			replicas_of(request, where, record.key));
+		return order_write(request, name, std::move(record), std::move(where), lead->term);
 	}
 
 	if (!where.local)
 	{
-		return read_record(request, where.nodes);
+		return read_record(request, std::move(where));
 	}
 
 	std::optional<std::string> value = repository.read_record(name, key);
 
 	if (value)
 	{
-		return text_response(boost::beast::http::status::ok, *value);
+		return answered(text_response(boost::beast::http::status::ok, *value));
 	}
 
 	if (!where.nodes.empty())
 	{
-		return read_record(request, where.nodes);
+		return read_record(request, std::move(where));
 	}
 
 	// A partition this node has just been handed is one it holds nothing of until it has fetched
 	// it, so a miss there is a record it may never have received.
 	if (is_short_of(cluster::partition_of(key)))
 	{
-		return node_incomplete();
+		return answered(node_incomplete());
 	}
 
-	return empty_response(boost::beast::http::status::not_found);
-}
-
-std::mutex &router::router::write_lock(const std::string &key)
-{
-	return write_locks[std::hash<std::string>()(key) % write_stripes].lock;
+	return answered(empty_response(boost::beast::http::status::not_found));
 }
 
 cluster::placement router::router::replicas_of(
@@ -607,25 +600,64 @@ cluster::placement router::router::replicas_of(
 	return request.forwarded ? nodes.replicas(key) : known;
 }
 
-router::response router::router::write_record(
+boost::asio::awaitable<router::response> router::router::order_write(
 	const request &request,
-	const std::string &name,
-	const record::record &record,
-	const cluster::placement &where)
+	std::string name,
+	record::record record,
+	cluster::placement where,
+	int64_t term)
+{
+	record.stamp = record::version { term, repository.next_count() };
+
+	::router::request ordered = carried(request, term, record.stamp.count);
+	cluster::placement copies = replicas_of(request, where, record.key);
+
+	co_return co_await write_record(ordered, std::move(name), std::move(record), std::move(copies));
+}
+
+boost::asio::awaitable<router::response> router::router::write_record(
+	const request &request,
+	std::string name,
+	record::record record,
+	cluster::placement where)
 {
 	if (where.local)
 	{
 		repository.write_record(name, record);
 	}
 
-	// Every copy at once, so the thread serving the write waits for the slowest of them rather
-	// than for the sum of them.
-	std::optional<response> refused = cluster::refusal(forwarding.forward_all(where.nodes, request));
+	// Every copy at once, so the write waits for the slowest of them rather than for the sum of them.
+	std::vector<response> answers = co_await forwarding.async_forward_all(where.nodes, request);
+	std::optional<response> refused = cluster::refusal(answers);
 
-	return refused ? *refused : empty_response(boost::beast::http::status::no_content);
+	co_return refused ? *refused : empty_response(boost::beast::http::status::no_content);
 }
 
-router::response router::router::read_record(const request &request, const std::vector<std::string> &replicas)
+boost::asio::awaitable<router::response> router::router::forward_to_leader(
+	const request &request,
+	cluster::leadership lead)
+{
+	co_return co_await forwarding.async_forward(lead.node, request);
+}
+
+boost::asio::awaitable<router::response> router::router::read_record(const request &request, cluster::placement where)
+{
+	response answer = error_response(error::code::storage_error, "No node holding this key answered.");
+
+	for (const auto &replica : where.nodes)
+	{
+		answer = co_await forwarding.async_forward(replica, request);
+
+		if (answer.status < boost::beast::http::status::internal_server_error)
+		{
+			co_return answer;
+		}
+	}
+
+	co_return answer;
+}
+
+router::response router::router::read_copies(const request &request, const std::vector<std::string> &replicas)
 {
 	response answer = error_response(error::code::storage_error, "No node holding this key answered.");
 
@@ -720,7 +752,7 @@ router::response router::router::create_table(const request &request, const std:
 	// The tables are read, compared and written under the one lock every schema operation takes,
 	// so what this create is valid against is what the cluster held when it was carried out and
 	// not what it held when it arrived.
-	std::lock_guard<std::mutex> ordered(write_lock(cluster::table_key));
+	std::lock_guard<std::mutex> ordered(schema_lock);
 
 	table::table table = table::parse_table(name, *body, table_names());
 
@@ -764,7 +796,7 @@ router::response router::router::delete_table(const request &request, const std:
 		return *order.answer;
 	}
 
-	std::lock_guard<std::mutex> ordered(write_lock(cluster::table_key));
+	std::lock_guard<std::mutex> ordered(schema_lock);
 
 	record::version stamp = schema_stamp(request, order);
 
@@ -840,7 +872,7 @@ router::response router::router::scan_records(const request &request, const std:
 	// of them. So it asks a copy that can, and answers for itself only when there is no other.
 	if (!where.nodes.empty())
 	{
-		return read_record(request, where.nodes);
+		return read_copies(request, where.nodes);
 	}
 
 	return whole ? answer_page(request, name) : node_incomplete();

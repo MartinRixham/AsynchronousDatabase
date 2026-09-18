@@ -21,6 +21,7 @@
 #include "transfer/transfer.h"
 #include "cluster/fake_cluster.h"
 #include "cluster/fake_forwarder.h"
+#include "router/routed.h"
 #include "repository/fake_repository.h"
 
 namespace
@@ -64,13 +65,26 @@ namespace
 		{
 			asks++;
 
-			return served.route(request);
+			return router::routed(served, request);
 		}
 
 		std::vector<router::response> forward_all(const std::vector<std::string> &, const router::request &)
 			const override
 		{
 			return std::vector<router::response>();
+		}
+
+		boost::asio::awaitable<router::response> async_forward(const std::string &node, const router::request &request)
+			const override
+		{
+			co_return forward(node, request);
+		}
+
+		boost::asio::awaitable<std::vector<router::response>> async_forward_all(
+			const std::vector<std::string> &nodes,
+			const router::request &request) const override
+		{
+			co_return forward_all(nodes, request);
 		}
 
 		std::vector<router::response> forward_each(const std::vector<::cluster::enquiry> &enquiries) const override

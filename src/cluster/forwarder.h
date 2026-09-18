@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include <boost/asio/awaitable.hpp>
+
 #include "router/request.h"
 #include "router/response.h"
 
@@ -52,6 +54,16 @@ namespace cluster
 		// of a share in several pieces at once is.
 		[[nodiscard]] virtual std::vector<router::response> forward_each(
 			const std::vector<enquiry> &enquiries) const = 0;
+
+		// forward() and forward_all() on the executor of the coroutine awaiting them, which holds
+		// no thread while the other nodes answer. The request has to outlive the wait.
+		[[nodiscard]] virtual boost::asio::awaitable<router::response> async_forward(
+			const std::string &node,
+			const router::request &request) const = 0;
+
+		[[nodiscard]] virtual boost::asio::awaitable<std::vector<router::response>> async_forward_all(
+			const std::vector<std::string> &nodes,
+			const router::request &request) const = 0;
 	};
 
 	// The first answer of a fan out that refused, or nothing where every node took it. It is what a

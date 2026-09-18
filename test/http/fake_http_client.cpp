@@ -65,6 +65,20 @@ std::vector<http::response> http::fake_client::send_all(const std::vector<reques
 	return responses;
 }
 
+// Nothing here waits on a network, so an awaited request is answered where it is asked.
+boost::asio::awaitable<http::response> http::fake_client::async_send(const request &request, long timeout_seconds)
+	const
+{
+	co_return send(request, timeout_seconds);
+}
+
+boost::asio::awaitable<std::vector<http::response>> http::fake_client::async_send_all(
+	const std::vector<request> &request_list,
+	long timeout_seconds) const
+{
+	co_return send_all(request_list, timeout_seconds);
+}
+
 void http::fake_client::answer_stream(const std::string &url)
 {
 	std::lock_guard<std::mutex> lock(mutex);

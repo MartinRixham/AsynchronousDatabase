@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <future>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -36,6 +37,34 @@ namespace
 
 		long long content_length = 0;
 	};
+
+	long status_of(const std::string &method, const std::string &url, const std::vector<std::string> &lines)
+	{
+		CURL *curl = curl_easy_init();
+		struct curl_slist *headers = nullptr;
+		std::string body;
+		long code = 0;
+
+		for (const auto &line : lines)
+		{
+			headers = curl_slist_append(headers, line.c_str());
+		}
+
+		curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method.c_str());
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, append);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+		curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+
+		curl_easy_perform(curl);
+		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+
+		curl_easy_cleanup(curl);
+		curl_slist_free_all(headers);
+
+		return code;
+	}
 }
 
 class cluster_test : public ::testing::Test
@@ -734,4 +763,73 @@ TEST_F(cluster_test, a_node_fetches_a_record_it_owns_and_holds_nothing_for)
 
 	EXPECT_TRUE(holds_within(first, "4821", true));
 	EXPECT_EQ(request(first, "GET", "/table/account/key/4821", "", true).body, "a value");
+}
+
+// A record asked of a node that has not answered yet holds no thread of the node that asked: a node
+// serving on one thread answers its health check while it waits. The other node takes the request
+// and says nothing until it is let go.
+TEST(cluster_wait_test, a_record_waiting_on_another_node_holds_no_thread)
+{
+	boost::asio::io_context context;
+	boost::asio::ip::tcp::acceptor silent(context, { boost::asio::ip::make_address("127.0.0.1"), 0 });
+	std::string silent_node = "http://127.0.0.1:" + std::to_string(silent.local_endpoint().port());
+	http::beast_client client(2, 5);
+	cluster::http_forwarder forwarding(client);
+	cluster::test_cluster nodes;
+
+	std::filesystem::remove_all(test_directory("asyncdb"));
+
+	std::shared_ptr<server::server> served =
+		std::make_shared<server::server>(0, 1, nodes, forwarding, test_directory("asyncdb"));
+	std::string here = "http://localhost:" + std::to_string(served->port());
+
+	nodes.join(here, "", { cluster::member { here, "" }, cluster::member { silent_node, "" } });
+
+	std::thread serving([served]() { served->serve(); });
+
+	server::wait_until_listening(served->port());
+
+	// Carried as a leader carries it, so that it is applied here and sent nowhere.
+	ASSERT_EQ(
+		status_of("PUT", here + "/table/account", { "X-Asyncdb-Forwarded: true", "X-Asyncdb-Term: 1" }),
+		201);
+
+	std::string key = "4821";
+
+	while (nodes.replicas(key).local)
+	{
+		key += "1";
+	}
+
+	std::promise<void> arrived;
+	std::promise<void> released;
+
+	std::thread holding(
+		[&silent, &arrived, &released]()
+		{
+			boost::asio::ip::tcp::socket socket = silent.accept();
+			boost::asio::streambuf request;
+
+			boost::asio::read_until(socket, request, "\r\n\r\n");
+			arrived.set_value();
+			released.get_future().wait();
+		});
+
+	std::future<long> waiting = std::async(
+		std::launch::async,
+		[&here, &key]() { return status_of("GET", here + "/table/account/key/" + key, {}); });
+
+	arrived.get_future().wait();
+
+	EXPECT_EQ(status_of("GET", here + "/health", {}), 200);
+	EXPECT_EQ(waiting.wait_for(std::chrono::seconds(0)), std::future_status::timeout);
+
+	released.set_value();
+	holding.join();
+
+	// The node it asked went without answering, which is an answer of its own.
+	EXPECT_EQ(waiting.get(), 500);
+
+	served->close();
+	serving.join();
 }

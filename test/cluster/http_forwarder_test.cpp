@@ -3,6 +3,8 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/beast/http.hpp>
 
 #include "cluster/http_forwarder.h"
@@ -27,6 +29,22 @@ namespace
 	std::string error_message(const router::response &response)
 	{
 		return std::string(response.json.at("error").as_object().at("message").as_string());
+	}
+
+	template<typename answer>
+	answer awaited(boost::asio::awaitable<answer> asking)
+	{
+		boost::asio::io_context context;
+		answer answered;
+
+		boost::asio::co_spawn(
+			context,
+			std::move(asking),
+			[&answered](const std::exception_ptr &, answer given) { answered = std::move(given); });
+
+		context.run();
+
+		return answered;
 	}
 }
 
@@ -386,4 +404,52 @@ TEST(http_forwarder_test, forward_nothing_to_nobody)
 
 	EXPECT_TRUE(forwarder.forward_each(std::vector<cluster::enquiry>()).empty());
 	EXPECT_TRUE(http.sent().empty());
+}
+
+TEST(http_forwarder_test, forward_an_awaited_request_to_another_node)
+{
+	http::fake_client http;
+
+	http.answer(one, http::answer(200, "text/plain", "a value"));
+
+	cluster::http_forwarder forwarder(http);
+	router::request read = request(boost::beast::http::verb::get, { "table", "account", "key", "4821" });
+	router::response response = awaited(forwarder.async_forward(one, read));
+
+	EXPECT_EQ(response.status, boost::beast::http::status::ok);
+	EXPECT_EQ(response.text, "a value");
+
+	ASSERT_EQ(http.sent().size(), 1u);
+	EXPECT_EQ(http.sent()[0].url, one + "/table/account/key/4821");
+	EXPECT_EQ(http.sent()[0].headers[0], "X-Asyncdb-Forwarded: true");
+}
+
+TEST(http_forwarder_test, forward_an_awaited_request_to_every_node_named)
+{
+	http::fake_client http;
+
+	http.answer(one, http::answer(204, "", ""));
+	http.answer(two, http::answer(409, "application/json", "{\"error\":{\"code\":\"stale_leader\",\"message\":\"\"}}"));
+
+	cluster::http_forwarder forwarder(http);
+	router::request write {
+		boost::beast::http::verb::put,
+		{ "table", "account", "key", "4821" },
+		"",
+		"a value",
+		false,
+		60
+	};
+
+	std::vector<std::string> nodes { one, two };
+	std::vector<router::response> responses = awaited(forwarder.async_forward_all(nodes, write));
+
+	ASSERT_EQ(responses.size(), 2u);
+	EXPECT_EQ(responses[0].status, boost::beast::http::status::no_content);
+	EXPECT_EQ(responses[1].status, boost::beast::http::status::conflict);
+	EXPECT_EQ(error_code(responses[1]), "stale_leader");
+
+	ASSERT_EQ(http.sent().size(), 2u);
+	EXPECT_EQ(http.sent()[0].body, "a value");
+	EXPECT_EQ(http.sent()[1].headers[1], "X-Asyncdb-Term: 60");
 }
