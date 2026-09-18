@@ -55,13 +55,10 @@ unaffected throughout — they never wait for a leader.
 > `This node does not lead this key's partition.`
 >
 > `This node does not lead the tables.`
->
-> `This node leads this key's partition and another node ordered this write.`
 
-A write arrived forwarded at a node that disagrees with the node that sent it
-about who leads the partition: sent to be ordered by a node that does not lead
-it, or carried from a leader to a node that takes itself for the leader. It is
-refused rather than passed on again, so that a disagreement cannot bounce a write between nodes for ever.
+A write arrived forwarded at a node that does not lead the partition, which is
+two nodes disagreeing about who leads it. It is refused rather than passed on
+again, so that a disagreement cannot bounce a write between nodes for ever.
 This settles as the membership does. If it persists, the nodes disagree about
 the membership itself — see
 [the membership is wrong](/runbook/membership#the-membership-is-wrong).
@@ -75,9 +72,9 @@ a few seconds is etcd being unreachable, because nothing new is elected then:
 > `This key is led in a later term than the one that ordered this write.`
 
 A copy was sent a write ordered in an older term than one it has already
-applied — a leader that lost its lease, but not its network, writing behind the
-leader that replaced it. The fencing worked: the older leader's write was
-refused, which is the point of it.
+applied or claimed — a leader that lost its lease, but not its network, writing
+behind the leader that replaced it. The fencing worked: the older leader's write
+was refused, which is the point of it.
 
 **Run the write again.** It goes to the current leader and is ordered in the
 current term. Seeing this steadily rather than once around a node's departure

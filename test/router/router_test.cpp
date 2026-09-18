@@ -1080,9 +1080,8 @@ TEST(router_cluster_test, serve_a_forwarded_record_where_it_stands)
 	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
 }
 
-// Two nodes that both take themselves to lead a partition would each carry the other's write back
-// to it, so a write another node ordered is refused by a node that orders that key itself.
-TEST(router_cluster_test, refuse_a_write_another_node_ordered_of_a_partition_this_node_leads)
+// The claim this node leads in raised its term, which applied() stands in for here.
+TEST(router_cluster_test, refuse_a_write_ordered_in_an_older_term_of_a_partition_this_node_leads)
 {
 	repository::fake_repository repository;
 	cluster::fake_cluster nodes = paired_zones();
@@ -1093,6 +1092,7 @@ TEST(router_cluster_test, refuse_a_write_another_node_ordered_of_a_partition_thi
 	forwarding.forget();
 	nodes.copies("4821", { here, partner });
 	nodes.led_by("4821", here, 41);
+	nodes.applied("4821", 41);
 
 	router::request forwarded = put("/table/account/key/4821", "a value");
 
@@ -1100,9 +1100,35 @@ TEST(router_cluster_test, refuse_a_write_another_node_ordered_of_a_partition_thi
 	forwarded.term = 40;
 	forwarded.count = 3;
 
-	EXPECT_EQ(error_code(router::routed(router, forwarded)), "no_leader");
+	EXPECT_EQ(error_code(router::routed(router, forwarded)), "stale_leader");
 	EXPECT_TRUE(forwarding.sent().empty());
 	EXPECT_FALSE(repository.read_record("account", "4821").has_value());
+}
+
+TEST(router_cluster_test, apply_a_write_ordered_in_a_later_term_of_a_partition_this_node_leads_without_carrying_it_on)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
+
+	create_table(router, "account");
+	forwarding.forget();
+	nodes.copies("4821", { here, partner });
+	nodes.led_by("4821", here, 41);
+	nodes.applied("4821", 41);
+
+	router::request forwarded = put("/table/account/key/4821", "a value");
+
+	forwarded.forwarded = true;
+	forwarded.term = 42;
+	forwarded.count = 3;
+
+	EXPECT_EQ(router::routed(router, forwarded).status, boost::beast::http::status::no_content);
+	EXPECT_TRUE(forwarding.sent().empty());
+	EXPECT_EQ(repository.read_record("account", "4821"), "a value");
+	EXPECT_EQ(stamp_of(repository, "account", "4821").term, 42);
+	EXPECT_EQ(stamp_of(repository, "account", "4821").count, 3u);
 }
 
 TEST(router_cluster_test, fail_to_write_to_a_table_that_is_not_there_without_a_hop)

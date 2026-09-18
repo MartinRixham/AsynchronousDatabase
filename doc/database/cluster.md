@@ -246,7 +246,11 @@ and a copy that has applied a write of one term refuses anything older:
 > does not know it yet.
 
 That is what stops a leader which lost its lease, but not its network, from
-writing behind the leader that replaced it.
+writing behind the leader that replaced it. A node raises its term to its
+claim's as it wins the claim, so the leader that replaced it refuses that write
+too, and a write from a newer term reaching a node that has not yet heard it was
+replaced is applied there as it would be on any copy: two nodes that both take
+themselves for the leader are settled by the term, not refused by each other.
 
 A copy keeps the newest term it has applied in its store, written with the record
 that raised it, so a node that restarts onto the volume it kept refuses exactly
@@ -465,8 +469,8 @@ holding them until they time out.
 
 A request a node passes on carries `X-Asyncdb-Forwarded: true`, and a node that
 receives one serves it where it stands rather than passing it on again — but for
-a write reaching the leader of its key, which the leader carries to the copies
-as it would a write a client sent it. Two nodes
+a client's write reaching the leader of its key, which the leader carries to the
+copies as it would a write a client sent it. Two nodes
 that disagree about the membership for a moment can therefore give a stale
 answer, but they cannot bounce a request between them.
 

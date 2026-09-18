@@ -758,9 +758,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   nothing leads yet answers `no_leader` (503) to a write and serves reads as normal. **The term is
   what tells the two write hops apart**: a write *to* the leader carries none, a write *from* it
   carries the term. So a forwarded write without one reaching a node that does not lead the key is
-  `no_leader` rather than written in no term, and one with a term reaching a node that leads the
-  key is `no_leader` as well — two nodes each taking themselves for the leader, which would carry
-  the write back and forth for ever. It holds because nothing carries a write in term 0: that is
+  `no_leader` rather than written in no term, and one with a term is applied wherever it lands,
+  leader included — two nodes each taking themselves for the leader are settled by the term,
+  because winning a claim raises a node's term to it, and applying carries nothing on, so it
+  cannot go back and forth. It holds because nothing carries a write in term 0: that is
   the term of an instance that was never clustered, which has nowhere to carry one.
 - `DEBUG(...)` from `src/log.h` compiles to nothing unless the `LOG` define is `1`; `recipe.json` sets
   `"LOG": "echo 1"` (the define values are shell commands that Cheesemake evaluates).

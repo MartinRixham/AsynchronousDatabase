@@ -590,20 +590,19 @@ router::response router::router::route_forwarded_record(
 		return read_here(name, key);
 	}
 
+	// A write another node ordered is applied here even where this node takes itself for the
+	// leader: claiming raised this node's term, so the term decides which of the two is stale, and
+	// applying carries nothing on.
+	if (request.term != 0)
+	{
+		return apply_write(request, name, std::move(record));
+	}
+
 	cluster::leadership lead = nodes.leader(record.key);
 
 	if (!lead.local)
 	{
 		return apply_write(request, name, std::move(record));
-	}
-
-	// Another node ordered this and so does this one, and each would carry it back to the
-	// other for ever.
-	if (request.term != 0)
-	{
-		return error_response(
-			error::code::no_leader,
-			"This node leads this key's partition and another node ordered this write.");
 	}
 
 	return lead_write(request, name, std::move(record), lead);

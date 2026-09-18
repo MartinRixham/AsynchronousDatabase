@@ -1221,6 +1221,53 @@ TEST(etcd_cluster_test, refuse_a_write_ordered_in_a_term_older_than_one_the_stor
 	EXPECT_TRUE(cluster.accept("a key of another partition", 1));
 }
 
+TEST(etcd_cluster_test, refuse_a_write_ordered_in_a_term_older_than_a_claim_this_node_won_on_a_pass)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
+	std::string key = key_led_by(members, one);
+
+	answer_etcd(&http, members);
+	answer_elections(&http, 41);
+
+	cluster::config config = configuration(one, "a");
+
+	config.claims_per_refresh = cluster::partition_count;
+
+	cluster::etcd_cluster cluster(config, http);
+
+	cluster.start();
+
+	EXPECT_FALSE(cluster.accept(key, 40));
+	EXPECT_TRUE(cluster.accept(key, 41));
+
+	cluster.stop();
+}
+
+TEST(etcd_cluster_test, refuse_a_write_ordered_in_a_term_older_than_a_claim_this_node_won_on_a_write)
+{
+	http::fake_client http;
+	std::vector<cluster::member> members { cluster::member { one, "a" }, cluster::member { two, "b" } };
+	std::string key = key_led_by(members, one);
+
+	answer_etcd(&http, members);
+	answer_elections(&http, 77);
+
+	cluster::config config = configuration(one, "a");
+
+	config.claims_per_refresh = 0;
+
+	cluster::etcd_cluster cluster(config, http);
+
+	cluster.start();
+
+	ASSERT_TRUE(cluster.leader(key).local);
+	EXPECT_FALSE(cluster.accept(key, 76));
+	EXPECT_TRUE(cluster.accept(key, 77));
+
+	cluster.stop();
+}
+
 // Claiming costs a round trip to etcd each, so a node takes a few partitions on each pass rather
 // than every one of them at once — which is what keeps a cold start from being 256 of them.
 TEST(etcd_cluster_test, claim_only_so_many_partitions_on_one_pass)

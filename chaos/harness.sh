@@ -1536,7 +1536,7 @@ latency()
 	local seconds=$1 delay=$2 jitter=$3 cidr=$4 instance=$5 command install
 
 	install=$(cat <<-INSTALL
-	dnf install --assumeyes --quiet iproute-tc > /dev/null 2>&1 || true
+	command -v tc > /dev/null || dnf install --assumeyes --quiet iproute-tc > /dev/null 2>&1 || true
 
 	dev=\$(ip route show default | cut -d" " -f5)
 
