@@ -1,5 +1,4 @@
 #include <fstream>
-#include <sstream>
 
 #include "scratch_file.h"
 
@@ -21,16 +20,6 @@ repository::scratch_file::~scratch_file()
 const std::string &repository::scratch_file::path() const
 {
 	return file;
-}
-
-std::string repository::scratch_file::read() const
-{
-	std::ifstream reading(file, std::ios::binary);
-	std::ostringstream bytes;
-
-	bytes << reading.rdbuf();
-
-	return bytes.str();
 }
 
 bool repository::scratch_file::write(const std::string &bytes)

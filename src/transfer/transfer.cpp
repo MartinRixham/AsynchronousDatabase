@@ -46,11 +46,12 @@ namespace
 		bool refused = false;
 	};
 
-	// What one answer does to the piece it belongs to: the file goes to the thread taking them in,
-	// and the piece either moves on to the next one or stops.
+	// What one answer does to the piece it belongs to: the file goes to the thread taking them in —
+	// moved rather than copied, the answer being done with — and the piece either moves on to the
+	// next one or stops.
 	void carry(
 		piece &walking,
-		const router::response &answer,
+		router::response &answer,
 		const transfer::share &wanted,
 		transfer::relay &carrying)
 	{
@@ -64,7 +65,7 @@ namespace
 			return;
 		}
 
-		carrying.put(answer.text);
+		carrying.put(std::move(answer.text));
 
 		// Nowhere to resume is a walk that reached the end of its piece.
 		if (answer.file.next.empty())

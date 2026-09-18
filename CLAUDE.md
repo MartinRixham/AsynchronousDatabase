@@ -624,7 +624,10 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   so the node answering asks its own membership nothing, and two nodes a moment apart still agree on
   what was sent. **The store holds a record under its partition, so a share is one range of the
   store for each partition of it** — the walk seeks to each and reads nothing in between, which is
-  what stops a file of one partition costing a read of the whole table. The budget —
+  what stops a file of one partition costing a read of the whole table. **The node answering sends
+  the file from the disk it wrote it to** (`extract::file`, sent as a Beast `file_body`) and never
+  reads it back into memory, because nothing bounds how many walks ask one node at once: after a
+  zone rejoins, every other node reconciles against it in the same second. The budget —
   `repository::max_file_bytes`, 64 MiB — is what the walk **read**, which is now what it carries;
   a budget spent on the last record of a share is one more round trip, answered with a file that
   has nothing in it.

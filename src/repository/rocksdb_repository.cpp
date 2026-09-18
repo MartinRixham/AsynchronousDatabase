@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iterator>
+#include <memory>
 #include <utility>
 #include <string>
 #include <vector>
@@ -775,13 +776,13 @@ repository::extract repository::rocksdb_repository::export_records(const std::st
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 	std::string what = "Exporting a file of \"" + table_name + "\"";
 	rocksdb::Slice upper(wanted.to);
-	scratch_file written_file(transfer_directory, transfer_name());
+	std::shared_ptr<scratch_file> written_file = std::make_shared<scratch_file>(transfer_directory, transfer_name());
 	rocksdb::SstFileWriter writer(rocksdb::EnvOptions(), file_options());
 	extract taken;
 	size_t bytes = 0;
 	bool done = false;
 
-	check(writer.Open(written_file.path()), what);
+	check(writer.Open(written_file->path()), what);
 
 	// **A share is one range of the store for each partition of it**, because the store holds a
 	// record under its partition. What the walk reads is what it carries and nothing else, which
@@ -877,7 +878,7 @@ repository::extract repository::rocksdb_repository::export_records(const std::st
 
 	check(writer.Finish(), what);
 
-	taken.file = written_file.read();
+	taken.file = std::move(written_file);
 
 	return taken;
 }

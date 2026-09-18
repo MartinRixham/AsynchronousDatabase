@@ -1,3 +1,5 @@
+#include <utility>
+
 #include "response.h"
 
 router::response router::json_response(boost::beast::http::status status, const boost::json::object &json)
@@ -5,9 +7,9 @@ router::response router::json_response(boost::beast::http::status status, const 
 	return { status, json_content_type, json, "", 0, {} };
 }
 
-router::response router::text_response(boost::beast::http::status status, const std::string &text)
+router::response router::text_response(boost::beast::http::status status, std::string text)
 {
-	return { status, text_content_type, boost::json::object(), text, 0, {} };
+	return { status, text_content_type, boost::json::object(), std::move(text), 0, {} };
 }
 
 router::response router::empty_response(boost::beast::http::status status)
@@ -15,9 +17,13 @@ router::response router::empty_response(boost::beast::http::status status)
 	return { status, "", boost::json::object(), "", 0, {} };
 }
 
-router::response router::file_response(const std::string &file, size_t records, const std::string &next)
+router::response router::file_response(
+	std::shared_ptr<const repository::scratch_file> file,
+	size_t records,
+	const std::string &next)
 {
-	return { boost::beast::http::status::ok, file_content_type, boost::json::object(), file, 0, { records, next } };
+	return { boost::beast::http::status::ok,	file_content_type, boost::json::object(), "", 0,
+			 { records, next, std::move(file) } };
 }
 
 router::response router::head_response(

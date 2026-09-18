@@ -1,6 +1,10 @@
 #include <algorithm>
+#include <atomic>
+#include <filesystem>
+#include <memory>
 #include <optional>
 #include <vector>
+#include <unistd.h>
 
 #include <boost/lexical_cast/try_lexical_convert.hpp>
 
@@ -8,6 +12,15 @@
 
 namespace
 {
+	// Every fake of the process writes its files into the one temporary directory, which is the
+	// shard's own.
+	std::atomic<size_t> transfers = 0;
+
+	std::string transfer_name()
+	{
+		return "fake-" + std::to_string(getpid()) + "-" + std::to_string(transfers++) + ".file";
+	}
+
 	void append(std::string &file, const std::string &text)
 	{
 		file += std::to_string(text.size());
@@ -295,6 +308,7 @@ repository::extract repository::fake_repository::export_records(
 	}
 
 	const std::map<std::string, std::string> &table_records = records.at(table_name);
+	std::string file;
 	size_t bytes = 0;
 
 	for (std::map<std::string, std::string>::const_iterator it = table_records.begin();
@@ -317,8 +331,8 @@ repository::extract repository::fake_repository::export_records(
 
 		if (wanted.partitions.test(cluster::partition_of(it->first)))
 		{
-			append(taken.file, it->first);
-			append(taken.file, wanted.values ? it->second : it->second.substr(0, record::version_size));
+			append(file, it->first);
+			append(file, wanted.values ? it->second : it->second.substr(0, record::version_size));
 
 			taken.records++;
 		}
@@ -341,8 +355,18 @@ repository::extract repository::fake_repository::export_records(
 
 	if (taken.records == 0)
 	{
-		taken.file.clear();
+		return taken;
 	}
+
+	std::shared_ptr<scratch_file> written =
+		std::make_shared<scratch_file>(std::filesystem::temp_directory_path(), transfer_name());
+
+	if (!written->write(file))
+	{
+		throw storage_error(error::code::storage_error, "A file of \"" + table_name + "\" could not be written.");
+	}
+
+	taken.file = std::move(written);
 
 	return taken;
 }

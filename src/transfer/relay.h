@@ -9,8 +9,9 @@ namespace transfer
 {
 	// The handoff between the thread of a worker that asks for files and the thread that takes them
 	// into the store. **One slot**, so the asking runs exactly one file ahead: the next file is on
-	// its way while the last one is being read, and the memory a walk holds is two files a worker
-	// rather than however many the network can outrun the store by.
+	// its way while the last one is being read, and the memory a walk holds is three files a worker
+	// at most — one being taken in, one waiting here and one arriving — rather than however many
+	// the network can outrun the store by.
 	class relay
 	{
 		std::mutex mutex;

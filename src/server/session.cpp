@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <optional>
 #include <utility>
 #include <string>
 
@@ -16,19 +17,10 @@ namespace
 {
 	constexpr size_t max_header_size = 3 * record::max_key_size + 8 * 1024;
 
-	boost::beast::http::response<boost::beast::http::string_body> make_response(
-		unsigned version,
-		bool keep_alive,
-		const router::response &answered,
-		bool head)
+	// What every answer says beside its body, whatever the body is.
+	template <class body>
+	void describe(boost::beast::http::response<body> &response, bool keep_alive, const router::response &answered)
 	{
-		std::string body = router::response_body(answered);
-		boost::beast::http::response<boost::beast::http::string_body> response {
-			answered.status,
-			version,
-			head ? "" : body
-		};
-
 		response.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
 
 		if (!answered.content_type.empty())
@@ -49,16 +41,61 @@ namespace
 		}
 
 		response.keep_alive(keep_alive);
+	}
+
+	boost::beast::http::message_generator make_response(
+		unsigned version,
+		bool keep_alive,
+		const router::response &answered,
+		bool head)
+	{
+		// **A file is sent from the disk it was written to**, a piece at a time, so a node answering
+		// many walks at once holds none of the files it is sending. The name goes with the last
+		// holder of the file, which is once this has opened it, and the bytes go when it is closed.
+		if (answered.file.sent)
+		{
+			boost::beast::http::file_body::value_type file;
+			boost::beast::error_code unopened;
+
+			file.open(answered.file.sent->path().c_str(), boost::beast::file_mode::scan, unopened);
+
+			if (unopened)
+			{
+				return make_response(
+					version,
+					keep_alive,
+					router::error_response(
+						error::code::storage_error,
+						"The file of records could not be opened to send: " + unopened.message() + "."),
+					head);
+			}
+
+			boost::beast::http::response<boost::beast::http::file_body> response {
+				answered.status,
+				version,
+				std::move(file)
+			};
+
+			describe(response, keep_alive, answered);
+			response.prepare_payload();
+
+			return response;
+		}
+
+		std::string body = router::response_body(answered);
+		size_t length = body.empty() ? answered.length : body.size();
+		boost::beast::http::response<boost::beast::http::string_body> response {
+			answered.status,
+			version,
+			head ? "" : std::move(body)
+		};
+
+		describe(response, keep_alive, answered);
 		response.prepare_payload();
 
-		if (head)
+		if (head && length > 0)
 		{
-			size_t length = body.empty() ? answered.length : body.size();
-
-			if (length > 0)
-			{
-				response.set(boost::beast::http::field::content_length, std::to_string(length));
-			}
+			response.set(boost::beast::http::field::content_length, std::to_string(length));
 		}
 
 		return response;
@@ -159,7 +196,7 @@ void server::session::on_read(boost::beast::error_code error, std::size_t)
 		handle_request(),
 		[self = shared_from_this()](
 			const std::exception_ptr &thrown,
-			boost::beast::http::response<boost::beast::http::string_body> answer)
+			std::optional<boost::beast::http::message_generator> answer)
 		{
 			// Everything the router throws is answered, so what is left is a response that could
 			// not be built at all, and there is nothing to write.
@@ -170,21 +207,18 @@ void server::session::on_read(boost::beast::error_code error, std::size_t)
 				return;
 			}
 
-			self->write(std::move(answer));
+			self->write(std::move(*answer));
 		});
 }
 
-void server::session::write(boost::beast::http::response<boost::beast::http::string_body> &&answer)
+void server::session::write(boost::beast::http::message_generator &&answer)
 {
-	http_response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(std::move(answer));
+	bool keep_alive = answer.keep_alive();
 
-	boost::beast::http::async_write(
+	boost::beast::async_write(
 		stream,
-		*http_response,
-		boost::beast::bind_front_handler(
-			&session::on_write,
-			shared_from_this(),
-			http_response->keep_alive()));
+		std::move(answer),
+		boost::beast::bind_front_handler(&session::on_write, shared_from_this(), keep_alive));
 }
 
 void server::session::on_write(bool keep_alive, boost::beast::error_code error, std::size_t)
@@ -199,8 +233,6 @@ void server::session::on_write(bool keep_alive, boost::beast::error_code error, 
 	}
 	else if (keep_alive && !stopping)
 	{
-		http_response = nullptr;
-
 		read();
 	}
 	else
@@ -226,8 +258,7 @@ void server::session::read()
 		boost::beast::bind_front_handler(&session::on_read, shared_from_this()));
 }
 
-boost::asio::awaitable<boost::beast::http::response<boost::beast::http::string_body>> server::session::handle_request()
-	const
+boost::asio::awaitable<std::optional<boost::beast::http::message_generator>> server::session::handle_request() const
 {
 	bool head = request.method() == boost::beast::http::verb::head;
 	std::string target(request.target());

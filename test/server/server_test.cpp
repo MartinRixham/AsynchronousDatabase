@@ -536,6 +536,42 @@ TEST_F(server_test, a_file_of_records_says_what_it_carries_in_a_header)
 	EXPECT_FALSE(answered.body.empty());
 }
 
+// A file is sent from the disk the store wrote it to rather than read back into memory, so what
+// arrives has to be the whole of it, and nothing of it may be left on that disk once it is sent.
+TEST_F(server_test, a_file_of_records_arrives_whole_and_leaves_nothing_behind)
+{
+	request("PUT", "/table/account", "{}");
+	request("PUT", "/table/account/key/1", "one");
+	request("PUT", "/table/account/key/2", "two");
+
+	cluster::partition_set every;
+
+	every.set();
+
+	http::beast_client sending(2, 5);
+	http::request asked {
+		"GET",
+		"http://localhost:" + std::to_string(port) + "/table/account/file?partitions=" +
+			cluster::encode_partitions(every),
+		"",
+		std::vector<std::string>()
+	};
+
+	http::response answered = sending.send(asked, 5);
+
+	ASSERT_TRUE(answered.is_valid);
+	EXPECT_EQ(200, answered.status);
+	EXPECT_TRUE(std::filesystem::is_empty(test_directory("asyncdb") + "/transfer"));
+
+	std::filesystem::remove_all(test_directory("asyncdb-other"));
+
+	repository::rocksdb_repository other(test_directory("asyncdb-other"));
+
+	other.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+
+	EXPECT_EQ(2u, other.import_records("account", answered.body));
+}
+
 // A node that comes back to a store it was left with has a share on whichever node took it over
 // while it was away, and records here it no longer owns. Its membership does not move to say so —
 // the rebuild runs on an empty store alone — so joining is what runs the first pass.

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -12,6 +13,7 @@
 #include "scan/scan.h"
 #include "table/table.h"
 #include "table/schema.h"
+#include "scratch_file.h"
 #include "storage_error.h"
 
 namespace repository
@@ -55,12 +57,14 @@ namespace repository
 		size_t bytes = max_file_bytes;
 	};
 
-	// What one file carried: the bytes, how many records went into them, and the key the walk
+	// What one file carried: the file, how many records went into it, and the key the walk
 	// reached — which is where the file after this one resumes, and is a key the file itself may
 	// not hold, because the budget is what was walked rather than what was taken.
 	struct extract
 	{
-		std::string file;
+		// On disk and never read back into memory: it is sent from where it was written, and goes
+		// once the last holder lets it go. Nothing at all is a walk that took no records.
+		std::shared_ptr<const scratch_file> file;
 
 		size_t records = 0;
 

@@ -16,6 +16,7 @@
 #include "cluster/fake_cluster.h"
 #include "cluster/fake_forwarder.h"
 #include "repository/fake_repository.h"
+#include "router/received.h"
 
 namespace
 {
@@ -63,7 +64,7 @@ namespace
 
 		repository::extract taken = source.export_records("account", whole);
 
-		return router::file_response(taken.file, taken.records, next.empty() ? "" : base64::encode(next));
+		return received(router::file_response(taken.file, taken.records, next.empty() ? "" : base64::encode(next)));
 	}
 
 	// One worker, so that the order these tests read is the order they wrote. What several of them
@@ -172,7 +173,9 @@ TEST(rebuild_test, refuses_a_write_older_than_the_term_of_a_record_it_rebuilt)
 	cluster::fake_cluster nodes(self, two_zones());
 	cluster::fake_forwarder forwarding;
 
-	forwarding.answer_in_turn(peer, { tables({ "account" }), router::file_response(taken.file, taken.records, "") });
+	forwarding.answer_in_turn(
+		peer,
+		{ tables({ "account" }), received(router::file_response(taken.file, taken.records, "")) });
 
 	rebuilt(repository, nodes, forwarding);
 

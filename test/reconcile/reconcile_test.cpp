@@ -16,6 +16,7 @@
 #include "cluster/fake_cluster.h"
 #include "cluster/fake_forwarder.h"
 #include "repository/fake_repository.h"
+#include "router/received.h"
 
 namespace
 {
@@ -62,7 +63,7 @@ namespace
 
 		repository::extract taken = source.export_records("account", whole);
 
-		return router::file_response(taken.file, taken.records, next.empty() ? "" : base64::encode(next));
+		return received(router::file_response(taken.file, taken.records, next.empty() ? "" : base64::encode(next)));
 	}
 
 	// The schema as a node names it, which is the first thing a pass asks any node for: a table
@@ -137,7 +138,7 @@ namespace
 
 		repository::extract taken = source.export_records("account", whole);
 
-		return router::file_response(taken.file, taken.records, "");
+		return received(router::file_response(taken.file, taken.records, ""));
 	}
 
 	repository::fake_repository store(const std::vector<std::string> &keys)

@@ -16,6 +16,7 @@
 #include "table/table.h"
 #include "table/schema.h"
 #include "directory.h"
+#include "repository/bytes_of.h"
 
 namespace
 {
@@ -570,7 +571,7 @@ TEST_F(repository_test, a_file_carries_a_table_from_one_store_to_another)
 
 	EXPECT_EQ(2u, taken.records);
 	EXPECT_FALSE(taken.has_more);
-	EXPECT_EQ(2u, other_repository->import_records("a_table", taken.file));
+	EXPECT_EQ(2u, other_repository->import_records("a_table", bytes_of(taken.file)));
 
 	EXPECT_EQ("one", other_repository->read_record("a_table", "1").value_or(""));
 	EXPECT_EQ("two", other_repository->read_record("a_table", "2").value_or(""));
@@ -591,7 +592,7 @@ TEST_F(repository_test, a_file_carries_the_partitions_it_was_asked_for_and_no_ot
 	repository::extract taken = repository->export_records("a_table", wanted);
 
 	EXPECT_EQ(1u, taken.records);
-	EXPECT_EQ(1u, other_repository->import_records("a_table", taken.file));
+	EXPECT_EQ(1u, other_repository->import_records("a_table", bytes_of(taken.file)));
 
 	EXPECT_TRUE(other_repository->read_record("a_table", "1").has_value());
 	EXPECT_FALSE(other_repository->read_record("a_table", "2").has_value());
@@ -625,7 +626,7 @@ TEST_F(repository_test, a_share_of_one_partition_is_not_bounded_by_what_the_rest
 	other_repository->create_table(table::valid_table("a_table", std::vector<std::string>()), record::version { 1, 1 });
 
 	EXPECT_EQ(1u, taken.records);
-	EXPECT_EQ(1u, other_repository->import_records("a_table", taken.file));
+	EXPECT_EQ(1u, other_repository->import_records("a_table", bytes_of(taken.file)));
 	EXPECT_TRUE(other_repository->read_record("a_table", "key:137").has_value());
 }
 
@@ -653,7 +654,7 @@ TEST_F(repository_test, a_share_of_partitions_a_table_holds_nothing_in_is_read_i
 
 	EXPECT_EQ(0u, taken.records);
 	EXPECT_FALSE(taken.has_more);
-	EXPECT_TRUE(taken.file.empty());
+	EXPECT_FALSE(taken.file);
 }
 
 TEST_F(repository_test, a_file_that_carried_nothing_is_no_file_at_all)
@@ -666,8 +667,8 @@ TEST_F(repository_test, a_file_that_carried_nothing_is_no_file_at_all)
 	repository::extract taken = repository->export_records("a_table", repository::share());
 
 	EXPECT_EQ(0u, taken.records);
-	EXPECT_TRUE(taken.file.empty());
-	EXPECT_EQ(0u, other_repository->import_records("a_table", taken.file));
+	EXPECT_FALSE(taken.file);
+	EXPECT_EQ(0u, other_repository->import_records("a_table", bytes_of(taken.file)));
 }
 
 TEST_F(repository_test, an_export_of_a_table_holding_nothing_carries_nothing)
@@ -678,7 +679,7 @@ TEST_F(repository_test, an_export_of_a_table_holding_nothing_carries_nothing)
 
 	EXPECT_EQ(0u, taken.records);
 	EXPECT_FALSE(taken.has_more);
-	EXPECT_TRUE(taken.file.empty());
+	EXPECT_FALSE(taken.file);
 }
 
 // Two copies of one write carry one version, which is a pair neither side can order — and what a
@@ -695,7 +696,7 @@ TEST_F(repository_test, a_store_keeps_what_it_holds_already_when_a_file_carries_
 
 	repository::extract taken = repository->export_records("a_table", every_partition());
 
-	EXPECT_EQ(1u, other_repository->import_records("a_table", taken.file));
+	EXPECT_EQ(1u, other_repository->import_records("a_table", bytes_of(taken.file)));
 
 	EXPECT_EQ("mine", other_repository->read_record("a_table", "1").value_or(""));
 	EXPECT_EQ("theirs", other_repository->read_record("a_table", "2").value_or(""));
@@ -714,7 +715,7 @@ TEST_F(repository_test, a_store_takes_a_record_from_a_file_written_after_the_one
 
 	repository::extract taken = repository->export_records("a_table", every_partition());
 
-	EXPECT_EQ(1u, other_repository->import_records("a_table", taken.file));
+	EXPECT_EQ(1u, other_repository->import_records("a_table", bytes_of(taken.file)));
 	EXPECT_EQ("theirs", other_repository->read_record("a_table", "1").value_or(""));
 }
 
@@ -730,7 +731,7 @@ TEST_F(repository_test, a_store_keeps_a_record_written_after_the_one_a_file_carr
 
 	repository::extract taken = repository->export_records("a_table", every_partition());
 
-	EXPECT_EQ(0u, other_repository->import_records("a_table", taken.file));
+	EXPECT_EQ(0u, other_repository->import_records("a_table", bytes_of(taken.file)));
 	EXPECT_EQ("mine", other_repository->read_record("a_table", "1").value_or(""));
 }
 
@@ -746,7 +747,7 @@ TEST_F(repository_test, a_file_taken_whole_carries_the_versions_it_was_written_w
 
 	repository::extract taken = repository->export_records("a_table", every_partition());
 
-	EXPECT_EQ(1u, other_repository->import_records("a_table", taken.file));
+	EXPECT_EQ(1u, other_repository->import_records("a_table", bytes_of(taken.file)));
 
 	// Written before what the store now holds, so it is refused — which it would not be if the
 	// file had been taken in with a version of its own.
@@ -758,7 +759,7 @@ TEST_F(repository_test, a_file_taken_whole_carries_the_versions_it_was_written_w
 
 	repository::extract again = repository->export_records("a_table", every_partition());
 
-	EXPECT_EQ(1u, other_repository->import_records("a_table", again.file));
+	EXPECT_EQ(1u, other_repository->import_records("a_table", bytes_of(again.file)));
 	EXPECT_EQ("newer", other_repository->read_record("a_table", "1").value_or(""));
 }
 
@@ -782,7 +783,7 @@ TEST_F(repository_test, a_store_keeps_a_record_the_node_that_owns_it_has_yet_to_
 
 	repository::extract taken = repository->export_records("a_table", wanted);
 
-	EXPECT_EQ(1u, other_repository->clear_records("a_table", taken.file));
+	EXPECT_EQ(1u, other_repository->clear_records("a_table", bytes_of(taken.file)));
 	EXPECT_EQ("later", other_repository->read_record("a_table", "1").value_or(""));
 	EXPECT_FALSE(other_repository->read_record("a_table", "2").has_value());
 }
@@ -834,7 +835,9 @@ TEST_F(repository_test, a_file_raises_the_term_of_the_partitions_it_carries_for_
 
 	repository->write_record("a_table", versioned("4821", "newer", 60, 1));
 
-	other_repository->import_records("a_table", repository->export_records("a_table", every_partition()).file);
+	other_repository->import_records(
+		"a_table",
+		bytes_of(repository->export_records("a_table", every_partition()).file));
 
 	EXPECT_EQ(other_repository->read_terms()[cluster::partition_of("4821")], 60);
 
@@ -874,7 +877,7 @@ TEST_F(repository_test, a_walk_larger_than_one_file_resumes_where_it_reached)
 
 		repository::extract file = repository->export_records("a_table", wanted);
 
-		taken += other_repository->import_records("a_table", file.file);
+		taken += other_repository->import_records("a_table", bytes_of(file.file));
 		going = file.has_more;
 
 		wanted.from = file.last;
@@ -942,7 +945,7 @@ TEST_F(repository_test, a_file_of_keys_is_what_a_store_gives_records_up_on)
 	repository::extract taken = repository->export_records("a_table", wanted);
 
 	EXPECT_EQ(2u, taken.records);
-	EXPECT_EQ(1u, other_repository->clear_records("a_table", taken.file));
+	EXPECT_EQ(1u, other_repository->clear_records("a_table", bytes_of(taken.file)));
 
 	// The one the owner has is gone, and the one it has never held is kept — and a key that was
 	// never here is not a tombstone either.
@@ -1081,8 +1084,12 @@ TEST_F(repository_test, the_pieces_of_a_share_are_every_record_and_no_record_twi
 	second.from = middle;
 	second.has_from = true;
 
-	EXPECT_EQ(2u, other_repository->import_records("a_table", repository->export_records("a_table", first).file));
-	EXPECT_EQ(2u, other_repository->import_records("a_table", repository->export_records("a_table", second).file));
+	EXPECT_EQ(
+		2u,
+		other_repository->import_records("a_table", bytes_of(repository->export_records("a_table", first).file)));
+	EXPECT_EQ(
+		2u,
+		other_repository->import_records("a_table", bytes_of(repository->export_records("a_table", second).file)));
 
 	EXPECT_EQ(every_key(*other_repository, "a_table"), (std::vector<std::string> { "1", "2", "3", "4" }));
 }

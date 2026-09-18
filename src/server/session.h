@@ -22,8 +22,6 @@ namespace server
 
 		std::optional<boost::beast::http::request_parser<boost::beast::http::string_body>> parser;
 
-		std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> http_response;
-
 		router::router &router;
 
 		// The server is shutting down. A connection is not kept alive past the response it is
@@ -48,11 +46,12 @@ namespace server
 	private:
 		void read();
 
-		void write(boost::beast::http::response<boost::beast::http::string_body> &&answer);
+		void write(boost::beast::http::message_generator &&answer);
 
 		// On the connection's strand, which is where it resumes whatever thread the other nodes
-		// answer on.
-		boost::asio::awaitable<boost::beast::http::response<boost::beast::http::string_body>> handle_request() const;
+		// answer on. Always an answer: it is optional only because what a coroutine hands back has
+		// to be, for the exception that stands in for one.
+		boost::asio::awaitable<std::optional<boost::beast::http::message_generator>> handle_request() const;
 
 		void close();
 	};

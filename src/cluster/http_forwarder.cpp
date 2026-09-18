@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <iterator>
+#include <utility>
 
 #include <boost/json.hpp>
 #include <boost/lexical_cast/try_lexical_convert.hpp>
@@ -70,7 +71,9 @@ namespace
 		return file;
 	}
 
-	router::response body_of(const std::string &node, const http::response &answer, bool head)
+	// The body is taken out of the answer rather than copied, being a file of up to the whole
+	// budget of a walk.
+	router::response body_of(const std::string &node, http::response &answer, bool head)
 	{
 		boost::beast::http::status status = static_cast<boost::beast::http::status>(answer.status);
 
@@ -86,7 +89,7 @@ namespace
 
 		if (answer.content_type.find(router::json_content_type) == std::string::npos)
 		{
-			return router::text_response(status, answer.body);
+			return router::text_response(status, std::move(answer.body));
 		}
 
 		boost::system::error_code error;
@@ -102,7 +105,7 @@ namespace
 		return router::json_response(status, value.as_object());
 	}
 
-	router::response to_response(const std::string &node, const http::response &answer, bool head)
+	router::response to_response(const std::string &node, http::response answer, bool head)
 	{
 		if (!answer.is_valid)
 		{
@@ -147,14 +150,14 @@ namespace
 	// refusal belongs to is the node it is reported against.
 	std::vector<router::response> responses_of(
 		const std::vector<std::string> &nodes,
-		const std::vector<http::response> &answers,
+		std::vector<http::response> answers,
 		const router::request &request)
 	{
 		std::vector<router::response> responses;
 
 		for (size_t i = 0; i < nodes.size() && i < answers.size(); i++)
 		{
-			responses.push_back(to_response(nodes[i], answers[i], is_head(request)));
+			responses.push_back(to_response(nodes[i], std::move(answers[i]), is_head(request)));
 		}
 
 		return responses;
@@ -181,7 +184,7 @@ boost::asio::awaitable<router::response> cluster::http_forwarder::async_forward(
 	http::request forwarded = forwarded_to(node, request);
 	http::response answer = co_await http_client.async_send(forwarded, timeout_seconds);
 
-	co_return to_response(node, answer, is_head(request));
+	co_return to_response(node, std::move(answer), is_head(request));
 }
 
 std::vector<router::response> cluster::http_forwarder::forward_each(const std::vector<enquiry> &enquiries) const
@@ -198,7 +201,7 @@ std::vector<router::response> cluster::http_forwarder::forward_each(const std::v
 
 	for (size_t i = 0; i < enquiries.size() && i < answers.size(); i++)
 	{
-		responses.push_back(to_response(enquiries[i].node, answers[i], is_head(enquiries[i].request)));
+		responses.push_back(to_response(enquiries[i].node, std::move(answers[i]), is_head(enquiries[i].request)));
 	}
 
 	return responses;

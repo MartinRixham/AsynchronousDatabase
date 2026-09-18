@@ -23,9 +23,6 @@ namespace repository
 
 		const std::string &path() const;
 
-		// What is in the file, or nothing at all when there is no reading it.
-		std::string read() const;
-
 		// Whether the bytes were written. A caller that cannot write one cannot go on, and this is
 		// the disk being full as often as it is anything else.
 		bool write(const std::string &bytes);

@@ -22,6 +22,7 @@
 #include "cluster/fake_cluster.h"
 #include "cluster/fake_forwarder.h"
 #include "router/routed.h"
+#include "router/received.h"
 #include "repository/fake_repository.h"
 
 namespace
@@ -65,7 +66,7 @@ namespace
 		{
 			asks++;
 
-			return router::routed(served, request);
+			return received(router::routed(served, request));
 		}
 
 		std::vector<router::response> forward_all(const std::vector<std::string> &, const router::request &)

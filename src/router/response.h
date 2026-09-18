@@ -1,10 +1,13 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <string>
 
 #include <boost/json.hpp>
 #include <boost/beast/http.hpp>
+
+#include "repository/scratch_file.h"
 
 namespace router
 {
@@ -27,6 +30,10 @@ namespace router
 		// The key the file after this one resumes at, base64 so that a header carries a key of any
 		// bytes at all. Empty is a walk that reached the end of the table.
 		std::string next;
+
+		// The file itself where this node is the one sending it, which is sent from disk rather
+		// than held. A file that came over the network is the text of the response instead.
+		std::shared_ptr<const repository::scratch_file> sent;
 	};
 
 	struct response
@@ -46,12 +53,15 @@ namespace router
 
 	response json_response(boost::beast::http::status status, const boost::json::object &json);
 
-	response text_response(boost::beast::http::status status, const std::string &text);
+	response text_response(boost::beast::http::status status, std::string text);
 
 	response empty_response(boost::beast::http::status status);
 
 	// A file of records, and what the node that asked for it needs to ask for the next one.
-	response file_response(const std::string &file, size_t records, const std::string &next);
+	response file_response(
+		std::shared_ptr<const repository::scratch_file> file,
+		size_t records,
+		const std::string &next);
 
 	response head_response(boost::beast::http::status status, const std::string &content_type, size_t length);
 

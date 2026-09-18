@@ -18,6 +18,7 @@
 #include "repository/fake_repository.h"
 #include "router/router.h"
 #include "router/routed.h"
+#include "router/received.h"
 #include "table/schema.h"
 #include "url/url.h"
 
@@ -1899,8 +1900,8 @@ TEST(router_cluster_test, delete_a_table_on_every_node)
 }
 
 // A node that never had the table has nothing to say about a deletion the rest of the cluster is
-// carrying out, so it agrees and writes the tombstone down. It may be a node that missed the create, and the name being gone as of this version is what stops it taking
-// the table back from a peer on the next pass.
+// carrying out, so it agrees and writes the tombstone down. It may be a node that missed the create, and the name being
+// gone as of this version is what stops it taking the table back from a peer on the next pass.
 TEST(router_cluster_test, write_down_a_forwarded_deletion_of_a_table_that_is_not_there)
 {
 	repository::fake_repository repository;
@@ -2587,7 +2588,7 @@ TEST(router_test, answers_a_file_of_the_records_of_the_partitions_asked_for)
 	EXPECT_EQ(1u, response.file.records);
 	EXPECT_TRUE(response.file.next.empty());
 
-	EXPECT_EQ(1u, taking.import_records("account", response.text));
+	EXPECT_EQ(1u, taking.import_records("account", received(response).text));
 	EXPECT_TRUE(taking.read_record("account", "1").has_value());
 	EXPECT_FALSE(taking.read_record("account", "2").has_value());
 }
@@ -2672,7 +2673,7 @@ TEST(router_test, answers_a_file_of_keys_alone_when_the_values_are_not_wanted)
 	EXPECT_EQ(1u, response.file.records);
 
 	// The key the owner answered with is the copy this store may give up, and no other.
-	EXPECT_EQ(1u, giving.clear_records("account", response.text));
+	EXPECT_EQ(1u, giving.clear_records("account", received(response).text));
 	EXPECT_FALSE(giving.read_record("account", "1").has_value());
 	EXPECT_TRUE(giving.read_record("account", "2").has_value());
 }
@@ -2766,7 +2767,7 @@ TEST(router_test, answers_a_file_that_ends_where_it_was_told_to)
 		get("/table/account/file?partitions=" + every_partition() + "&to=" + url::encode(base64::encode("2"))));
 
 	EXPECT_EQ(2u, response.file.records);
-	EXPECT_EQ(2u, taking.import_records("account", response.text));
+	EXPECT_EQ(2u, taking.import_records("account", received(response).text));
 	EXPECT_FALSE(taking.read_record("account", "3").has_value());
 }
 

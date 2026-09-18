@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <boost/json.hpp>
 #include <boost/beast.hpp>
@@ -454,7 +455,7 @@ router::response router::router::route_file(const request &request, const std::s
 
 	repository::extract taken = repository.export_records(name, wanted);
 
-	return file_response(taken.file, taken.records, taken.has_more ? base64::encode(taken.last) : "");
+	return file_response(std::move(taken.file), taken.records, taken.has_more ? base64::encode(taken.last) : "");
 }
 
 // Where this node would cut a walk of its own table up, so that a node reading it can ask for
