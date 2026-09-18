@@ -80,13 +80,6 @@ namespace
 			co_return forward(node, request);
 		}
 
-		boost::asio::awaitable<std::vector<router::response>> async_forward_all(
-			const std::vector<std::string> &nodes,
-			const router::request &request) const override
-		{
-			co_return forward_all(nodes, request);
-		}
-
 		std::vector<router::response> forward_each(const std::vector<::cluster::enquiry> &enquiries) const override
 		{
 			std::vector<router::response> responses;

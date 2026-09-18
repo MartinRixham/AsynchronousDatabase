@@ -138,7 +138,15 @@ void repository::fake_repository::write_record(const std::string &table_name, co
 		throw storage_error(error::code::table_not_found, "No table named \"" + table_name + "\".");
 	}
 
-	records[table_name][record.key] = record::compose_value(record.stamp, record.value);
+	std::string value = record::compose_value(record.stamp, record.value);
+	auto held = records[table_name].find(record.key);
+
+	if (held != records[table_name].end() && record::is_newer(held->second, value))
+	{
+		return;
+	}
+
+	records[table_name][record.key] = value;
 
 	int64_t &term = terms[cluster::partition_of(record.key)];
 

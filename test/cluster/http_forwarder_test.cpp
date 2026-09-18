@@ -423,33 +423,3 @@ TEST(http_forwarder_test, forward_an_awaited_request_to_another_node)
 	EXPECT_EQ(http.sent()[0].url, one + "/table/account/key/4821");
 	EXPECT_EQ(http.sent()[0].headers[0], "X-Asyncdb-Forwarded: true");
 }
-
-TEST(http_forwarder_test, forward_an_awaited_request_to_every_node_named)
-{
-	http::fake_client http;
-
-	http.answer(one, http::answer(204, "", ""));
-	http.answer(two, http::answer(409, "application/json", "{\"error\":{\"code\":\"stale_leader\",\"message\":\"\"}}"));
-
-	cluster::http_forwarder forwarder(http);
-	router::request write {
-		boost::beast::http::verb::put,
-		{ "table", "account", "key", "4821" },
-		"",
-		"a value",
-		false,
-		60
-	};
-
-	std::vector<std::string> nodes { one, two };
-	std::vector<router::response> responses = awaited(forwarder.async_forward_all(nodes, write));
-
-	ASSERT_EQ(responses.size(), 2u);
-	EXPECT_EQ(responses[0].status, boost::beast::http::status::no_content);
-	EXPECT_EQ(responses[1].status, boost::beast::http::status::conflict);
-	EXPECT_EQ(error_code(responses[1]), "stale_leader");
-
-	ASSERT_EQ(http.sent().size(), 2u);
-	EXPECT_EQ(http.sent()[0].body, "a value");
-	EXPECT_EQ(http.sent()[1].headers[1], "X-Asyncdb-Term: 60");
-}

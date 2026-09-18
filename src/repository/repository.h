@@ -95,6 +95,8 @@ namespace repository
 		// away. What comes back is how many names changed.
 		virtual size_t merge_schema(const table::schema &named) = 0;
 
+		// Leaves a record the store holds at a later version where it is, which is what brings the
+		// copies of a key to one value whichever order its writes reached them in.
 		virtual void write_record(const std::string &table_name, const record::record &record) = 0;
 
 		// The newest term of any record this store was written or handed in a file, for each

@@ -103,20 +103,12 @@ std::vector<router::response> cluster::fake_forwarder::forward_each(const std::v
 	return responses;
 }
 
-// Answered where they are asked, and through the calls a test can override, so that one watching a
-// fan out watches it however it was asked for.
+// Answered where it is asked, there being no network to wait on.
 boost::asio::awaitable<router::response> cluster::fake_forwarder::async_forward(
 	const std::string &node,
 	const router::request &request) const
 {
 	co_return forward(node, request);
-}
-
-boost::asio::awaitable<std::vector<router::response>> cluster::fake_forwarder::async_forward_all(
-	const std::vector<std::string> &nodes,
-	const router::request &request) const
-{
-	co_return forward_all(nodes, request);
 }
 
 const std::vector<std::pair<std::string, router::request>> &cluster::fake_forwarder::sent() const

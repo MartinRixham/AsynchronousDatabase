@@ -175,9 +175,9 @@ One of the three copies of a partition **leads** it, and every write of every ke
 in that partition goes through that one node, which stamps it with a version and
 carries it to every copy. It does not hold one write back behind another: two
 clients writing the same key at the same moment are two writes carried side by
-side, and the copies can take them in different orders and settle on different
-values. The version says which of the two is the later wherever something
-compares copies.
+side, and a copy can be handed them in either order. **A copy keeps the later of
+the two**, whichever reached it last, so every copy settles on the same value
+without the leader waiting for one write before it sends the next.
 
 **Which of the copies leads is decided by the membership, not by the race.** The
 leader of a partition is the node that wins it across the whole membership under
@@ -434,10 +434,10 @@ before it last restarted.
 
 The version is held in front of the value, fixed width and big endian, so two of
 them sort as the pairs do. It never reaches a client — what `GET` answers is the
-value — and what it decides is what a file does when it meets a key the store
-already holds: replace it if what the file carries was written later, keep it
-otherwise. A pair it cannot order is two copies of one write, and what it does
-about one of those is keep what it holds.
+value — and what it decides is what a write or a file does when it meets a key
+the store already holds: replace it if what arrived was written later, keep it
+otherwise. A pair it cannot order is two copies of one write, and which of the
+two a store ends up holding makes no difference.
 
 **It is a tiebreak and not a repair.** Nothing compares two copies unless a pass
 is already moving records between them, which is when the membership changes or
@@ -651,8 +651,8 @@ it ends.
   store it did not fill.
 
   **A leader stamps writes; it neither orders nor replicates them.** Two writes of
-  one key at once can leave the copies disagreeing — each holds whichever of the
-  two reached it last — until a pass compares them. Catching a copy up is what a replication
+  one key at once reach each copy in whatever order they arrive, and the version
+  is what brings the copies to one value. Catching a copy up is what a replication
   log would do, and there is not one.
 - **A write needs a leader, and a leader needs etcd.** A partition whose leader
   has gone is unwritable until its lease runs out and the node the membership

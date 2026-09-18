@@ -75,22 +75,15 @@ namespace router
 		// leader of a forwarded write is the one caller that has to ask.
 		cluster::placement replicas_of(const request &request, const cluster::placement &known, const std::string &key);
 
+		response write_record(
+			const request &request,
+			const std::string &name,
+			const record::record &record,
+			const cluster::placement &where);
+
 		// What waits on another node takes what it needs by value, the call that started it having
 		// returned before it runs. GCC reports a coroutine frame much over a kibibyte as a
-		// mismatched delete, which is why the deciding is done before any of them is started.
-		boost::asio::awaitable<response> order_write(
-			const request &request,
-			std::string name,
-			record::record record,
-			cluster::placement where,
-			int64_t term);
-
-		boost::asio::awaitable<response> write_record(
-			const request &request,
-			std::string name,
-			record::record record,
-			cluster::placement where);
-
+		// mismatched delete, which is why the deciding is done before either of them is started.
 		boost::asio::awaitable<response> forward_to_leader(const request &request, cluster::leadership lead);
 
 		// The answer of the first copy that answered, passing over one that did not.

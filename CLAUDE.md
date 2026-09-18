@@ -368,14 +368,14 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 
 - **`server::server`** owns the `io_context`, the acceptor and a thread pool sized by
   `server::thread_pool_size()` — `ASYNCDB_THREADS`, defaulting to eight threads a core, bounded to
-  between sixteen and a hundred and twenty-eight. **It is deliberately not `hardware_concurrency()`**: every request but a
-  record's holds its thread while it waits on another node, so the pool is a count of those that
-  can be in flight rather than of cores, and two threads on a two core instance is a server that two
+  between sixteen and a hundred and twenty-eight. **It is deliberately not `hardware_concurrency()`**: a request that fans
+  out to other nodes holds its thread while it waits on them — a write carried to its copies
+  included — so the pool is a count of those that can be in flight rather than of cores, and two threads on a two core instance is a server that two
   waiting requests fill — health check included, which is what has the instance replaced. Each thread
   keeps its own connections and the `io_context` they run on, so the pool is how many connections a
-  node holds to each neighbour and three descriptors a thread besides. **A request for a record is
-  the exception**: what it asks another node is awaited on the server's own `io_context`, and holds
-  no thread while it waits.
+  node holds to each neighbour and three descriptors a thread besides. **A request for a record asking
+  one node is the exception**: a read of a copy held elsewhere, or a write handed on to its leader,
+  is awaited on the server's own `io_context` and holds no thread while it waits.
   It also owns the single `rocksdb_repository` and `router`, which are shared
   by reference across all sessions — anything reached from the router must be safe for concurrent use.
   Constructing with port `0` picks a free port and exposes it via `port()`; tests rely on this.
@@ -414,14 +414,16 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   `router::response` (status, content type, and either a `boost::json::object` or the raw text of a
   value). `router/api_error.cpp`
   is the one place a documented error code is mapped to a status. **`route()` answers an
-  awaitable, and only a record waits in it**: `route_record` decides on the thread serving it —
-  reading the store and asking the membership included — and what it asks another node is a coroutine
-  of its own taking what it needs by value, the call that started it having returned before it runs.
-  That split is also what keeps each frame small: GCC reports an Asio coroutine frame much over a
-  kibibyte as a mismatched delete. Every other route is answered where it is called, blocking as it
-  always has, and handed back already done. **Two writes of one key are not ordered against each
-  other**: the leader stamps each and fans them out side by side, so the copies may take them in two
-  orders. A schema operation is, under `schema_lock`, because a create is validated against every
+  awaitable, and only a record asking one node waits in it**: `route_record` decides on the thread
+  serving it — reading the store and asking the membership included — and what it asks that one node,
+  a copy it reads or the leader it hands a write to, is a coroutine of its own taking what it needs
+  by value, the call that started it having returned before it runs. That split is also what keeps
+  each frame small: GCC reports an Asio coroutine frame much over a kibibyte as a mismatched delete.
+  Every other route — the leader carrying a write to its copies included — is answered where it is
+  called, blocking as it always has, and handed back already done. **Two writes of one key are not ordered against each
+  other**: the leader stamps each and fans them out side by side, so a copy may take them in either
+  order — and keeps the later version whichever it took last, which is what settles the copies on
+  one value. A schema operation is, under `schema_lock`, because a create is validated against every
   other table.
 - **`http::client`** is the seam over the network, and `beast_client` is Beast and Asio behind it.
   Each thread keeps a `http::pool` of its own — `thread_local` in `beast_client.cpp` — which is the
@@ -439,8 +441,8 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   call. **A connection out of the pool may have been closed at the other end while nothing was going
   on it**, and what says so is the request that fails on it: an exchange given a kept connection
   makes its request again on a connection of its own, once, and only while nothing of the answer has
-  been read. **`async_send` and `async_send_all` are the same exchanges awaited on the executor of
-  the coroutine asking**, which is the server's strand for a record: they take connections from an
+  been read. **`async_send` is the same exchange awaited on the executor of the
+  coroutine asking**, which is the server's strand for a record: it takes a connection from an
   `http::shared_pool` — a service of that io_context, so the sockets go before the io_context does —
   rather than the thread's, and a connection made on one strand is safe to hand another because what
   a transfer completes through is the asking coroutine's executor. `feed` is the other shape, an answer that does not end on its own — the body is
@@ -460,8 +462,8 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   one in the order the nodes were named; `cluster::refusal` is what a write does with that, the
   copies of a record being written beside each other rather than one behind another, and
   `forward_each` is what a walk reading a share in several pieces at once asks with.
-  `async_forward` and `async_forward_all` are the first two awaited rather than called, which is
-  what a record asks with. **It is handed
+  `async_forward` is the first of them awaited rather than called, which is what a record asks one
+  node with. **It is handed
   to the server and not to the cluster**: where a key lives and how to get there are two questions,
   so `main.cpp` builds one over the `http::client` and hands it to `server::server`, which passes it
   to the router and to the passes that move records — and a test names the nodes without standing
@@ -639,6 +641,9 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   for every one of them), and a store that names a different one is refused rather than read in a
   layout it was never written in. A store that names none is taken to be this format and stamped with
   it, whatever it holds.
+- **A write overwrites only what was written before it,** and a tie is taken. `write_record` reads
+  the version held under a stripe of `write_locks` and writes only where nothing later is held,
+  which is what settles two writes of one key that reached the copies in two orders.
 - **A file overwrites only what was written before it.** `import_records` keeps a record the store
   holds at a later version and replaces an earlier one, which is what catches up a copy that was
   not there for a write the others took. It is the store that decides and not the caller — the

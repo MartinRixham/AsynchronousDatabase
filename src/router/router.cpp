@@ -532,7 +532,7 @@ boost::asio::awaitable<router::response> router::router::route_record(
 			// the copies of one write are the same record and have to say so.
 			record.stamp = record::version { request.term, request.count };
 
-			return write_record(request, name, std::move(record), std::move(where));
+			return answered(write_record(request, name, record, where));
 		}
 
 		std::optional<cluster::leadership> lead = nodes.leader(record.key);
@@ -544,7 +544,7 @@ boost::asio::awaitable<router::response> router::router::route_record(
 			// with another node's.
 			record.stamp = record::version { 0, repository.next_count() };
 
-			return write_record(request, name, std::move(record), std::move(where));
+			return answered(write_record(request, name, record, where));
 		}
 
 		if (!lead->known)
@@ -562,7 +562,13 @@ boost::asio::awaitable<router::response> router::router::route_record(
 			return forward_to_leader(request, std::move(*lead));
 		}
 
-		return order_write(request, name, std::move(record), std::move(where), lead->term);
+		record.stamp = record::version { lead->term, repository.next_count() };
+
+		return answered(write_record(
+			carried(request, lead->term, record.stamp.count),
+			name,
+			record,
+			replicas_of(request, where, record.key)));
 	}
 
 	if (!where.local)
@@ -600,37 +606,22 @@ cluster::placement router::router::replicas_of(
 	return request.forwarded ? nodes.replicas(key) : known;
 }
 
-boost::asio::awaitable<router::response> router::router::order_write(
+router::response router::router::write_record(
 	const request &request,
-	std::string name,
-	record::record record,
-	cluster::placement where,
-	int64_t term)
-{
-	record.stamp = record::version { term, repository.next_count() };
-
-	::router::request ordered = carried(request, term, record.stamp.count);
-	cluster::placement copies = replicas_of(request, where, record.key);
-
-	co_return co_await write_record(ordered, std::move(name), std::move(record), std::move(copies));
-}
-
-boost::asio::awaitable<router::response> router::router::write_record(
-	const request &request,
-	std::string name,
-	record::record record,
-	cluster::placement where)
+	const std::string &name,
+	const record::record &record,
+	const cluster::placement &where)
 {
 	if (where.local)
 	{
 		repository.write_record(name, record);
 	}
 
-	// Every copy at once, so the write waits for the slowest of them rather than for the sum of them.
-	std::vector<response> answers = co_await forwarding.async_forward_all(where.nodes, request);
-	std::optional<response> refused = cluster::refusal(answers);
+	// Every copy at once, so the thread serving the write waits for the slowest of them rather
+	// than for the sum of them.
+	std::optional<response> refused = cluster::refusal(forwarding.forward_all(where.nodes, request));
 
-	co_return refused ? *refused : empty_response(boost::beast::http::status::no_content);
+	return refused ? *refused : empty_response(boost::beast::http::status::no_content);
 }
 
 boost::asio::awaitable<router::response> router::router::forward_to_leader(

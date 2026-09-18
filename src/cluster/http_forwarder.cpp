@@ -219,13 +219,3 @@ std::vector<router::response> cluster::http_forwarder::forward_all(
 
 	return responses_of(nodes, http_client.send_all(forwarded, timeout_seconds), request);
 }
-
-boost::asio::awaitable<std::vector<router::response>> cluster::http_forwarder::async_forward_all(
-	const std::vector<std::string> &nodes,
-	const router::request &request) const
-{
-	std::vector<http::request> forwarded = forwarded_to_all(nodes, request);
-	std::vector<http::response> answers = co_await http_client.async_send_all(forwarded, timeout_seconds);
-
-	co_return responses_of(nodes, answers, request);
-}

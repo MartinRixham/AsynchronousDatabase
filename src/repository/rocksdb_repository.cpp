@@ -1,3 +1,4 @@
+#include <functional>
 #include <algorithm>
 #include <filesystem>
 #include <iterator>
@@ -518,12 +519,27 @@ void repository::rocksdb_repository::write_record(const std::string &table_name,
 	int64_t term = record.stamp.term;
 	std::string what = "Writing a record to \"" + table_name + "\"";
 	std::string value = record::compose_value(record.stamp, record.value);
+	std::string key = store_key(record.key);
+	rocksdb::ColumnFamilyHandle *handle = table_handle(table_name);
+	std::lock_guard<std::mutex> ordered(write_locks[std::hash<std::string>()(key) % write_stripes]);
+	rocksdb::PinnableSlice held;
+	rocksdb::Status found = database->Get(rocksdb::ReadOptions(), handle, key, &held);
+
+	if (!found.IsNotFound())
+	{
+		check(found, what);
+
+		// Two writes of one key are carried to the copies side by side, so a copy can be handed the
+		// earlier after the later. What it holds then stands, and every copy settles on the later.
+		if (record::is_newer(held.ToStringView(), value))
+		{
+			return;
+		}
+	}
 
 	if (term <= terms[partition].load())
 	{
-		written(
-			database->Put(rocksdb::WriteOptions(), table_handle(table_name), store_key(record.key), value),
-			what);
+		written(database->Put(rocksdb::WriteOptions(), handle, key, value), what);
 
 		return;
 	}
@@ -532,7 +548,7 @@ void repository::rocksdb_repository::write_record(const std::string &table_name,
 	rocksdb::WriteBatch batch;
 	bool raised = term > terms[partition].load();
 
-	written(batch.Put(table_handle(table_name), store_key(record.key), value), what);
+	written(batch.Put(handle, key, value), what);
 
 	// One batch, so that a record is never on disk in a term the store does not remember.
 	if (raised)

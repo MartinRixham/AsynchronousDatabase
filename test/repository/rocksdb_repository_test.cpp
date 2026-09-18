@@ -525,6 +525,37 @@ namespace
 	}
 }
 
+TEST_F(repository_test, keep_a_record_written_later_than_the_one_arriving)
+{
+	create_table("a_table");
+
+	repository->write_record("a_table", versioned("1", "later", 41, 9));
+	repository->write_record("a_table", versioned("1", "earlier", 41, 8));
+
+	EXPECT_EQ("later", repository->read_record("a_table", "1").value_or(""));
+}
+
+TEST_F(repository_test, replace_a_record_written_earlier_than_the_one_arriving)
+{
+	create_table("a_table");
+
+	repository->write_record("a_table", versioned("1", "earlier", 41, 8));
+	repository->write_record("a_table", versioned("1", "later", 42, 1));
+
+	EXPECT_EQ("later", repository->read_record("a_table", "1").value_or(""));
+}
+
+// Two writes carrying one version are one write carried twice, and taking it again changes nothing.
+TEST_F(repository_test, take_a_record_at_the_version_the_store_holds)
+{
+	create_table("a_table");
+
+	repository->write_record("a_table", versioned("1", "a value", 41, 8));
+	repository->write_record("a_table", versioned("1", "a value", 41, 8));
+
+	EXPECT_EQ("a value", repository->read_record("a_table", "1").value_or(""));
+}
+
 // The whole of what a rebuild does, over the two stores rather than over the network: a share is
 // one file, and the node it reaches reads it back as records of its own.
 TEST_F(repository_test, a_file_carries_a_table_from_one_store_to_another)
@@ -721,7 +752,7 @@ TEST_F(repository_test, a_file_taken_whole_carries_the_versions_it_was_written_w
 	// file had been taken in with a version of its own.
 	other_repository->write_record("a_table", versioned("1", "older", 41, 8));
 
-	EXPECT_EQ("older", other_repository->read_record("a_table", "1").value_or(""));
+	EXPECT_EQ("one", other_repository->read_record("a_table", "1").value_or(""));
 
 	repository->write_record("a_table", versioned("1", "newer", 41, 10));
 

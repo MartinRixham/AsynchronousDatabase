@@ -35,9 +35,5 @@ namespace cluster
 		[[nodiscard]] boost::asio::awaitable<router::response> async_forward(
 			const std::string &node,
 			const router::request &request) const override;
-
-		[[nodiscard]] boost::asio::awaitable<std::vector<router::response>> async_forward_all(
-			const std::vector<std::string> &nodes,
-			const router::request &request) const override;
 	};
 }

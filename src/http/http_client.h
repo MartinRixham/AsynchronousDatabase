@@ -62,14 +62,10 @@ namespace http
 			const std::vector<request> &requests,
 			long timeout_seconds) const = 0;
 
-		// The same two on the executor of the coroutine awaiting them, which holds no thread while
-		// it waits. The requests have to outlive the wait, as they do the call above.
+		// send() on the executor of the coroutine awaiting it, which holds no thread while it waits.
+		// The request has to outlive the wait.
 		[[nodiscard]] virtual boost::asio::awaitable<response> async_send(
 			const request &request,
-			long timeout_seconds) const = 0;
-
-		[[nodiscard]] virtual boost::asio::awaitable<std::vector<response>> async_send_all(
-			const std::vector<request> &requests,
 			long timeout_seconds) const = 0;
 
 		// An answer that does not end on its own. Each piece of the body is handed to receive as it

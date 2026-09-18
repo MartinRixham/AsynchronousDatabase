@@ -1535,6 +1535,34 @@ TEST(router_cluster_test, apply_the_version_a_forwarded_write_was_ordered_in)
 	EXPECT_EQ(stamped.count, 7u);
 }
 
+// A leader carries two writes of one key side by side, so a copy can be handed the later of them
+// first. It keeps that one, which is what every other copy settles on too.
+TEST(router_cluster_test, keep_the_later_of_two_writes_handed_over_out_of_order)
+{
+	repository::fake_repository repository;
+	cluster::fake_cluster nodes = paired_zones();
+	cluster::fake_forwarder forwarding;
+	router::router router(repository, nodes, forwarding);
+
+	create_table(router, "account");
+
+	router::request later = put("/table/account/key/4821", "the later value");
+	router::request earlier = put("/table/account/key/4821", "the earlier value");
+
+	later.forwarded = true;
+	later.term = 60;
+	later.count = 8;
+	earlier.forwarded = true;
+	earlier.term = 60;
+	earlier.count = 7;
+
+	EXPECT_EQ(router::routed(router, later).status, boost::beast::http::status::no_content);
+	EXPECT_EQ(router::routed(router, earlier).status, boost::beast::http::status::no_content);
+
+	EXPECT_EQ(repository.read_record("account", "4821"), "the later value");
+	EXPECT_EQ(stamp_of(repository, "account", "4821").count, 8u);
+}
+
 // An instance nothing leads writes where it always has, and still counts: a store that joins a
 // cluster later is one whose records are weighed against another node's.
 TEST(router_test, count_a_write_no_leader_ordered)

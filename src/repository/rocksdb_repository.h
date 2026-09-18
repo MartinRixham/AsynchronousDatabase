@@ -70,6 +70,13 @@ namespace repository
 
 		std::mutex term_mutex;
 
+		// A write reads the version the store holds before it writes its own, and two writes of one
+		// key doing that at once would each miss the other. A stripe is held across the read and the
+		// write and nothing else.
+		static constexpr size_t write_stripes = 4096;
+
+		std::array<std::mutex, write_stripes> write_locks;
+
 		// Refuses a store that names a format other than this build's, and writes this build's into a
 		// store that names none.
 		void check_format();

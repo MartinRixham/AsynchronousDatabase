@@ -122,19 +122,16 @@ protected:
 		return { "GET", "http://localhost:" + std::to_string(database_server->port()) + path, "", {} };
 	}
 
-	// What an awaited fan out answers, run on the io_context named, which is whose connections it
+	// What an awaited request answers, run on the io_context named, which is whose connections it
 	// takes and hands back.
-	std::vector<http::response> awaited(boost::asio::io_context &context, const std::vector<http::request> &requests)
+	http::response awaited(boost::asio::io_context &context, const http::request &request)
 	{
-		std::vector<http::response> answered;
+		http::response answered;
 
 		boost::asio::co_spawn(
 			context,
-			client.async_send_all(requests, 30),
-			[&answered](const std::exception_ptr &, std::vector<http::response> responses)
-			{
-				answered = std::move(responses);
-			});
+			client.async_send(request, 30),
+			[&answered](const std::exception_ptr &, http::response response) { answered = std::move(response); });
 
 		context.restart();
 		context.run();
@@ -439,90 +436,52 @@ TEST_F(beast_client_test, end_a_stream_the_receiver_is_done_with)
 	EXPECT_FALSE(stop.stop_requested());
 }
 
-TEST_F(beast_client_test, answer_every_request_of_an_awaited_fan_out)
-{
-	boost::asio::io_context context;
-	std::vector<http::response> responses = awaited(context, { get("/health"), get("/table/nothing"), get("/table") });
-
-	ASSERT_EQ(responses.size(), 3u);
-
-	EXPECT_EQ(responses[0].status, 200);
-	EXPECT_NE(responses[0].body.find("\"status\":\"ok\""), std::string::npos);
-
-	EXPECT_EQ(responses[1].status, 404);
-	EXPECT_NE(responses[1].body.find("table_not_found"), std::string::npos);
-
-	EXPECT_EQ(responses[2].status, 200);
-	EXPECT_NE(responses[2].body.find("\"tables\""), std::string::npos);
-}
-
 TEST_F(beast_client_test, answer_an_awaited_request)
 {
 	boost::asio::io_context context;
-	http::request health = get("/health");
-	http::response answered;
-
-	boost::asio::co_spawn(
-		context,
-		client.async_send(health, 30),
-		[&answered](const std::exception_ptr &, http::response response) { answered = std::move(response); });
-
-	context.run();
+	http::response answered = awaited(context, get("/health"));
 
 	EXPECT_TRUE(answered.is_valid);
 	EXPECT_EQ(answered.status, 200);
+	EXPECT_NE(answered.body.find("\"status\":\"ok\""), std::string::npos);
 }
 
-TEST_F(beast_client_test, answer_that_a_node_of_an_awaited_fan_out_did_not_answer)
+TEST_F(beast_client_test, answer_that_a_node_asked_by_an_awaited_request_did_not_answer)
 {
 	boost::asio::io_context context;
 	http::request gone = get("/health");
-	http::request nowhere = get("/health");
 
 	gone.url = "http://localhost:1/health";
-	nowhere.url = "ftp://localhost/health";
 
-	std::vector<http::response> responses = awaited(context, { gone, get("/health"), nowhere });
+	http::response answered = awaited(context, gone);
 
-	ASSERT_EQ(responses.size(), 3u);
-
-	EXPECT_FALSE(responses[0].is_valid);
-	EXPECT_FALSE(responses[0].message.empty());
-
-	EXPECT_TRUE(responses[1].is_valid);
-	EXPECT_EQ(responses[1].status, 200);
-
-	EXPECT_FALSE(responses[2].is_valid);
-	EXPECT_FALSE(responses[2].message.empty());
+	EXPECT_FALSE(answered.is_valid);
+	EXPECT_FALSE(answered.message.empty());
 }
 
-// The connections of an awaited request are the io_context's and not the thread's, so whichever
-// thread of it the next one runs on, it takes them again.
-TEST_F(beast_client_test, keep_the_connections_of_an_awaited_fan_out_on_its_io_context)
+TEST_F(beast_client_test, answer_that_an_awaited_request_is_not_to_a_url)
 {
 	boost::asio::io_context context;
-	std::vector<http::request> requests { get("/health"), get("/table") };
+	http::request nowhere = get("/health");
 
-	std::vector<http::response> first = awaited(context, requests);
+	nowhere.url = "ftp://localhost/health";
 
-	ASSERT_EQ(first.size(), 2u);
-	EXPECT_FALSE(first[0].reused);
-	EXPECT_FALSE(first[1].reused);
+	http::response answered = awaited(context, nowhere);
 
-	std::vector<http::response> second = awaited(context, requests);
+	EXPECT_FALSE(answered.is_valid);
+	EXPECT_FALSE(answered.message.empty());
+}
 
-	ASSERT_EQ(second.size(), 2u);
-	EXPECT_TRUE(second[0].reused);
-	EXPECT_TRUE(second[1].reused);
+// The connection of an awaited request is the io_context's and not the thread's, so whichever
+// thread of it the next one runs on, it takes it again.
+TEST_F(beast_client_test, keep_the_connection_of_an_awaited_request_on_its_io_context)
+{
+	boost::asio::io_context context;
+
+	EXPECT_FALSE(awaited(context, get("/health")).reused);
+	EXPECT_TRUE(awaited(context, get("/table")).reused);
 
 	boost::asio::io_context another;
 
-	EXPECT_FALSE(awaited(another, { get("/health") })[0].reused);
-}
-
-TEST_F(beast_client_test, answer_an_awaited_fan_out_of_nothing)
-{
-	boost::asio::io_context context;
-
-	EXPECT_TRUE(awaited(context, {}).empty());
+	EXPECT_FALSE(awaited(another, get("/health")).reused);
 }
