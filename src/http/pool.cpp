@@ -17,10 +17,9 @@ boost::asio::io_context &http::pool::context() noexcept
 
 std::unique_ptr<http::connection> http::pool::take(const std::string &host, const std::string &port)
 {
-	std::string where = host + ":" + port;
 	auto held = std::ranges::find_if(
 		idle,
-		[&where](const std::unique_ptr<connection> &kept) { return kept->node() == where; });
+		[&host, &port](const std::unique_ptr<connection> &kept) { return kept->goes_to(host, port); });
 
 	if (held == idle.end())
 	{

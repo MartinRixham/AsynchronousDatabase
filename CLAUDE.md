@@ -89,13 +89,14 @@ Notes:
 - Naming is `snake_case` throughout, including class names, and each layer lives in its own namespace
   matching its directory.
 - **One class to a file**, and the file is named after it — `beast_client` in `src/http/beast_client.h`,
-  its definitions in `beast_client.cpp`. A helper only one `.cpp` reaches is still a file of its own.
+  its definitions in `beast_client.cpp`. A free function only one `.cpp` calls lives in that file's
+  anonymous namespace rather than a file of its own: a header is for what more than one file reaches.
   A class whose name would only repeat its namespace carries the namespace in the file name
   instead — `http::client` is `http/http_client.h`, `etcd::client` is `etcd/etcd_client.h`, and
   `http::fake_client` is `test/http/fake_http_client.h`.
   A struct that is only data sits beside whatever it belongs to (`http::request` in `http_client.h`,
   `cluster::placement` in `cluster.h`), and a test fixture belongs in the test file it is the fixture
-  for; nothing else shares.
+  for; no other class shares a file.
 - **What a call has to say is its return type, never an out parameter.** A compound answer is a
   struct — `scan::page` is the records and whether there are more, `cluster::placement` is whether
   this node holds a copy and which other nodes do — and an answer that may be missing is a
@@ -417,8 +418,8 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   cluster has: a thread forwards to every neighbour it has a key on, so a cache smaller than the
   neighbour count is a handshake again on every forward to the node it used longest ago. It is a
   ceiling and not a reservation — a thread holds one connection to each node it has actually
-  forwarded to, and a fan out to one node holds one for each request in it. `http::exchange` is one
-  request and its answer as a chain of handlers rather than a call that blocks, which is what makes
+  forwarded to, and a fan out to one node holds one for each request in it. `exchange` is one
+  request and its answer as an Asio coroutine rather than a call that blocks, which is what makes
   `send_all` a **fan out**: the copies of a record, or every node of a table create, are all started
   before any of them is waited for and run on the one `io_context`, so the thread waits for the
   slowest of them rather than for the sum of them. **A fan out does not copy the bodies it is
@@ -426,7 +427,7 @@ records whose owner moved, on a thread of its own, whenever the membership chang
   call. **A connection out of the pool may have been closed at the other end while nothing was going
   on it**, and what says so is the request that fails on it: an exchange given a kept connection
   makes its request again on a connection of its own, once, and only while nothing of the answer has
-  been read. `http::feed` is the other shape, an answer that does not end on its own — the body is
+  been read. `feed` is the other shape, an answer that does not end on its own — the body is
   handed to the receiver as it arrives, on a connection this call alone holds, and stopping one is
   posted to its `io_context` rather than done on the thread that asked for it, a socket closed under
   the read on it being a race. Connecting is bounded apart from the transfer, and `TCP_USER_TIMEOUT`
