@@ -567,7 +567,7 @@ TEST_F(server_test, a_file_of_records_arrives_whole_and_leaves_nothing_behind)
 
 	repository::rocksdb_repository other(test_directory("asyncdb-other"));
 
-	other.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	other.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 	EXPECT_EQ(2u, other.import_records("account", (*answered).body));
 }
@@ -584,7 +584,7 @@ TEST(server_reconcile_test, reconciles_a_store_this_node_came_back_to)
 	{
 		repository::rocksdb_repository repository(test_directory("asyncdb"));
 
-		repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+		repository.create_table(table::table { "account", {} }, record::version { 1, 1 });
 	}
 
 	cluster::fake_cluster nodes(

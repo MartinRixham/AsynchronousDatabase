@@ -59,7 +59,8 @@ namespace
 	bool is_in_range(const std::string &key, const scan::range &range)
 	{
 		return cluster::partition_of(key) == range.partition &&
-			(!range.has_from || key >= range.from) && (!range.has_to || key < range.to);
+			   (!range.has_from || key >= range.from) &&
+			   (!range.has_to || key < range.to);
 	}
 }
 
@@ -72,11 +73,8 @@ void repository::fake_repository::create_table(const table::table &table, const 
 {
 	std::lock_guard<std::mutex> lock(*mutex);
 
-	if (table.is_valid)
-	{
-		tables.create(table, stamp);
-		records[table.name];
-	}
+	tables.create(table, stamp);
+	records[table.name()];
 }
 
 std::set<table::table> repository::fake_repository::list_tables() const
@@ -98,7 +96,8 @@ bool repository::fake_repository::holds(const std::string &table_name) const
 	return tables.has(table_name);
 }
 
-table::table repository::fake_repository::read_table(const std::string &table_name) const
+std::expected<table::table, error::error_message> repository::fake_repository::read_table(
+	const std::string &table_name) const
 {
 	std::lock_guard<std::mutex> lock(*mutex);
 
@@ -255,9 +254,7 @@ scan::page repository::fake_repository::scan_records(const std::string &table_na
 // a transfer between two of these are this code.
 // Every key counts for the same, which is a store whose records are all in memory: what the real
 // one weighs by is how much is in the files a key starts.
-std::vector<std::string> repository::fake_repository::split_points(
-	const std::string &table_name,
-	size_t ways) const
+std::vector<std::string> repository::fake_repository::split_points(const std::string &table_name, size_t ways) const
 {
 	std::lock_guard<std::mutex> lock(*mutex);
 
@@ -273,8 +270,8 @@ std::vector<std::string> repository::fake_repository::split_points(
 	size_t next = 1;
 
 	for (std::map<std::string, std::string>::const_iterator it = table_records.begin();
-		it != table_records.end() && next < ways;
-		++it)
+		 it != table_records.end() && next < ways;
+		 ++it)
 	{
 		walked++;
 
@@ -294,9 +291,8 @@ std::vector<std::string> repository::fake_repository::split_points(
 	return points;
 }
 
-repository::extract repository::fake_repository::export_records(
-	const std::string &table_name,
-	const share &wanted) const
+repository::extract repository::fake_repository::export_records(const std::string &table_name, const share &wanted)
+	const
 {
 	std::lock_guard<std::mutex> lock(*mutex);
 
@@ -311,9 +307,7 @@ repository::extract repository::fake_repository::export_records(
 	std::string file;
 	size_t bytes = 0;
 
-	for (std::map<std::string, std::string>::const_iterator it = table_records.begin();
-		it != table_records.end();
-		++it)
+	for (std::map<std::string, std::string>::const_iterator it = table_records.begin(); it != table_records.end(); ++it)
 	{
 		// A bound is inclusive, so every file after the first begins again at the key it resumed
 		// at.

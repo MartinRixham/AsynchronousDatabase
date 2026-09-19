@@ -1948,7 +1948,7 @@ TEST(router_cluster_test, write_down_a_forwarded_deletion_of_a_table_that_is_not
 	std::optional<table::entry> gone = repository.read_schema().read_entry("account");
 
 	ASSERT_TRUE(gone.has_value());
-	EXPECT_FALSE(gone->live);
+	EXPECT_FALSE(gone->declared.has_value());
 	EXPECT_EQ(gone->stamp.term, 41);
 	EXPECT_EQ(gone->stamp.count, 7u);
 }
@@ -1999,7 +1999,7 @@ TEST(router_test, answer_the_schema_a_node_holds)
 	EXPECT_TRUE(answered.has("account"));
 	EXPECT_FALSE(answered.has("dropped"));
 	ASSERT_TRUE(answered.read_entry("dropped").has_value());
-	EXPECT_FALSE(answered.read_entry("dropped")->live);
+	EXPECT_FALSE(answered.read_entry("dropped")->declared.has_value());
 
 	// And the client's view carries only what is there.
 	boost::json::array listed = router::routed(router, get("/table")).json.at("tables").as_array();
@@ -2192,7 +2192,7 @@ TEST(router_cluster_test, refuse_a_table_create_ordered_in_a_term_older_than_the
 {
 	repository::fake_repository repository;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 60, 1 });
+	repository.create_table(table::table { "account", {} }, record::version { 60, 1 });
 
 	cluster::fake_cluster nodes = two_nodes();
 	cluster::fake_forwarder nobody;
@@ -2605,7 +2605,7 @@ TEST(router_test, answers_a_file_of_the_records_of_the_partitions_asked_for)
 	write_record(router, "account", "1", "one");
 	write_record(router, "account", "2", "two");
 
-	taking.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	taking.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 	router::response response = router::routed(router, get("/table/account/file?partitions=" + only("1")));
 
@@ -2689,7 +2689,7 @@ TEST(router_test, answers_a_file_of_keys_alone_when_the_values_are_not_wanted)
 	create_table(router, "account");
 	write_record(router, "account", "1", "one");
 
-	giving.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	giving.create_table(table::table { "account", {} }, record::version { 1, 1 });
 	giving.write_record("account", record::valid_record("1", "mine"));
 	giving.write_record("account", record::valid_record("2", "mine"));
 
@@ -2787,7 +2787,7 @@ TEST(router_test, answers_a_file_that_ends_where_it_was_told_to)
 	write_record(router, "account", "2", "two");
 	write_record(router, "account", "3", "three");
 
-	taking.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	taking.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 	router::response response = router::routed(router, 
 		get("/table/account/file?partitions=" + every_partition() + "&to=" + url::encode(base64::encode("2"))));

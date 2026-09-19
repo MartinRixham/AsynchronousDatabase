@@ -49,7 +49,7 @@ namespace
 	{
 		repository::fake_repository source;
 
-		source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+		source.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 		for (const auto &written : keys)
 		{
@@ -77,7 +77,7 @@ namespace
 
 		for (const auto &table_name : names)
 		{
-			schema.create(table::valid_table(table_name, std::vector<std::string>()), stamp);
+			schema.create(table::table { table_name, {} }, stamp);
 		}
 
 		// A name the cluster dropped, at the version the delete was ordered in. It is what tells a
@@ -124,7 +124,7 @@ namespace
 	{
 		repository::fake_repository source;
 
-		source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+		source.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 		for (const auto &written : keys)
 		{
@@ -145,7 +145,7 @@ namespace
 	{
 		repository::fake_repository repository;
 
-		repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+		repository.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 		for (const auto &written : keys)
 		{
@@ -746,7 +746,7 @@ TEST(reconcile_test, takes_a_record_written_after_the_one_this_node_holds)
 {
 	repository::fake_repository repository;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	repository.create_table(table::table { "account", {} }, record::version { 1, 1 });
 	repository.write_record("account", stamped("a", "stale", 41, 4));
 
 	cluster::fake_cluster nodes(self, three_zones());
@@ -767,7 +767,7 @@ TEST(reconcile_test, keeps_a_record_written_after_the_one_a_file_carries)
 {
 	repository::fake_repository repository;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	repository.create_table(table::table { "account", {} }, record::version { 1, 1 });
 	repository.write_record("account", stamped("a", "fresh", 41, 9));
 
 	cluster::fake_cluster nodes(self, three_zones());
@@ -786,7 +786,7 @@ TEST(reconcile_test, refuses_a_write_older_than_the_term_of_a_record_it_fetched)
 {
 	repository::fake_repository repository;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	repository.create_table(table::table { "account", {} }, record::version { 1, 1 });
 	repository.write_record("account", stamped("a", "stale", 2, 1));
 
 	cluster::fake_cluster nodes(self, three_zones());
@@ -809,7 +809,7 @@ TEST(reconcile_test, keeps_a_record_the_node_that_owns_it_has_yet_to_catch_up_on
 {
 	repository::fake_repository repository;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	repository.create_table(table::table { "account", {} }, record::version { 1, 1 });
 	repository.write_record("account", stamped("gone", "fresh", 41, 9));
 
 	cluster::fake_cluster nodes(self, three_zones());
@@ -832,7 +832,7 @@ TEST(reconcile_test, gives_up_a_record_the_node_that_owns_it_holds_at_the_same_v
 {
 	repository::fake_repository repository;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	repository.create_table(table::table { "account", {} }, record::version { 1, 1 });
 	repository.write_record("account", stamped("gone", "the write", 41, 9));
 
 	cluster::fake_cluster nodes(self, three_zones());
@@ -887,7 +887,7 @@ TEST(reconcile_test, keeps_a_table_no_other_node_names)
 {
 	repository::fake_repository repository = store({});
 
-	repository.create_table(table::valid_table("kept", std::vector<std::string>()), record::version { 1, 1 });
+	repository.create_table(table::table { "kept", {} }, record::version { 1, 1 });
 
 	cluster::fake_cluster nodes(self, three_zones());
 	cluster::fake_forwarder forwarding;
@@ -906,7 +906,7 @@ TEST(reconcile_test, drops_a_table_the_cluster_dropped_while_this_node_was_away)
 {
 	repository::fake_repository repository = store({});
 
-	repository.create_table(table::valid_table("gone", std::vector<std::string>()), record::version { 1, 1 });
+	repository.create_table(table::table { "gone", {} }, record::version { 1, 1 });
 	repository.write_record("gone", record::valid_record("a", "a value"));
 
 	cluster::fake_cluster nodes(self, three_zones());
@@ -926,7 +926,7 @@ TEST(reconcile_test, keeps_a_table_against_a_tombstone_older_than_it)
 {
 	repository::fake_repository repository = store({});
 
-	repository.create_table(table::valid_table("kept", std::vector<std::string>()), record::version { 2, 1 });
+	repository.create_table(table::table { "kept", {} }, record::version { 2, 1 });
 
 	cluster::fake_cluster nodes(self, three_zones());
 	cluster::fake_forwarder forwarding;
@@ -945,7 +945,7 @@ TEST(reconcile_test, keeps_the_records_of_a_table_the_cluster_stamped_again)
 {
 	repository::fake_repository repository = store({});
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	repository.create_table(table::table { "account", {} }, record::version { 1, 1 });
 	repository.write_record("account", record::valid_record("a", "a value"));
 
 	cluster::fake_cluster nodes(self, three_zones());

@@ -38,7 +38,7 @@ namespace
 
 		for (const auto &name : names)
 		{
-			named.create(table::valid_table(name, std::vector<std::string>()), record::version { 1, 1 });
+			named.create(table::table { name, {} }, record::version { 1, 1 });
 		}
 
 		return router::json_response(boost::beast::http::status::ok, named.json());
@@ -51,7 +51,7 @@ namespace
 	{
 		repository::fake_repository source;
 
-		source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+		source.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 		for (const auto &key : keys)
 		{
@@ -92,7 +92,7 @@ TEST(rebuild_test, rebuilds_nothing_when_the_store_already_holds_a_table)
 	cluster::fake_cluster nodes(self, two_zones());
 	cluster::fake_forwarder forwarding;
 
-	repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	repository.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 	forwarding.answer(peer, tables({ "account" }));
 
@@ -160,7 +160,7 @@ TEST(rebuild_test, refuses_a_write_older_than_the_term_of_a_record_it_rebuilt)
 	repository::fake_repository source;
 	record::record written = record::valid_record("a", "value of a");
 
-	source.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	source.create_table(table::table { "account", {} }, record::version { 1, 1 });
 	written.stamp = record::version { 60, 1 };
 	source.write_record("account", written);
 

@@ -66,18 +66,17 @@ namespace
 	// And back again, which is what a scan answers with: a key a client gave is a key it reads.
 	std::string composed_key(const rocksdb::Slice &key)
 	{
-		return key.size() < partition_prefix_size
-			? std::string()
-			: std::string(key.data() + partition_prefix_size, key.size() - partition_prefix_size);
+		return key.size() < partition_prefix_size ?
+				   std::string() :
+				   std::string(key.data() + partition_prefix_size, key.size() - partition_prefix_size);
 	}
 
 	// The partition a key of the store is held under, read off its prefix.
 	size_t partition_held(const rocksdb::Slice &key)
 	{
-		return key.size() < partition_prefix_size
-			? 0
-			: (static_cast<size_t>(static_cast<unsigned char>(key[0])) << 8) |
-				static_cast<unsigned char>(key[1]);
+		return key.size() < partition_prefix_size ?
+				   0 :
+				   (static_cast<size_t>(static_cast<unsigned char>(key[0])) << 8) | static_cast<unsigned char>(key[1]);
 	}
 
 	// Beside the table documents in the default column family, and named so that it is no table's
@@ -177,9 +176,7 @@ namespace
 			names,
 			std::back_inserter(descriptors),
 			[&family_options](const std::string &family_name)
-			{
-				return rocksdb::ColumnFamilyDescriptor(family_name, family_options);
-			});
+			{ return rocksdb::ColumnFamilyDescriptor(family_name, family_options); });
 
 		return descriptors;
 	}
@@ -363,14 +360,9 @@ void repository::rocksdb_repository::close_handles()
 
 void repository::rocksdb_repository::create_table(const table::table &table, const record::version &stamp)
 {
-	if (!table.is_valid)
-	{
-		return;
-	}
-
 	std::unique_lock<std::shared_mutex> lock(handle_mutex);
 
-	open_family(table.name);
+	open_family(table.name());
 	tables.create(table, stamp);
 	write_tables();
 }
@@ -392,7 +384,8 @@ bool repository::rocksdb_repository::has_table(const std::string &table_name) co
 	return tables.has(table_name);
 }
 
-table::table repository::rocksdb_repository::read_table(const std::string &table_name) const
+std::expected<table::table, error::error_message> repository::rocksdb_repository::read_table(
+	const std::string &table_name) const
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 
@@ -633,8 +626,7 @@ std::optional<std::string> repository::rocksdb_repository::read_record(
 {
 	std::shared_lock<std::shared_mutex> lock(handle_mutex);
 	std::string value;
-	rocksdb::Status status =
-		database->Get(rocksdb::ReadOptions(), table_handle(table_name), store_key(key), &value);
+	rocksdb::Status status = database->Get(rocksdb::ReadOptions(), table_handle(table_name), store_key(key), &value);
 
 	if (status.IsNotFound())
 	{

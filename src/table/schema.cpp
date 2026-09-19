@@ -31,9 +31,9 @@ std::set<table::table> table::schema::tables() const
 
 	for (const auto &[name, held] : entries)
 	{
-		if (held.live)
+		if (held.declared)
 		{
-			live.insert(table { true, name, held.json, {}, "" });
+			live.insert(*held.declared);
 		}
 	}
 
@@ -46,7 +46,7 @@ std::set<std::string> table::schema::names() const
 
 	for (const auto &[name, held] : entries)
 	{
-		if (held.live)
+		if (held.declared)
 		{
 			live.insert(name);
 		}
@@ -59,19 +59,20 @@ bool table::schema::has(const std::string &name) const
 {
 	auto held = entries.find(name);
 
-	return held != entries.end() && held->second.live;
+	return held != entries.end() && held->second.declared.has_value();
 }
 
-table::table table::schema::read(const std::string &name) const
+std::expected<table::table, error::error_message> table::schema::read(const std::string &name) const
 {
 	auto held = entries.find(name);
 
-	if (held == entries.end() || !held->second.live)
+	if (held == entries.end() || !held->second.declared)
 	{
-		return invalid_table(error::code::table_not_found, "No table named \"" + name + "\".");
+		return std::unexpected(
+			error::error_message { error::code::table_not_found, "No table named \"" + name + "\"." });
 	}
 
-	return table { true, name, held->second.json, {}, "" };
+	return *held->second.declared;
 }
 
 std::optional<table::entry> table::schema::read_entry(const std::string &name) const
@@ -83,12 +84,12 @@ std::optional<table::entry> table::schema::read_entry(const std::string &name) c
 
 void table::schema::create(const table &table, const record::version &stamp)
 {
-	entries[table.name] = entry { true, stamp, table.json };
+	entries[table.name()] = entry { stamp, table };
 }
 
 void table::schema::remove(const std::string &name, const record::version &stamp)
 {
-	entries[name] = entry { false, stamp, boost::json::object() };
+	entries[name] = entry { stamp, std::nullopt };
 }
 
 std::vector<table::schema::change> table::schema::merge(const schema &named)
@@ -98,7 +99,7 @@ std::vector<table::schema::change> table::schema::merge(const schema &named)
 	for (const auto &[name, incoming] : named.entries)
 	{
 		auto held = entries.find(name);
-		bool had = held != entries.end() && held->second.live;
+		bool had = held != entries.end() && held->second.declared.has_value();
 
 		if (held != entries.end() && !is_newer(incoming.stamp, held->second.stamp))
 		{
@@ -111,9 +112,9 @@ std::vector<table::schema::change> table::schema::merge(const schema &named)
 		// to a node that had missed it is stamped again — so the column family stays where it is
 		// and only the document moved. It is a name going the other way that has one to make or
 		// to drop.
-		if (had != incoming.live)
+		if (had != incoming.declared.has_value())
 		{
-			changed.push_back(change { name, incoming.live });
+			changed.push_back(change { name, incoming.declared.has_value() });
 		}
 	}
 
@@ -126,16 +127,14 @@ boost::json::object table::schema::json() const
 
 	for (const auto &[name, held] : entries)
 	{
-		boost::json::object one {
-			{ "name", boost::json::string(name) },
-			{ "live", held.live },
-			{ "term", held.stamp.term },
-			{ "count", static_cast<int64_t>(held.stamp.count) }
-		};
+		boost::json::object one { { "name", boost::json::string(name) },
+								  { "live", held.declared.has_value() },
+								  { "term", held.stamp.term },
+								  { "count", static_cast<int64_t>(held.stamp.count) } };
 
-		if (held.live)
+		if (held.declared)
 		{
-			one["table"] = held.json;
+			one["table"] = held.declared->to_json();
 		}
 
 		named.push_back(one);
@@ -181,10 +180,13 @@ table::schema table::to_schema(const std::string &json)
 		std::string name = std::string(one.at("name").as_string());
 		record::version stamp { static_cast<int64_t>(number(one, "term")), number(one, "count") };
 
-		if (one.contains("live") && one.at("live").is_bool() && one.at("live").as_bool()
-			&& one.contains("table") && one.at("table").is_object())
+		if (one.contains("live") &&
+			one.at("live").is_bool() &&
+			one.at("live").as_bool() &&
+			one.contains("table") &&
+			one.at("table").is_object())
 		{
-			read.create(table { true, name, one.at("table").as_object(), {}, "" }, stamp);
+			read.create(to_table(one.at("table").as_object()), stamp);
 		}
 		else
 		{

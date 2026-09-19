@@ -372,7 +372,7 @@ reconcile::outcome reconcile::reconcile(
 				nodes,
 				forwarding,
 				node,
-				declaration.name,
+				declaration.name(),
 				partitions,
 				workers,
 				token,
@@ -402,7 +402,7 @@ reconcile::outcome reconcile::reconcile(
 
 	for (const auto &declaration : tables)
 	{
-		outcome given = clear_table(repository, nodes, forwarding, declaration.name, page, workers, token, clearing);
+		outcome given = clear_table(repository, nodes, forwarding, declaration.name(), page, workers, token, clearing);
 
 		done.cleared += given.cleared;
 		done.deferred += given.deferred;

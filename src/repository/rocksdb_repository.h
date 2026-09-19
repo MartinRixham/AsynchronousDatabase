@@ -121,7 +121,7 @@ namespace repository
 
 		bool has_table(const std::string &table_name) const override;
 
-		table::table read_table(const std::string &table_name) const override;
+		std::expected<table::table, error::error_message> read_table(const std::string &table_name) const override;
 
 		void delete_table(const std::string &table_name, const record::version &stamp) override;
 
@@ -133,9 +133,8 @@ namespace repository
 
 		cluster::partition_terms read_terms() const override;
 
-		[[nodiscard]] std::optional<std::string> read_record(
-			const std::string &table_name,
-			const std::string &key) const override;
+		[[nodiscard]] std::optional<std::string> read_record(const std::string &table_name, const std::string &key)
+			const override;
 
 		scan::page scan_records(const std::string &table_name, const scan::range &range) const override;
 

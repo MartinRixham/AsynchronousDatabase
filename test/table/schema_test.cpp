@@ -6,7 +6,7 @@ namespace
 {
 	table::table named(const std::string &name)
 	{
-		return table::valid_table(name, std::vector<std::string>());
+		return table::table { name, {} };
 	}
 
 	table::schema holding(const std::string &name, const record::version &stamp)
@@ -24,7 +24,7 @@ TEST(schema_test, a_created_table_is_there)
 	table::schema schema = holding("account", record::version { 1, 1 });
 
 	EXPECT_TRUE(schema.has("account"));
-	EXPECT_EQ(schema.read("account").name, "account");
+	EXPECT_EQ(schema.read("account")->name(), "account");
 	EXPECT_EQ(schema.names(), (std::set<std::string> { "account" }));
 }
 
@@ -44,13 +44,13 @@ TEST(schema_test, a_dropped_table_leaves_a_name_that_is_not_live)
 
 	EXPECT_FALSE(schema.has("account"));
 	EXPECT_TRUE(schema.read_entry("account").has_value());
-	EXPECT_FALSE(schema.read_entry("account")->live);
+	EXPECT_FALSE(schema.read_entry("account")->declared.has_value());
 	EXPECT_TRUE(schema.names().empty());
 }
 
 TEST(schema_test, a_table_that_is_not_there_reads_as_table_not_found)
 {
-	EXPECT_EQ(table::schema().read("account").code, error::code::table_not_found);
+	EXPECT_EQ(table::schema().read("account").error().code, error::code::table_not_found);
 }
 
 TEST(schema_test, takes_a_table_a_later_schema_has)
@@ -123,7 +123,7 @@ TEST(schema_test, a_later_table_over_one_it_holds_moves_the_document_and_nothing
 	table::schema schema = holding("account", record::version { 1, 1 });
 	table::schema later;
 
-	later.create(table::valid_table("account", std::vector<std::string> { }), record::version { 9, 9 });
+	later.create(table::table { "account", {} }, record::version { 9, 9 });
 
 	EXPECT_TRUE(schema.merge(later).empty());
 	EXPECT_TRUE(schema.has("account"));
@@ -145,17 +145,19 @@ TEST(schema_test, a_schema_is_read_back_from_the_document_it_writes)
 {
 	table::schema schema = holding("account", record::version { 3, 4 });
 
+	schema.create(table::table { "derived", { "account" } }, record::version { 3, 5 });
 	schema.remove("gone", record::version { 5, 6 });
 
 	table::schema read = table::to_schema(boost::json::serialize(schema.json()));
 
 	EXPECT_TRUE(read.has("account"));
-	EXPECT_EQ(read.read("account").json, schema.read("account").json);
+	EXPECT_EQ(read.read("account").value(), schema.read("account").value());
+	EXPECT_EQ(read.read("derived").value(), (table::table { "derived", { "account" } }));
 	EXPECT_EQ(read.read_entry("account")->stamp.term, 3);
 	EXPECT_EQ(read.read_entry("account")->stamp.count, 4u);
 
 	ASSERT_TRUE(read.read_entry("gone").has_value());
-	EXPECT_FALSE(read.read_entry("gone")->live);
+	EXPECT_FALSE(read.read_entry("gone")->declared.has_value());
 	EXPECT_EQ(read.read_entry("gone")->stamp.term, 5);
 }
 

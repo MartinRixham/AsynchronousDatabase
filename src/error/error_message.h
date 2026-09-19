@@ -1,10 +1,15 @@
 #pragma once
 
-#import "error/error_code.h"
+#include <string>
 
-struct error_message
+#include "error/error_code.h"
+
+namespace error
 {
-	error::code code {};
+	struct error_message
+	{
+		error::code code {};
 
-	std::string message;
-};
+		std::string message;
+	};
+}

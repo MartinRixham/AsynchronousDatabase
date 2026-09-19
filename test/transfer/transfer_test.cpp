@@ -106,7 +106,7 @@ namespace
 
 	void fill(repository::fake_repository &repository, size_t records)
 	{
-		repository.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+		repository.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 		for (size_t i = 0; i < records; i++)
 		{
@@ -203,7 +203,7 @@ TEST(transfer_test, walks_a_share_in_one_piece_for_one_worker)
 	collector taken;
 
 	fill(store, 8);
-	taking.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	taking.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 	transfer::outcome done = transfer::walk(node, share_of(1, 4096), running, waiting, std::ref(taken));
 
@@ -230,7 +230,7 @@ TEST(transfer_test, cuts_a_share_into_a_piece_for_every_worker)
 	collector taken;
 
 	fill(store, 8);
-	taking.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	taking.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 	transfer::outcome done = transfer::walk(node, share_of(4, 4096), running, waiting, std::ref(taken));
 
@@ -258,7 +258,7 @@ TEST(transfer_test, takes_every_record_of_a_share_exactly_once)
 	collector taken;
 
 	fill(store, 40);
-	taking.create_table(table::valid_table("account", std::vector<std::string>()), record::version { 1, 1 });
+	taking.create_table(table::table { "account", {} }, record::version { 1, 1 });
 
 	transfer::outcome done = transfer::walk(node, share_of(4, 40), running, waiting, std::ref(taken));
 

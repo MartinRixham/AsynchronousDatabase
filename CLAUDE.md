@@ -518,10 +518,11 @@ records whose owner moved, on a thread of its own, whenever the membership chang
 
 ### Domain conventions worth knowing
 
-- `table::table`, `record::record` and `scan::range` all carry `bool is_valid` plus a `code` and a
-  `message`. **Validation failures are values, not exceptions**: `table::invalid_table(code, msg)`
-  returns a table the router turns into the status that code names and the repository silently refuses
-  to persist. Follow this pattern rather than throwing; exceptions are reserved for genuine
+- **Validation failures are values, not exceptions.** A table is `std::expected<table::table,
+  error::error_message>` wherever it may be missing or refused: `table::parse_table` and `read_table`
+  answer one, the router turns the error into the status its code names, and the repository silently
+  refuses to persist one. `record::record` and `scan::range` still carry `bool is_valid` plus a `code`
+  and a `message`. Follow this pattern rather than throwing; exceptions are reserved for genuine
   infrastructure failure — `repository::storage_error` carries `storage_error` or `write_stalled`, and
   `located(...)` from `src/error.h` prefixes the file, line and function it was called from.
 - `table::parse_table` enforces the invariants: a name of 1–64 characters that is not `default`, and

@@ -340,7 +340,7 @@ router::response router::router::route_tables(const request &request)
 	const std::set<table::table> tables = repository.list_tables();
 	boost::json::array tables_json;
 
-	std::ranges::transform(tables, std::back_inserter(tables_json), &table::table::json);
+	std::ranges::transform(tables, std::back_inserter(tables_json), [](table::table table) { return table.to_json(); });
 
 	// Instances hold dozens of tables, so the list is not paged.
 	return json_response(boost::beast::http::status::ok, boost::json::object { { "tables", tables_json } });
@@ -363,14 +363,14 @@ router::response router::router::route_table(const request &request, const std::
 		return method_not_allowed(request.method);
 	}
 
-	table::table table = repository.read_table(name);
+	std::expected<table::table, error::error_message> table = repository.read_table(name);
 
-	if (!table.is_valid)
+	if (!table)
 	{
-		return table_not_found(name);
+		return error_response(table.error().code, table.error().message);
 	}
 
-	return json_response(boost::beast::http::status::ok, table.json);
+	return json_response(boost::beast::http::status::ok, (*table).to_json());
 }
 
 boost::asio::awaitable<router::response> router::router::route_range(const request &request, const std::string &name)
@@ -771,33 +771,34 @@ router::response router::router::create_table(const request &request, const std:
 	// not what it held when it arrived.
 	std::lock_guard<std::mutex> ordered(schema_lock);
 
-	table::table table = table::parse_table(name, *body, table_names());
+	std::expected<table::table, error::error_message> expected_table = table::parse_table(name, *body, table_names());
 
-	if (!table.is_valid)
+	if (!expected_table)
 	{
-		return error_response(table.code, table.message);
+		return error_response(expected_table.error().code, expected_table.error().message);
 	}
 
-	table::table existing = repository.read_table(name);
+	table::table table = *expected_table;
+	std::expected<table::table, error::error_message> existing = repository.read_table(name);
 	record::version stamp = schema_stamp(request, order);
 	response created;
 
-	if (existing.is_valid)
+	if (existing)
 	{
-		if (!(existing == table))
+		if (!(*existing == table))
 		{
 			return error_response(
 				error::code::table_exists,
 				"A table named \"" + name + "\" exists with different options.");
 		}
 
-		created = json_response(boost::beast::http::status::ok, table.json);
+		created = json_response(boost::beast::http::status::ok, table.to_json());
 	}
 	else
 	{
 		repository.create_table(table, stamp);
 
-		created = json_response(boost::beast::http::status::created, table.json);
+		created = json_response(boost::beast::http::status::created, table.to_json());
 	}
 
 	std::optional<response> failure =
@@ -918,7 +919,7 @@ std::set<std::string> router::router::table_names() const
 
 	for (const auto &declared : tables)
 	{
-		names.insert(declared.name);
+		names.insert(declared.name());
 	}
 
 	return names;

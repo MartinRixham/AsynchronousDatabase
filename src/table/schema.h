@@ -9,7 +9,7 @@
 #include <boost/json.hpp>
 
 #include "record/record.h"
-#include "table.h"
+#include "table/table.h"
 
 namespace table
 {
@@ -18,8 +18,6 @@ namespace table
 	// create that never arrived — which a node holding a table no peer names cannot otherwise do.
 	struct entry
 	{
-		bool live = false;
-
 		// What orders two nodes' answers for this name. It is **per name and never per schema**:
 		// one version over the whole document would vouch for operations the node never applied,
 		// a node that missed one and took the next carrying a version as high as a node that took
@@ -27,8 +25,8 @@ namespace table
 		// for the same reason.
 		record::version stamp;
 
-		// The table document, as the API returns it. A tombstone carries none.
-		boost::json::object json;
+		// Nothing for a tombstone.
+		std::optional<table> declared;
 	};
 
 	// Every name the store has heard of, live or dropped, and the version each stands at. It is
@@ -44,7 +42,7 @@ namespace table
 
 		bool has(const std::string &name) const;
 
-		table read(const std::string &name) const;
+		std::expected<table, error::error_message> read(const std::string &name) const;
 
 		// Nothing at all for a name this schema has never held, which is what tells a name it
 		// never heard of from one it dropped.
