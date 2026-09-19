@@ -85,33 +85,40 @@ bool record::is_newer(std::string_view stored, std::string_view than) noexcept
 	return stored.substr(0, version_size).compare(than.substr(0, version_size)) > 0;
 }
 
-record::record record::parse_key(const std::string &key)
+std::expected<record::record, error::error_message> record::parse_key(const std::string &key)
 {
 	if (!is_valid_utf8(key))
 	{
-		return invalid_record(error::code::invalid_key_encoding, "Key does not percent decode to valid UTF-8.");
+		return std::unexpected(
+			error::error_message { error::code::invalid_key_encoding, "Key does not percent decode to valid UTF-8." });
 	}
 
 	if (key.size() > max_key_size)
 	{
-		return invalid_record(error::code::key_too_large, "Key is longer than " + std::to_string(max_key_size) + " bytes.");
+		return std::unexpected(
+			error::error_message { error::code::key_too_large,
+								   "Key is longer than " + std::to_string(max_key_size) + " bytes." });
 	}
 
 	return valid_record(key, "");
 }
 
-record::record record::parse_record(const std::string &key, const std::string &value)
+std::expected<record::record, error::error_message> record::parse_record(
+	const std::string &key,
+	const std::string &value)
 {
-	record parsed_key = parse_key(key);
+	std::expected<record, error::error_message> parsed_key = parse_key(key);
 
-	if (!parsed_key.is_valid)
+	if (!parsed_key)
 	{
 		return parsed_key;
 	}
 
 	if (value.size() > max_value_size)
 	{
-		return invalid_record(error::code::value_too_large, "Value is longer than " + std::to_string(max_value_size) + " bytes.");
+		return std::unexpected(
+			error::error_message { error::code::value_too_large,
+								   "Value is longer than " + std::to_string(max_value_size) + " bytes." });
 	}
 
 	return valid_record(key, value);
@@ -119,12 +126,7 @@ record::record record::parse_record(const std::string &key, const std::string &v
 
 record::record record::valid_record(const std::string &key, const std::string &value)
 {
-	return { true, key, value, {}, "", version() };
-}
-
-record::record record::invalid_record(error::code code, const std::string &message)
-{
-	return { false, "", "", code, message, version() };
+	return { key, value, version() };
 }
 
 bool record::is_valid_utf8(const std::string &text)

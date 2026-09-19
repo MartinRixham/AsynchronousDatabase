@@ -95,7 +95,6 @@ namespace
 	{
 		scan::range whole;
 
-		whole.is_valid = true;
 		whole.partition = cluster::partition_of(key);
 
 		scan::page page = repository.scan_records(name, whole);

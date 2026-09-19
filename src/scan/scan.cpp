@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <expected>
 #include <optional>
 
 #include <boost/json.hpp>
@@ -104,16 +105,19 @@ std::optional<size_t> scan::read_partition(const std::string &query)
 	return partition_named(query);
 }
 
-scan::range scan::parse_range(const std::string &query, const std::string &instance)
+std::expected<scan::range, error::error_message> scan::parse_range(
+	const std::string &query,
+	const std::string &instance)
 {
 	range range;
 	std::optional<size_t> partition = read_partition(query);
 
 	if (!partition)
 	{
-		return invalid_range(
-			error::code::invalid_partition,
-			"A scan names the partition it reads, as \"partition\" or as a \"key\" that is in it.");
+		return std::unexpected(
+			error::error_message {
+				error::code::invalid_partition,
+				"A scan names the partition it reads, as \"partition\" or as a \"key\" that is in it." });
 	}
 
 	range.partition = *partition;
@@ -150,13 +154,14 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 
 	if (range.has_from && range.has_to && range.from >= range.to)
 	{
-		return invalid_range(error::code::invalid_range, "Range from \"" + range.from + "\" is not below to \"" + range.to + "\".");
+		return std::unexpected(
+			error::error_message { error::code::invalid_range,
+								   "Range from \"" + range.from + "\" is not below to \"" + range.to + "\"." });
 	}
 
 	range.reverse = url::read_parameter(query, "reverse") == "true";
 	range.values = url::read_parameter(query, "values") != "false";
 	range.limit = read_limit(query);
-	range.is_valid = true;
 
 	std::string cursor = url::read_parameter(query, "cursor");
 
@@ -166,7 +171,9 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 
 		if (!key)
 		{
-			return invalid_range(error::code::invalid_cursor, "Cursor was not issued by this instance for this partition.");
+			return std::unexpected(
+				error::error_message { error::code::invalid_cursor,
+									   "Cursor was not issued by this instance for this partition." });
 		}
 
 		if (range.reverse)
@@ -180,16 +187,6 @@ scan::range scan::parse_range(const std::string &query, const std::string &insta
 			range.has_from = true;
 		}
 	}
-
-	return range;
-}
-
-scan::range scan::invalid_range(error::code code, const std::string &message)
-{
-	range range;
-
-	range.code = code;
-	range.message = message;
 
 	return range;
 }

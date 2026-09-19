@@ -115,7 +115,6 @@ namespace
 	{
 		scan::range range;
 
-		range.is_valid = true;
 		range.partition = partition;
 		range.limit = page;
 		range.values = false;

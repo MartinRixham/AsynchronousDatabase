@@ -2,10 +2,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <string>
 #include <string_view>
 
-#include "error/error_code.h"
+#include "error/error_message.h"
 
 namespace record
 {
@@ -66,15 +67,9 @@ namespace record
 
 	struct record
 	{
-		bool is_valid = false;
-
 		std::string key;
 
 		std::string value;
-
-		error::code code {};
-
-		std::string message;
 
 		// Set by the node that ordered the write and carried to every copy, so that the copies of
 		// one write all hold the same one. A record read out of a store carries the one it was
@@ -82,13 +77,13 @@ namespace record
 		version stamp;
 	};
 
-	[[nodiscard]] record parse_key(const std::string &key);
+	[[nodiscard]] std::expected<record, error::error_message> parse_key(const std::string &key);
 
-	[[nodiscard]] record parse_record(const std::string &key, const std::string &value);
+	[[nodiscard]] std::expected<record, error::error_message> parse_record(
+		const std::string &key,
+		const std::string &value);
 
 	record valid_record(const std::string &key, const std::string &value);
-
-	record invalid_record(error::code code, const std::string &message);
 
 	bool is_valid_utf8(const std::string &text);
 }

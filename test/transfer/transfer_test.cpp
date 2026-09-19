@@ -142,7 +142,6 @@ namespace
 		{
 			scan::range whole;
 
-			whole.is_valid = true;
 			whole.partition = partition;
 			whole.limit = scan::max_limit;
 

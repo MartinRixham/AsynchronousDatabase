@@ -26,7 +26,6 @@ namespace
 	{
 		scan::range range;
 
-		range.is_valid = true;
 		range.partition = cluster::partition_of(key);
 
 		return range;
@@ -55,7 +54,6 @@ namespace
 		{
 			scan::range range;
 
-			range.is_valid = true;
 			range.partition = partition;
 
 			scan::page page = store.scan_records(name, range);
@@ -495,7 +493,6 @@ namespace
 		{
 			scan::range range;
 
-			range.is_valid = true;
 			range.partition = partition;
 			range.values = false;
 

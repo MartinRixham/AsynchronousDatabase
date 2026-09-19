@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -505,12 +506,15 @@ boost::asio::awaitable<router::response> router::router::route_record(
 	}
 
 	std::string key = record::compose_key(partition, sort);
-	record::record record = writing ? record::parse_record(key, request.body) : record::parse_key(key);
+	std::expected<record::record, error::error_message> parsed =
+		writing ? record::parse_record(key, request.body) : record::parse_key(key);
 
-	if (!record.is_valid)
+	if (!parsed)
 	{
-		return answered(error_response(record.code, record.message));
+		return answered(error_response(parsed.error().code, parsed.error().message));
 	}
+
+	record::record record = *std::move(parsed);
 
 	// A node with no membership but itself answers every key out of a store holding its share, so
 	// its 404 may be another node's record. A peer forwarding here is asking what this store holds,
@@ -578,12 +582,15 @@ router::response router::router::route_forwarded_record(
 	}
 
 	std::string key = record::compose_key(partition, sort);
-	record::record record = writing ? record::parse_record(key, request.body) : record::parse_key(key);
+	std::expected<record::record, error::error_message> parsed =
+		writing ? record::parse_record(key, request.body) : record::parse_key(key);
 
-	if (!record.is_valid)
+	if (!parsed)
 	{
-		return error_response(record.code, record.message);
+		return error_response(parsed.error().code, parsed.error().message);
 	}
+
+	record::record record = *std::move(parsed);
 
 	if (!writing)
 	{
@@ -870,9 +877,10 @@ boost::asio::awaitable<router::response> router::router::scan_records(const requ
 
 	if (!named)
 	{
-		scan::range refused = scan::parse_range(request.query, repository.instance());
+		std::expected<scan::range, error::error_message> refused =
+			scan::parse_range(request.query, repository.instance());
 
-		return answered(error_response(refused.code, refused.message));
+		return answered(error_response(refused.error().code, refused.error().message));
 	}
 
 	// **A scan is answered by one node, because a partition is held by one node of every zone.**
@@ -902,14 +910,14 @@ boost::asio::awaitable<router::response> router::router::scan_records(const requ
 // routed, so the cursor in it is one this node issued.
 router::response router::router::answer_page(const request &request, const std::string &name)
 {
-	scan::range range = scan::parse_range(request.query, repository.instance());
+	std::expected<scan::range, error::error_message> range = scan::parse_range(request.query, repository.instance());
 
-	if (!range.is_valid)
+	if (!range)
 	{
-		return error_response(range.code, range.message);
+		return error_response(range.error().code, range.error().message);
 	}
 
-	return page_response(repository.scan_records(name, range), range, repository.instance());
+	return page_response(repository.scan_records(name, *range), *range, repository.instance());
 }
 
 std::set<std::string> router::router::table_names() const

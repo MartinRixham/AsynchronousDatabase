@@ -1,11 +1,12 @@
 #pragma once
 
 #include <cstddef>
+#include <expected>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include "error/error_code.h"
+#include "error/error_message.h"
 
 #include "record/record.h"
 
@@ -20,12 +21,6 @@ namespace scan
 
 	struct range
 	{
-		bool is_valid = false;
-
-		error::code code {};
-
-		std::string message;
-
 		// **The partition this scan reads, and a scan reads one.** A key belongs to one of the
 		// partitions, the store sorts the partitions apart, and one node of a zone holds each of
 		// them — so a range of keys is a range inside a partition, and a walk of a whole table is
@@ -64,9 +59,9 @@ namespace scan
 
 	// The whole of the range, for the node that is going to answer it. A query naming no partition
 	// is `invalid_partition` here.
-	[[nodiscard]] range parse_range(const std::string &query, const std::string &instance);
-
-	range invalid_range(error::code code, const std::string &message);
+	[[nodiscard]] std::expected<range, error::error_message> parse_range(
+		const std::string &query,
+		const std::string &instance);
 
 	// The cursor carries the partition beside the key, so a cursor resumed against a different
 	// partition is refused rather than answered with the nothing that key holds there.
